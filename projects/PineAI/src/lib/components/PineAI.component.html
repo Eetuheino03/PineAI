@@ -1,0 +1,18 @@
+<mat-card>
+    <mat-card-title>PineAI</mat-card-title>
+    <mat-card-content>
+        <p>
+            AI-assisted reconnaissance for authorized WiFi Pineapple
+            assessments.
+        </p>
+        <p>
+            The initial scaffold exposes a safe backend health check. Target
+            profiling, attack-path advice and operator-approved adaptive Recon
+            will be added incrementally.
+        </p>
+        <button mat-flat-button color="accent" (click)="checkBackend()">
+            Check backend
+        </button>
+        <p>Backend status: {{ backendStatus }}</p>
+    </mat-card-content>
+</mat-card>
