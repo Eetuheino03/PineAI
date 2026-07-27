@@ -1,4 +1,5 @@
 import io
+import datetime
 import json
 import tempfile
 import unittest
@@ -18,6 +19,9 @@ import sys
 sys.path.insert(0, str(ASSETS))
 
 import pineai_cli  # noqa: E402
+from pineai_backend.advisor_service import AttackPathAdvisorService  # noqa: E402
+from pineai_backend.engagement_store import EngagementStore  # noqa: E402
+from test_adaptive_recon import device_context  # noqa: E402
 from test_advisor import profile_result  # noqa: E402
 from test_engagement_store import TARGET_ID, engagement_value  # noqa: E402
 
@@ -140,6 +144,135 @@ class CliTests(unittest.TestCase):
             advice = json.loads(advice_output.getvalue())
             self.assertEqual(advice["advisor_status"]["code"], "ai_disabled")
             self.assertEqual(len(advice["target_results"][0]["paths"]), 3)
+
+    def test_adaptive_recon_cli_lifecycle_and_exit_codes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            engagement = EngagementStore(directory).create(engagement_value())
+            advisor = AttackPathAdvisorService(directory).advise(
+                engagement["engagement_id"],
+                profile_result(),
+                [TARGET_ID],
+                {"ai_enabled": False},
+            )
+            path_id = next(
+                path["path_id"]
+                for path in advisor["target_results"][0]["paths"]
+                if any(
+                    step["action_id"] == "collect_additional_recon"
+                    for step in path["steps"]
+                )
+            )
+            observed_at = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat().replace("+00:00", "Z")
+            context = device_context()
+            context["observed_at"] = observed_at
+            request_value = {
+                "engagement_id": engagement["engagement_id"],
+                "expected_revision": 1,
+                "profile_result": profile_result(),
+                "advisor_result": advisor,
+                "selected_path_ids": [path_id],
+                "history": [],
+                "device_context": context,
+            }
+            input_path = Path(directory) / "adaptive.json"
+            input_path.write_text(json.dumps(request_value), encoding="utf-8")
+
+            prepared_output = io.StringIO()
+            self.assertEqual(
+                pineai_cli.main(
+                    [
+                        "--config-dir",
+                        directory,
+                        "prepare-recon-plan",
+                        "--input",
+                        str(input_path),
+                    ],
+                    stdout=prepared_output,
+                ),
+                0,
+            )
+            self.assertNotIn("documented-device-value", prepared_output.getvalue())
+
+            recommended_output = io.StringIO()
+            self.assertEqual(
+                pineai_cli.main(
+                    [
+                        "--config-dir",
+                        directory,
+                        "recommend-recon-plan",
+                        "--input",
+                        str(input_path),
+                        "--no-ai",
+                    ],
+                    stdout=recommended_output,
+                ),
+                0,
+            )
+            plan = json.loads(recommended_output.getvalue())
+            self.assertEqual(plan["engagement_revision"], 2)
+
+            device_path = Path(directory) / "device.json"
+            context["observed_at"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat().replace("+00:00", "Z")
+            device_path.write_text(json.dumps(context), encoding="utf-8")
+            approved_output = io.StringIO()
+            self.assertEqual(
+                pineai_cli.main(
+                    [
+                        "--config-dir",
+                        directory,
+                        "recon-plan",
+                        "approve",
+                        "--engagement-id",
+                        engagement["engagement_id"],
+                        "--revision",
+                        "2",
+                        "--plan-id",
+                        plan["plan_id"],
+                        "--candidate-id",
+                        plan["candidates"][0]["candidate_id"],
+                        "--device-context",
+                        str(device_path),
+                    ],
+                    stdout=approved_output,
+                ),
+                0,
+            )
+            self.assertEqual(
+                json.loads(approved_output.getvalue())["rest_request"]["path"],
+                "/api/recon/start",
+            )
+
+            errors = io.StringIO()
+            self.assertEqual(
+                pineai_cli.main(
+                    [
+                        "--config-dir",
+                        directory,
+                        "recon-plan",
+                        "approve",
+                        "--engagement-id",
+                        engagement["engagement_id"],
+                        "--revision",
+                        "2",
+                        "--plan-id",
+                        plan["plan_id"],
+                        "--candidate-id",
+                        "reconcandidate_ffffffffffff",
+                        "--device-context",
+                        str(device_path),
+                    ],
+                    stderr=errors,
+                ),
+                2,
+            )
+            self.assertIn(
+                json.loads(errors.getvalue())["error"]["code"],
+                ("revision_conflict", "unknown_recon_candidate"),
+            )
 
 
 if __name__ == "__main__":

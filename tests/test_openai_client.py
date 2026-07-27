@@ -148,6 +148,42 @@ class OpenAIClientTests(unittest.TestCase):
         self.assertFalse(captured["body"]["store"])
         self.assertNotIn("tools", captured["body"])
 
+    def test_adaptive_recon_uses_strict_schema_and_no_tools(self):
+        captured = {}
+        structured = {
+            "candidate_id": "reconcandidate_aaaaaaaaaaaa",
+            "target_ids": ["target_aaaaaaaaaaaa"],
+            "confidence": 0.7,
+            "rationale": "Bounded candidate",
+            "expected_information": [],
+            "evidence_ids": [],
+            "missing_evidence": [],
+        }
+
+        def opener(api_request, timeout):
+            captured["body"] = json.loads(api_request.data.decode("utf-8"))
+            return FakeResponse(
+                response_body(
+                    [{"type": "output_text", "text": json.dumps(structured)}]
+                )
+            )
+
+        client = OpenAIClient("secret", "gpt-5.6-terra", opener=opener)
+        parsed, usage = client.plan_adaptive_recon(
+            {"candidate_plans": []}, "en", "device_test"
+        )
+        self.assertEqual(parsed, structured)
+        self.assertEqual(usage["total_tokens"], 15)
+        body = captured["body"]
+        self.assertEqual(body["model"], "gpt-5.6-terra")
+        self.assertEqual(body["reasoning"], {"effort": "low"})
+        self.assertFalse(body["store"])
+        self.assertEqual(
+            body["text"]["format"]["name"], "pineai_adaptive_recon"
+        )
+        self.assertTrue(body["text"]["format"]["strict"])
+        self.assertNotIn("tools", body)
+
 
 if __name__ == "__main__":
     unittest.main()

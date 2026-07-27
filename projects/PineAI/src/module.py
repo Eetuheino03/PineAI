@@ -14,6 +14,7 @@ if ASSETS_DIRECTORY not in sys.path:
     sys.path.insert(0, ASSETS_DIRECTORY)
 
 from pineai_backend import __version__  # noqa: E402
+from pineai_backend.adaptive_recon_service import AdaptiveReconService  # noqa: E402
 from pineai_backend.advisor_service import AttackPathAdvisorService  # noqa: E402
 from pineai_backend.config import ConfigError, public_status  # noqa: E402
 from pineai_backend.engagement_store import EngagementStore  # noqa: E402
@@ -164,6 +165,111 @@ def advise_attack_paths(request: Request):
             getattr(request, "profile_result", None),
             getattr(request, "target_ids", None),
             getattr(request, "options", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+def _adaptive_request(request: Request, method: str):
+    service = AdaptiveReconService()
+    function = getattr(service, method)
+    return function(
+        getattr(request, "engagement_id", None),
+        getattr(request, "expected_revision", None),
+        getattr(request, "profile_result", None),
+        getattr(request, "advisor_result", None),
+        getattr(request, "selected_path_ids", None),
+        getattr(request, "history", None),
+        getattr(request, "device_context", None),
+        getattr(request, "options", None),
+    )
+
+
+@module.handles_action("adaptive_recon_capabilities")
+def adaptive_recon_capabilities(_request: Request):
+    try:
+        return AdaptiveReconService().capabilities()
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("prepare_adaptive_recon")
+def prepare_adaptive_recon(request: Request):
+    try:
+        return _adaptive_request(request, "prepare")
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("recommend_adaptive_recon")
+def recommend_adaptive_recon(request: Request):
+    try:
+        return _adaptive_request(request, "recommend")
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("get_recon_plan")
+def get_recon_plan(request: Request):
+    try:
+        return AdaptiveReconService().get_plan(
+            getattr(request, "engagement_id", None),
+            getattr(request, "plan_id", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("list_recon_plans")
+def list_recon_plans(request: Request):
+    try:
+        return {
+            "plans": AdaptiveReconService().list_plans(
+                getattr(request, "engagement_id", None)
+            )
+        }
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("approve_recon_plan")
+def approve_recon_plan(request: Request):
+    try:
+        return AdaptiveReconService().approve(
+            getattr(request, "engagement_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "plan_id", None),
+            getattr(request, "candidate_id", None),
+            getattr(request, "device_context", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("record_recon_scan_started")
+def record_recon_scan_started(request: Request):
+    try:
+        return AdaptiveReconService().record_started(
+            getattr(request, "engagement_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "plan_id", None),
+            getattr(request, "start_response", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("record_recon_scan_finished")
+def record_recon_scan_finished(request: Request):
+    try:
+        return AdaptiveReconService().record_finished(
+            getattr(request, "engagement_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "plan_id", None),
+            getattr(request, "outcome", None),
+            getattr(request, "scan_id", None),
+            getattr(request, "profile_result", None),
+            getattr(request, "error_code", None),
         )
     except BackendError as failure:
         return _backend_failure(failure)

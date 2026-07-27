@@ -17,11 +17,14 @@ OpenAI Responses API
         |
         +--> Strict Target Profiler schema
         +--> Strict Attack-Path selection schema
+        +--> Strict Adaptive Recon candidate selection schema
         |
         v
 Schema and evidence-reference validation
         |
-        +--> Revisioned engagement state and audit events
+        +--> Revisioned plan lifecycle and audit events
+        |
+        +--> Exact approved Hak5 REST descriptor for the future frontend
 ```
 
 ## Trust rules
@@ -62,15 +65,18 @@ Schema and evidence-reference validation
 - strict AI selection from pre-approved path IDs;
 - module actions, CLI and versioned frontend schema.
 
-### 0.4 — Target Profiler and Advisor frontend
+### 0.4 — Adaptive Recon backend
 
-- select/load Recon scans through the Hak5 REST API;
+- deterministic duration and runtime band-capability planning;
+- one combined plan for 1–10 targets;
+- strict AI selection from existing candidate IDs;
+- operator approval and exact Hak5 REST descriptor;
+- revisioned Recon plan lifecycle and aggregate result audit.
+
+### 0.5 — Combined frontend
+
+- select/load Recon scans through the authenticated Hak5 REST session;
 - manage engagements and revisions;
-- display profiles, paths, approvals and events.
-
-### 0.5 — Adaptive Recon
-
-- AI-generated Recon recommendation;
-- schema and policy validation;
-- operator confirmation;
-- documented REST call and audit log.
+- display profiles, paths, candidates, approvals and events;
+- execute only the unchanged, approved Adaptive Recon descriptor;
+- feed completed results back through Profiler and Advisor.

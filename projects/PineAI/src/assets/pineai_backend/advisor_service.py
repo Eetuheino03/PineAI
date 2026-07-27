@@ -26,7 +26,7 @@ from .errors import BackendError
 from .openai_client import OpenAIClient, OpenAIClientError
 
 
-BACKEND_VERSION = "0.3.0"
+BACKEND_VERSION = "0.4.0"
 
 
 def _generated_at() -> str:

@@ -33,5 +33,7 @@ jobs:
           test -f dist/PineAI/assets/pineai_backend/engagement_store.py
           test -f dist/PineAI/assets/pineai_backend/advisor.py
           test -f dist/PineAI/assets/pineai_backend/advisor_service.py
+          test -f dist/PineAI/assets/pineai_backend/adaptive_recon.py
+          test -f dist/PineAI/assets/pineai_backend/adaptive_recon_service.py
           test -f dist/PineAI/assets/pineai_cli.py
           test -z "$(find dist/PineAI -type f -name '*.pyc' -print -quit)"

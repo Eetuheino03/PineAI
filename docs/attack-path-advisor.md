@@ -187,7 +187,7 @@ Response outline:
 ```json
 {
   "schema_version": "1.0",
-  "backend_version": "0.3.0",
+  "backend_version": "0.4.0",
   "engagement_id": "eng_11111111-1111-4111-8111-111111111111",
   "engagement_revision": 2,
   "target_results": [

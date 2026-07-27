@@ -168,6 +168,80 @@ class AdvisorPolicyTests(unittest.TestCase):
                 normal["deauthentication_resilience"] - 15,
             )
 
+    def test_adaptive_recon_lifecycle_blocks_and_releases_recon_path(self):
+        active = {
+            "event_type": "adaptive_recon_recommended",
+            "data": {
+                "plan": {
+                    "plan_id": "reconplan_aaaaaaaaaaaa",
+                    "target_ids": [TARGET_ID],
+                    "recommendation_expires_at": "2026-07-27T12:05:00Z",
+                }
+            },
+        }
+        candidates = self.candidates(events=[active])[TARGET_ID]
+        self.assertTrue(
+            all(
+                "collect_additional_recon"
+                not in [step["action_id"] for step in path["steps"]]
+                for path in candidates
+            )
+        )
+
+        completed = {
+            "event_type": "adaptive_recon_finished",
+            "data": {
+                "plan_id": "reconplan_aaaaaaaaaaaa",
+                "outcome": "completed",
+            },
+        }
+        candidates = self.candidates(events=[active, completed])[TARGET_ID]
+        self.assertTrue(
+            any(
+                "collect_additional_recon"
+                in [step["action_id"] for step in path["steps"]]
+                for path in candidates
+            )
+        )
+
+        failed = copy.deepcopy(completed)
+        failed["data"]["outcome"] = "failed"
+        normal = {
+            path["template_id"]: path["score"] for path in self.candidates()[TARGET_ID]
+        }
+        penalized = {
+            path["template_id"]: path["score"]
+            for path in self.candidates(events=[active, failed])[TARGET_ID]
+        }
+        self.assertEqual(
+            penalized["recon_depth"],
+            normal["recon_depth"] - 15,
+        )
+
+        older_failed = copy.deepcopy(completed)
+        older_failed["data"]["outcome"] = "failed"
+        newer_recommended = copy.deepcopy(active)
+        newer_recommended["data"]["plan"]["plan_id"] = (
+            "reconplan_bbbbbbbbbbbb"
+        )
+        newer_completed = copy.deepcopy(completed)
+        newer_completed["data"]["plan_id"] = "reconplan_bbbbbbbbbbbb"
+        recovered = {
+            path["template_id"]: path["score"]
+            for path in self.candidates(
+                events=[
+                    active,
+                    older_failed,
+                    newer_recommended,
+                    newer_completed,
+                ]
+            )[TARGET_ID]
+        }
+        self.assertEqual(
+            recovered["recon_depth"],
+            normal["recon_depth"],
+        )
+
     def test_expired_and_out_of_scope_are_rejected(self):
         expired = engagement()
         expired["valid_until"] = "2021-01-01T00:00:00Z"

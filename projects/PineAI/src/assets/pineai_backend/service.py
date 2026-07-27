@@ -22,7 +22,7 @@ from .profiler import (
 
 
 SCHEMA_VERSION = "1.0"
-BACKEND_VERSION = "0.3.0"
+BACKEND_VERSION = "0.4.0"
 ROLES = {
     "corporate",
     "guest",

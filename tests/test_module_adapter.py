@@ -62,12 +62,20 @@ class ModuleAdapterTests(unittest.TestCase):
             "archive_engagement",
             "append_engagement_event",
             "advise_attack_paths",
+            "adaptive_recon_capabilities",
+            "prepare_adaptive_recon",
+            "recommend_adaptive_recon",
+            "get_recon_plan",
+            "list_recon_plans",
+            "approve_recon_plan",
+            "record_recon_scan_started",
+            "record_recon_scan_finished",
         ):
             self.assertIn(action, loaded.module.actions)
         with tempfile.TemporaryDirectory() as directory:
             with mock.patch.dict(os.environ, {"PINEAI_CONFIG_DIR": directory}):
                 response = loaded.health(FakeRequest())
-        self.assertEqual(response["version"], "0.3.0")
+        self.assertEqual(response["version"], "0.4.0")
         self.assertFalse(response["api_key_configured"])
         self.assertNotIn("api_key", response)
 

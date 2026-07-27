@@ -62,6 +62,7 @@ EDITABLE_FIELDS = {
 }
 
 MAX_EVENTS = 1000
+SYSTEM_EVENT_PREFIXES = ("adaptive_recon_",)
 
 
 def _utc_now() -> str:
@@ -365,6 +366,57 @@ class EngagementStore:
         """Return all events for internal policy evaluation."""
         self._read_metadata(engagement_id)
         return self._read_events(engagement_id)
+
+    def append_system_event(
+        self,
+        engagement_id: str,
+        expected_revision: Any,
+        event_type: str,
+        data: Any,
+    ) -> Dict[str, Any]:
+        """Append a prevalidated internal event under engagement revision control."""
+        if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
+            raise BackendError("invalid_request", "expected_revision must be an integer")
+        if (
+            not isinstance(event_type, str)
+            or not any(event_type.startswith(prefix) for prefix in SYSTEM_EVENT_PREFIXES)
+        ):
+            raise BackendError("invalid_event", "internal event_type is invalid")
+        if not isinstance(data, dict):
+            raise BackendError("invalid_event", "internal event data must be an object")
+        try:
+            encoded = json.dumps(data, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        except (TypeError, ValueError):
+            raise BackendError("invalid_event", "internal event data is not JSON")
+        if len(encoded) > 131072:
+            raise BackendError("invalid_event", "internal event data is too large")
+
+        with self._lock(engagement_id):
+            metadata = self._read_metadata(engagement_id)
+            if metadata["status"] == "archived":
+                raise BackendError("engagement_archived", "engagement is archived")
+            if metadata["revision"] != expected_revision:
+                raise BackendError("revision_conflict", "engagement revision has changed")
+            events = self._read_events(engagement_id)
+            if len(events) >= MAX_EVENTS:
+                raise BackendError("event_limit", "engagement event limit was reached")
+            metadata["revision"] += 1
+            metadata["updated_at"] = _utc_now()
+            event = {
+                "sequence": metadata["last_event_sequence"] + 1,
+                "event_id": "evt_{0}".format(uuid.uuid4()),
+                "event_type": event_type,
+                "recorded_at": metadata["updated_at"],
+                "revision": metadata["revision"],
+                "data": data,
+            }
+            metadata["last_event_sequence"] = event["sequence"]
+            events.append(event)
+            self._write_metadata(metadata)
+            self._write_events(engagement_id, events)
+        return {"engagement": metadata, "event": event}
 
     def update(
         self, engagement_id: str, expected_revision: Any, changes: Any

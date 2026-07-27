@@ -1,0 +1,509 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Eetuheino03/PineAI/docs/schemas/adaptive-recon-v1.schema.json",
+  "title": "PineAI Adaptive Recon API v1",
+  "description": "Frontend contract for bounded, operator-approved Hak5 Recon plans.",
+  "$defs": {
+    "engagementId": {
+      "type": "string",
+      "pattern": "^eng_[0-9a-f-]{36}$"
+    },
+    "targetId": {
+      "type": "string",
+      "pattern": "^target_[0-9a-f]{12}$"
+    },
+    "pathId": {
+      "type": "string",
+      "pattern": "^path_[0-9a-f]{12}$"
+    },
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^evidence_[0-9a-f]{12}$"
+    },
+    "planId": {
+      "type": "string",
+      "pattern": "^reconplan_[0-9a-f]{12}$"
+    },
+    "candidateId": {
+      "type": "string",
+      "pattern": "^reconcandidate_[0-9a-f]{12}$"
+    },
+    "profileResult": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "targets"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "targets": {
+          "type": "array"
+        }
+      }
+    },
+    "advisorResult": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "engagement_revision",
+        "target_results"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "engagement_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "target_results": {
+          "type": "array"
+        }
+      }
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "language": {
+          "type": "string",
+          "enum": [
+            "en",
+            "fi"
+          ]
+        },
+        "share_ssids": {
+          "type": "boolean",
+          "default": false
+        },
+        "ai_enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "bandCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "covers",
+        "is_default"
+      ],
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[ -~]+$",
+          "description": "Opaque value verified on the physical device. PineAI never invents it."
+        },
+        "covers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "2.4",
+              "5"
+            ]
+          }
+        },
+        "is_default": {
+          "type": "boolean"
+        }
+      }
+    },
+    "reconStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "captureRunning",
+        "scanRunning",
+        "continuous",
+        "scanPercent",
+        "scanID"
+      ],
+      "properties": {
+        "captureRunning": {
+          "type": "boolean"
+        },
+        "scanRunning": {
+          "type": "boolean"
+        },
+        "continuous": {
+          "type": "boolean"
+        },
+        "scanPercent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "scanID": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "deviceContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_at",
+        "supported_bands",
+        "recon_status"
+      ],
+      "properties": {
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "supported_bands": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/bandCapability"
+          }
+        },
+        "recon_status": {
+          "$ref": "#/$defs/reconStatus"
+        }
+      }
+    },
+    "scanRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "live",
+        "scan_time",
+        "band"
+      ],
+      "properties": {
+        "live": {
+          "const": false
+        },
+        "scan_time": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 600
+        },
+        "band": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        }
+      }
+    },
+    "historySnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile_result",
+        "scan_metadata"
+      ],
+      "properties": {
+        "profile_result": {
+          "$ref": "#/$defs/profileResult"
+        },
+        "scan_metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scan_id",
+            "date",
+            "request"
+          ],
+          "properties": {
+            "scan_id": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "date": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "request": {
+              "$ref": "#/$defs/scanRequest"
+            }
+          }
+        }
+      }
+    },
+    "planRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engagement_id",
+        "expected_revision",
+        "profile_result",
+        "advisor_result",
+        "selected_path_ids",
+        "history",
+        "device_context"
+      ],
+      "properties": {
+        "engagement_id": {
+          "$ref": "#/$defs/engagementId"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "profile_result": {
+          "$ref": "#/$defs/profileResult"
+        },
+        "advisor_result": {
+          "$ref": "#/$defs/advisorResult"
+        },
+        "selected_path_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/pathId"
+          }
+        },
+        "history": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/historySnapshot"
+          }
+        },
+        "device_context": {
+          "$ref": "#/$defs/deviceContext"
+        },
+        "options": {
+          "$ref": "#/$defs/options"
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id",
+        "request",
+        "band_id",
+        "band_covers",
+        "is_default_band",
+        "duration_distance",
+        "extra_band_coverage",
+        "rank"
+      ],
+      "properties": {
+        "candidate_id": {
+          "$ref": "#/$defs/candidateId"
+        },
+        "request": {
+          "$ref": "#/$defs/scanRequest"
+        },
+        "band_id": {
+          "type": "string",
+          "pattern": "^band_[0-9a-f]{12}$"
+        },
+        "band_covers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "2.4",
+              "5"
+            ]
+          }
+        },
+        "is_default_band": {
+          "type": "boolean"
+        },
+        "duration_distance": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "extra_band_coverage": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "restDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "path",
+        "body"
+      ],
+      "properties": {
+        "method": {
+          "const": "POST"
+        },
+        "path": {
+          "const": "/api/recon/start"
+        },
+        "body": {
+          "$ref": "#/$defs/scanRequest"
+        }
+      }
+    },
+    "planState": {
+      "type": "string",
+      "enum": [
+        "recommended",
+        "approved",
+        "started",
+        "completed",
+        "failed",
+        "aborted",
+        "expired"
+      ]
+    },
+    "approveRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engagement_id",
+        "expected_revision",
+        "plan_id",
+        "candidate_id",
+        "device_context"
+      ],
+      "properties": {
+        "engagement_id": {
+          "$ref": "#/$defs/engagementId"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "plan_id": {
+          "$ref": "#/$defs/planId"
+        },
+        "candidate_id": {
+          "$ref": "#/$defs/candidateId"
+        },
+        "device_context": {
+          "$ref": "#/$defs/deviceContext"
+        }
+      }
+    },
+    "startResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scanRunning",
+        "scanID"
+      ],
+      "properties": {
+        "scanRunning": {
+          "const": true
+        },
+        "scanID": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "finishRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engagement_id",
+        "expected_revision",
+        "plan_id",
+        "outcome",
+        "scan_id"
+      ],
+      "properties": {
+        "engagement_id": {
+          "$ref": "#/$defs/engagementId"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "plan_id": {
+          "$ref": "#/$defs/planId"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "failed",
+            "aborted"
+          ]
+        },
+        "scan_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "profile_result": {
+          "$ref": "#/$defs/profileResult"
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z0-9_]{1,64}$"
+        }
+      }
+    },
+    "errorCode": {
+      "type": "string",
+      "enum": [
+        "invalid_request",
+        "invalid_adaptive_request",
+        "invalid_advisor_result",
+        "stale_advisor_result",
+        "unknown_advisor_path",
+        "invalid_advisor_path",
+        "invalid_profile_result",
+        "target_not_found",
+        "target_out_of_scope",
+        "invalid_history",
+        "invalid_device_context",
+        "stale_recon_status",
+        "recon_busy",
+        "band_not_supported",
+        "revision_conflict",
+        "engagement_archived",
+        "engagement_not_started",
+        "engagement_expired",
+        "action_not_allowed",
+        "recon_plan_in_progress",
+        "invalid_recon_plan_id",
+        "invalid_recon_candidate_id",
+        "recon_plan_not_found",
+        "recon_plan_expired",
+        "stale_recon_plan",
+        "invalid_recon_transition",
+        "unknown_recon_candidate",
+        "band_capability_changed",
+        "invalid_recon_start_response",
+        "invalid_recon_outcome",
+        "scan_id_mismatch",
+        "invalid_options",
+        "configuration_error",
+        "not_configured",
+        "ai_disabled",
+        "authentication_error",
+        "rate_limited",
+        "upstream_error",
+        "network_error",
+        "refusal",
+        "invalid_response",
+        "invalid_ai_output"
+      ]
+    }
+  }
+}

@@ -105,6 +105,30 @@ class EngagementStoreTests(unittest.TestCase):
                 store.append_event(created["engagement_id"], 1, value)
             self.assertEqual(raised.exception.code, "target_out_of_scope")
 
+    def test_system_event_is_revisioned_and_not_user_appendable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = EngagementStore(directory)
+            created = store.create(engagement_value())
+            result = store.append_system_event(
+                created["engagement_id"],
+                1,
+                "adaptive_recon_recommended",
+                {"plan_id": "reconplan_aaaaaaaaaaaa"},
+            )
+            self.assertEqual(result["engagement"]["revision"], 2)
+            self.assertEqual(result["event"]["revision"], 2)
+            self.assertEqual(
+                result["event"]["event_type"], "adaptive_recon_recommended"
+            )
+            with self.assertRaises(BackendError) as raised:
+                store.append_system_event(
+                    created["engagement_id"],
+                    2,
+                    "action_completed",
+                    {},
+                )
+            self.assertEqual(raised.exception.code, "invalid_event")
+
     @unittest.skipIf(os.name == "nt", "POSIX permissions are verified on Linux")
     def test_engagement_permissions(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -20,6 +20,7 @@ from pineai_backend.config import (  # noqa: E402
     save_api_key,
     save_settings,
 )
+from pineai_backend.adaptive_recon_service import AdaptiveReconService  # noqa: E402
 from pineai_backend.advisor_service import AttackPathAdvisorService  # noqa: E402
 from pineai_backend.engagement_store import EngagementStore  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
@@ -68,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("status")
     commands.add_parser("advisor-capabilities")
+    commands.add_parser("adaptive-capabilities")
 
     engagement = commands.add_parser("engagement")
     engagement_commands = engagement.add_subparsers(
@@ -116,6 +118,48 @@ def build_parser() -> argparse.ArgumentParser:
         command.set_defaults(share_ssids=None)
         if name == "advise":
             command.add_argument("--no-ai", action="store_true")
+
+    for name in ("prepare-recon-plan", "recommend-recon-plan"):
+        command = commands.add_parser(name)
+        command.add_argument("--input", required=True)
+        command.add_argument("--language", choices=("en", "fi"))
+        sharing = command.add_mutually_exclusive_group()
+        sharing.add_argument("--share-ssids", dest="share_ssids", action="store_true")
+        sharing.add_argument("--hide-ssids", dest="share_ssids", action="store_false")
+        command.set_defaults(share_ssids=None)
+        if name == "recommend-recon-plan":
+            command.add_argument("--no-ai", action="store_true")
+
+    recon_plan = commands.add_parser("recon-plan")
+    recon_commands = recon_plan.add_subparsers(
+        dest="recon_plan_command", required=True
+    )
+    recon_get = recon_commands.add_parser("get")
+    recon_get.add_argument("--engagement-id", required=True)
+    recon_get.add_argument("--plan-id", required=True)
+    recon_list = recon_commands.add_parser("list")
+    recon_list.add_argument("--engagement-id", required=True)
+    recon_approve = recon_commands.add_parser("approve")
+    recon_approve.add_argument("--engagement-id", required=True)
+    recon_approve.add_argument("--revision", type=int, required=True)
+    recon_approve.add_argument("--plan-id", required=True)
+    recon_approve.add_argument("--candidate-id", required=True)
+    recon_approve.add_argument("--device-context", required=True)
+    recon_started = recon_commands.add_parser("started")
+    recon_started.add_argument("--engagement-id", required=True)
+    recon_started.add_argument("--revision", type=int, required=True)
+    recon_started.add_argument("--plan-id", required=True)
+    recon_started.add_argument("--input", required=True)
+    recon_finished = recon_commands.add_parser("finished")
+    recon_finished.add_argument("--engagement-id", required=True)
+    recon_finished.add_argument("--revision", type=int, required=True)
+    recon_finished.add_argument("--plan-id", required=True)
+    recon_finished.add_argument(
+        "--outcome", required=True, choices=("completed", "failed", "aborted")
+    )
+    recon_finished.add_argument("--scan-id", type=int, required=True)
+    recon_finished.add_argument("--profile")
+    recon_finished.add_argument("--error-code")
     return parser
 
 
@@ -149,6 +193,11 @@ def main(
         if arguments.command == "advisor-capabilities":
             _print_json(
                 AttackPathAdvisorService(arguments.config_dir).capabilities(), stdout
+            )
+            return 0
+        if arguments.command == "adaptive-capabilities":
+            _print_json(
+                AdaptiveReconService(arguments.config_dir).capabilities(), stdout
             )
             return 0
         if arguments.command == "engagement":
@@ -195,6 +244,78 @@ def main(
                     profile_result,
                     arguments.target_id,
                     _options(arguments, include_ai=True),
+                )
+            _print_json(output, stdout)
+            return 0
+        if arguments.command in ("prepare-recon-plan", "recommend-recon-plan"):
+            request_value = _read_json(arguments.input)
+            required = {
+                "engagement_id",
+                "expected_revision",
+                "profile_result",
+                "advisor_result",
+                "selected_path_ids",
+                "history",
+                "device_context",
+            }
+            if not isinstance(request_value, dict) or set(request_value) != required:
+                raise BackendError(
+                    "invalid_input",
+                    "Adaptive Recon input fields are invalid",
+                )
+            adaptive = AdaptiveReconService(arguments.config_dir)
+            method = (
+                adaptive.prepare
+                if arguments.command == "prepare-recon-plan"
+                else adaptive.recommend
+            )
+            output = method(
+                request_value["engagement_id"],
+                request_value["expected_revision"],
+                request_value["profile_result"],
+                request_value["advisor_result"],
+                request_value["selected_path_ids"],
+                request_value["history"],
+                request_value["device_context"],
+                _options(
+                    arguments,
+                    include_ai=arguments.command == "recommend-recon-plan",
+                ),
+            )
+            _print_json(output, stdout)
+            return 0
+        if arguments.command == "recon-plan":
+            adaptive = AdaptiveReconService(arguments.config_dir)
+            if arguments.recon_plan_command == "get":
+                output = adaptive.get_plan(arguments.engagement_id, arguments.plan_id)
+            elif arguments.recon_plan_command == "list":
+                output = {
+                    "plans": adaptive.list_plans(arguments.engagement_id)
+                }
+            elif arguments.recon_plan_command == "approve":
+                output = adaptive.approve(
+                    arguments.engagement_id,
+                    arguments.revision,
+                    arguments.plan_id,
+                    arguments.candidate_id,
+                    _read_json(arguments.device_context),
+                )
+            elif arguments.recon_plan_command == "started":
+                output = adaptive.record_started(
+                    arguments.engagement_id,
+                    arguments.revision,
+                    arguments.plan_id,
+                    _read_json(arguments.input),
+                )
+            else:
+                output = adaptive.record_finished(
+                    arguments.engagement_id,
+                    arguments.revision,
+                    arguments.plan_id,
+                    arguments.outcome,
+                    arguments.scan_id,
+                    _read_json(arguments.profile) if arguments.profile else None,
+                    arguments.error_code,
                 )
             _print_json(output, stdout)
             return 0

@@ -9,6 +9,7 @@ ASSETS = ROOT / "projects" / "PineAI" / "src" / "assets"
 sys.path.insert(0, str(ASSETS))
 
 from pineai_backend.advisor import advisor_capabilities  # noqa: E402
+from pineai_backend.adaptive_recon import adaptive_recon_capabilities  # noqa: E402
 
 
 class ContractSchemaTests(unittest.TestCase):
@@ -29,6 +30,48 @@ class ContractSchemaTests(unittest.TestCase):
         self.assertEqual(
             schema["$defs"]["adviseRequest"]["properties"]["target_ids"]["maxItems"],
             capabilities["limits"]["targets_per_request"],
+        )
+
+    def test_adaptive_recon_schema_matches_runtime_capabilities(self):
+        path = ROOT / "docs" / "schemas" / "adaptive-recon-v1.schema.json"
+        schema = json.loads(path.read_text(encoding="utf-8"))
+        capabilities = adaptive_recon_capabilities()
+        self.assertEqual(
+            schema["$defs"]["planState"]["enum"], capabilities["states"]
+        )
+        self.assertEqual(
+            schema["$defs"]["planRequest"]["properties"]["selected_path_ids"][
+                "maxItems"
+            ],
+            capabilities["limits"]["targets_per_plan"],
+        )
+        self.assertEqual(
+            schema["$defs"]["planRequest"]["properties"]["history"]["maxItems"],
+            capabilities["limits"]["history_snapshots"],
+        )
+        self.assertEqual(
+            schema["$defs"]["deviceContext"]["properties"]["supported_bands"][
+                "maxItems"
+            ],
+            capabilities["limits"]["supported_bands"],
+        )
+        self.assertEqual(
+            schema["$defs"]["scanRequest"]["properties"]["scan_time"]["minimum"],
+            capabilities["limits"]["minimum_scan_time"],
+        )
+        self.assertEqual(
+            schema["$defs"]["scanRequest"]["properties"]["scan_time"]["maximum"],
+            capabilities["limits"]["maximum_scan_time"],
+        )
+        self.assertEqual(
+            (
+                schema["$defs"]["restDescriptor"]["properties"]["method"]["const"],
+                schema["$defs"]["restDescriptor"]["properties"]["path"]["const"],
+            ),
+            (
+                capabilities["rest"]["method"],
+                capabilities["rest"]["path"],
+            ),
         )
 
 

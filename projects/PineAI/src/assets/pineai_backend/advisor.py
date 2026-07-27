@@ -354,10 +354,47 @@ def validate_profile_result(profile_result: Any) -> Dict[str, Dict[str, Any]]:
     return result
 
 
-def _activity_state(events: Iterable[Dict[str, Any]]) -> Dict[Tuple[str, str], str]:
+def _activity_state(
+    events: Iterable[Dict[str, Any]],
+    now: Optional[datetime.datetime] = None,
+) -> Dict[Tuple[str, str], str]:
     state = {}
+    adaptive_plans = {}
+    current = now or _utc_now()
     for event in events:
         event_type = event.get("event_type")
+        if event_type == "adaptive_recon_recommended":
+            data = event.get("data", {})
+            plan = data.get("plan", {}) if isinstance(data, dict) else {}
+            plan_id = plan.get("plan_id")
+            if isinstance(plan_id, str):
+                adaptive_plans[plan_id] = {
+                    "target_ids": plan.get("target_ids", []),
+                    "status": "recommended",
+                    "expires_at": plan.get("recommendation_expires_at"),
+                }
+            continue
+        if event_type in (
+            "adaptive_recon_approved",
+            "adaptive_recon_started",
+            "adaptive_recon_finished",
+        ):
+            data = event.get("data", {})
+            plan_id = data.get("plan_id") if isinstance(data, dict) else None
+            if plan_id not in adaptive_plans:
+                continue
+            if event_type == "adaptive_recon_approved":
+                adaptive_plans[plan_id]["status"] = "approved"
+                adaptive_plans[plan_id]["expires_at"] = data.get(
+                    "approval_expires_at"
+                )
+            elif event_type == "adaptive_recon_started":
+                adaptive_plans[plan_id]["status"] = "started"
+                adaptive_plans[plan_id]["expires_at"] = None
+            else:
+                adaptive_plans[plan_id]["status"] = data.get("outcome")
+                adaptive_plans[plan_id]["expires_at"] = None
+            continue
         if event_type not in (
             "action_started",
             "action_completed",
@@ -369,6 +406,35 @@ def _activity_state(events: Iterable[Dict[str, Any]]) -> Dict[Tuple[str, str], s
         action_id = event.get("action_id")
         if target_id and action_id:
             state[(target_id, action_id)] = event_type
+    for plan in adaptive_plans.values():
+        plan_status = plan["status"]
+        expires_at = plan["expires_at"]
+        if plan_status in ("recommended", "approved") and isinstance(expires_at, str):
+            try:
+                if current > parse_utc(expires_at, "adaptive_recon_expires_at"):
+                    continue
+            except BackendError:
+                continue
+        if plan_status in ("recommended", "approved", "started"):
+            projected_state = "action_started"
+        elif plan_status == "failed":
+            projected_state = "action_failed"
+        elif plan_status == "aborted":
+            projected_state = "action_aborted"
+        elif plan_status == "completed":
+            for target_id in plan["target_ids"]:
+                if isinstance(target_id, str):
+                    state.pop(
+                        (target_id, "collect_additional_recon"),
+                        None,
+                    )
+            continue
+        else:
+            continue
+        for target_id in plan["target_ids"]:
+            if not isinstance(target_id, str):
+                continue
+            state[(target_id, "collect_additional_recon")] = projected_state
     return state
 
 
@@ -414,7 +480,7 @@ def build_candidate_paths(
     if current > parse_utc(engagement["valid_until"], "valid_until"):
         raise BackendError("engagement_expired", "engagement has expired")
 
-    activity = _activity_state(events)
+    activity = _activity_state(events, current)
     results = {}
     for target_id in target_ids:
         if target_id not in engagement["authorized_target_ids"]:

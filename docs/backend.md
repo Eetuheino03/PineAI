@@ -134,6 +134,9 @@ Before upstream publication, verify on a Mark VII:
 Attack-Path Advisor is documented separately in
 [attack-path-advisor.md](attack-path-advisor.md).
 
+Adaptive Recon planning, approval, audit and frontend integration are
+documented separately in [adaptive-recon.md](adaptive-recon.md).
+
 ## References
 
 - [Hak5 module development](https://hak5.github.io/mk7-docs/docs/modules/modules/)
