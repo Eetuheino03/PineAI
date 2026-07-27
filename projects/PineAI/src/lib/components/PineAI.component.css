@@ -1,0 +1,76 @@
+.pineai-shell {
+    min-height: 100%;
+    background: #f4f6f8;
+    color: #15202b;
+}
+
+.pineai-toolbar {
+    background: #111820;
+    color: #fff;
+    min-height: 72px;
+}
+
+.pineai-title {
+    display: block;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.pineai-subtitle {
+    display: block;
+    color: #aebac5;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.toolbar-spacer {
+    flex: 1 1 auto;
+}
+
+mat-chip {
+    background: #323c46 !important;
+    color: #dbe3e9 !important;
+}
+
+mat-chip.status-ok {
+    background: #124c39 !important;
+    color: #b8f2d8 !important;
+}
+
+.startup-error,
+.loading-state {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin: 24px;
+    padding: 20px;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.startup-error {
+    border-left: 4px solid #c62828;
+}
+
+.startup-error > div {
+    flex: 1;
+}
+
+.loading-state {
+    justify-content: center;
+    min-height: 180px;
+}
+
+@media (max-width: 720px) {
+    .pineai-toolbar {
+        align-items: flex-start;
+        height: auto;
+        padding-top: 12px;
+        padding-bottom: 12px;
+    }
+
+    .pineai-toolbar mat-chip-list {
+        display: none;
+    }
+}

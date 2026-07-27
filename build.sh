@@ -34,14 +34,22 @@ prepare_workspace() {
 }
 
 build_module() {
-    ng build --prod > /dev/null 2>&1
-    RET=$?
-
-    if [[ $RET -ne 0 ]]; then
-        echo "[!] Angular Build Failed: Run 'ng build --prod' to figure out why."
-        exit 1
+    if [[ ${PINEAI_SKIP_ANGULAR_BUILD:-0} == "1" ]]; then
+        if [[ ! -d "dist/$MODULENAME/bundles" ]]; then
+            echo "[!] Prebuilt Angular bundles were not found in dist/$MODULENAME/bundles."
+            exit 1
+        fi
+        echo "[*] Using prebuilt Angular bundles"
     else
-        echo "[*] Angular Build Succeeded"
+        ng build --prod > /dev/null 2>&1
+        RET=$?
+
+        if [[ $RET -ne 0 ]]; then
+            echo "[!] Angular Build Failed: Run 'ng build --prod' to figure out why."
+            exit 1
+        else
+            echo "[*] Angular Build Succeeded"
+        fi
     fi
 
     # Step 2: Copy the required files to the build output

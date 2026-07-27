@@ -24,7 +24,12 @@ Schema and evidence-reference validation
         |
         +--> Revisioned plan lifecycle and audit events
         |
-        +--> Exact approved Hak5 REST descriptor for the future frontend
+        +--> Exact approved Hak5 REST descriptor
+        |
+        v
+Operator confirmation in the authenticated Hak5 frontend
+        |
+        +--> POST /api/recon/start with the descriptor unchanged
 ```
 
 ## Trust rules
@@ -80,3 +85,8 @@ Schema and evidence-reference validation
 - display profiles, paths, candidates, approvals and events;
 - execute only the unchanged, approved Adaptive Recon descriptor;
 - feed completed results back through Profiler and Advisor.
+
+The 0.5 frontend keeps raw Recon and profiler history in memory only. The
+device persists non-secret preferences, HMAC keys, engagements, audit events,
+and approved plan metadata. API keys remain in a private `0600` file and are
+never returned to Angular.

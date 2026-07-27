@@ -1,0 +1,109 @@
+<section class="view">
+    <header class="view-header">
+        <div>
+            <h2>Overview</h2>
+            <p>Current engagement and wireless assessment readiness.</p>
+        </div>
+        <button mat-stroked-button (click)="refresh()" [disabled]="refreshing">
+            <mat-icon>refresh</mat-icon>
+            Refresh
+        </button>
+    </header>
+
+    <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+    <div class="status-banner">
+        <strong>Recommended next step</strong>
+        <div>{{ nextAction }}</div>
+    </div>
+
+    <div class="grid">
+        <mat-card>
+            <mat-card-content>
+                <div class="metric">{{ pineai.scans.length }}</div>
+                <div class="metric-label">Saved Recon scans</div>
+            </mat-card-content>
+        </mat-card>
+        <mat-card>
+            <mat-card-content>
+                <div class="metric">{{ pineai.profileResult?.targets?.length || 0 }}</div>
+                <div class="metric-label">Profiled targets</div>
+            </mat-card-content>
+        </mat-card>
+        <mat-card>
+            <mat-card-content>
+                <div class="metric">{{ pineai.selectedTargetIds.length }}</div>
+                <div class="metric-label">Selected targets</div>
+            </mat-card-content>
+        </mat-card>
+        <mat-card>
+            <mat-card-content>
+                <div class="metric">{{ pineai.sessionHistory.length }}</div>
+                <div class="metric-label">Session snapshots</div>
+            </mat-card-content>
+        </mat-card>
+    </div>
+
+    <div class="grid" style="margin-top: 16px">
+        <mat-card>
+            <mat-card-title>Device</mat-card-title>
+            <mat-card-content class="stack">
+                <div class="row">
+                    <span>Backend</span>
+                    <span class="spacer"></span>
+                    <span class="badge complete">{{ pineai.health?.status || 'unknown' }}</span>
+                </div>
+                <div class="row">
+                    <span>Recon</span>
+                    <span class="spacer"></span>
+                    <span class="badge" [class.medium]="pineai.reconStatus?.scanRunning">
+                        {{ pineai.reconStatus?.scanRunning ? 'running' : 'idle' }}
+                    </span>
+                </div>
+                <div class="row">
+                    <span>Configured bands</span>
+                    <span class="spacer"></span>
+                    <strong>{{ pineai.settings?.supported_bands?.length || 0 }}</strong>
+                </div>
+            </mat-card-content>
+        </mat-card>
+
+        <mat-card>
+            <mat-card-title>AI</mat-card-title>
+            <mat-card-content class="stack">
+                <div class="row">
+                    <span>Model</span>
+                    <span class="spacer"></span>
+                    <strong>{{ pineai.settings?.model || '—' }}</strong>
+                </div>
+                <div class="row">
+                    <span>API key</span>
+                    <span class="spacer"></span>
+                    <span class="badge" [class.complete]="pineai.settings?.api_key_configured">
+                        {{ pineai.settings?.api_key_configured ? 'configured' : 'not configured' }}
+                    </span>
+                </div>
+                <div class="row">
+                    <span>SSID sharing</span>
+                    <span class="spacer"></span>
+                    <strong>{{ pineai.settings?.share_ssids ? 'enabled' : 'disabled' }}</strong>
+                </div>
+            </mat-card-content>
+        </mat-card>
+
+        <mat-card>
+            <mat-card-title>Engagement</mat-card-title>
+            <mat-card-content *ngIf="pineai.activeEngagement; else noEngagement" class="stack">
+                <strong>{{ pineai.activeEngagement.name }}</strong>
+                <div>Revision {{ pineai.activeEngagement.revision }}</div>
+                <div>
+                    <span class="badge" [class.complete]="pineai.activeEngagement.status === 'active'">
+                        {{ pineai.activeEngagement.status }}
+                    </span>
+                </div>
+            </mat-card-content>
+            <ng-template #noEngagement>
+                <mat-card-content class="muted">No engagement selected.</mat-card-content>
+            </ng-template>
+        </mat-card>
+    </div>
+</section>

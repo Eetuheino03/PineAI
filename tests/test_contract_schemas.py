@@ -10,6 +10,7 @@ sys.path.insert(0, str(ASSETS))
 
 from pineai_backend.advisor import advisor_capabilities  # noqa: E402
 from pineai_backend.adaptive_recon import adaptive_recon_capabilities  # noqa: E402
+from pineai_backend.config import MAX_SUPPORTED_BANDS  # noqa: E402
 
 
 class ContractSchemaTests(unittest.TestCase):
@@ -73,6 +74,16 @@ class ContractSchemaTests(unittest.TestCase):
                 capabilities["rest"]["path"],
             ),
         )
+
+    def test_frontend_settings_schema_matches_runtime_limits(self):
+        path = ROOT / "docs" / "schemas" / "frontend-v1.schema.json"
+        schema = json.loads(path.read_text(encoding="utf-8"))
+        settings = schema["$defs"]["settings"]["properties"]
+        band = schema["$defs"]["band"]["properties"]
+        self.assertEqual(settings["supported_bands"]["maxItems"], MAX_SUPPORTED_BANDS)
+        self.assertEqual(settings["language"]["enum"], ["en", "fi"])
+        self.assertEqual(band["value"]["maxLength"], 32)
+        self.assertEqual(band["covers"]["items"]["enum"], ["2.4", "5"])
 
 
 if __name__ == "__main__":

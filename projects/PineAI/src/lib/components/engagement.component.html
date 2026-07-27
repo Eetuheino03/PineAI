@@ -1,0 +1,127 @@
+<section class="view">
+    <header class="view-header">
+        <div>
+            <h2>Engagement</h2>
+            <p>Scope, authorization window and allowed advisory actions.</p>
+        </div>
+        <button mat-stroked-button (click)="newEngagement()">New engagement</button>
+    </header>
+
+    <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+
+    <div class="grid">
+        <mat-card>
+            <mat-card-title>Saved engagements</mat-card-title>
+            <mat-card-content>
+                <div *ngIf="!pineai.engagements.length" class="empty-state">
+                    No active engagements are stored on this device.
+                </div>
+                <mat-nav-list *ngIf="pineai.engagements.length">
+                    <a
+                        mat-list-item
+                        *ngFor="let engagement of pineai.engagements"
+                        (click)="select(engagement.engagement_id)"
+                        [class.selected]="pineai.activeEngagement?.engagement_id === engagement.engagement_id">
+                        <mat-icon mat-list-icon>assignment</mat-icon>
+                        <div mat-line>{{ engagement.name }}</div>
+                        <div mat-line>Revision {{ engagement.revision }} · {{ engagement.status }}</div>
+                    </a>
+                </mat-nav-list>
+            </mat-card-content>
+        </mat-card>
+
+        <mat-card>
+            <mat-card-title>{{ editMode ? 'Edit engagement' : 'Create engagement' }}</mat-card-title>
+            <mat-card-subtitle>
+                All notes and authorization references remain on the Pineapple.
+            </mat-card-subtitle>
+            <mat-card-content>
+                <form [formGroup]="form" class="stack">
+                    <mat-form-field appearance="outline" class="full-width">
+                        <mat-label>Name</mat-label>
+                        <input matInput formControlName="name" maxlength="100">
+                    </mat-form-field>
+
+                    <mat-form-field appearance="outline" class="full-width">
+                        <mat-label>Objectives</mat-label>
+                        <mat-select formControlName="objectives" multiple>
+                            <mat-option
+                                *ngFor="let objective of pineai.advisorCapabilities?.objective_codes"
+                                [value]="objective">
+                                {{ label(objective) }}
+                            </mat-option>
+                        </mat-select>
+                    </mat-form-field>
+
+                    <mat-form-field appearance="outline" class="full-width">
+                        <mat-label>Local objective notes</mat-label>
+                        <textarea matInput formControlName="objective_notes" rows="3" maxlength="1000"></textarea>
+                    </mat-form-field>
+
+                    <mat-form-field appearance="outline" class="full-width">
+                        <mat-label>Authorized targets</mat-label>
+                        <mat-select formControlName="authorized_target_ids" multiple>
+                            <mat-option *ngFor="let target of availableTargets()" [value]="target.target_id">
+                                {{ target.ssid || 'Hidden network' }} — {{ target.target_id }}
+                            </mat-option>
+                        </mat-select>
+                        <mat-hint>Targets originate from the current profiler result.</mat-hint>
+                    </mat-form-field>
+
+                    <mat-form-field appearance="outline" class="full-width">
+                        <mat-label>Allowed advisory actions</mat-label>
+                        <mat-select formControlName="allowed_actions" multiple>
+                            <mat-option
+                                *ngFor="let action of pineai.advisorCapabilities?.actions"
+                                [value]="action.action_id">
+                                {{ label(action.action_id) }} — {{ action.risk }} risk
+                            </mat-option>
+                        </mat-select>
+                    </mat-form-field>
+
+                    <mat-checkbox formControlName="disruption_allowed">
+                        Rules of Engagement explicitly allow disruptive testing advice.
+                    </mat-checkbox>
+
+                    <div
+                        *ngIf="form.value.disruption_allowed"
+                        class="warning-banner">
+                        This enables advice for high-impact actions. PineAI still will not execute
+                        deauthentication or evil-twin operations.
+                    </div>
+
+                    <mat-form-field appearance="outline" class="full-width">
+                        <mat-label>Authorization reference</mat-label>
+                        <input matInput formControlName="authorization_reference" maxlength="200">
+                    </mat-form-field>
+
+                    <div class="row">
+                        <mat-form-field appearance="outline">
+                            <mat-label>Valid from</mat-label>
+                            <input matInput type="datetime-local" formControlName="valid_from">
+                        </mat-form-field>
+                        <mat-form-field appearance="outline">
+                            <mat-label>Valid until</mat-label>
+                            <input matInput type="datetime-local" formControlName="valid_until">
+                        </mat-form-field>
+                    </div>
+
+                    <div class="actions">
+                        <button mat-flat-button color="accent" type="button" (click)="save()" [disabled]="busy">
+                            {{ editMode ? 'Save changes' : 'Create engagement' }}
+                        </button>
+                        <button
+                            mat-stroked-button
+                            color="warn"
+                            type="button"
+                            *ngIf="editMode && pineai.activeEngagement"
+                            (click)="archive()"
+                            [disabled]="busy">
+                            Archive
+                        </button>
+                    </div>
+                </form>
+            </mat-card-content>
+        </mat-card>
+    </div>
+</section>

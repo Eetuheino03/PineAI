@@ -1,0 +1,116 @@
+<section class="view">
+    <header class="view-header">
+        <div>
+            <h2>Recon</h2>
+            <p>Load saved Recon data or start one bounded operator-approved scan.</p>
+        </div>
+        <button mat-stroked-button (click)="refresh()">
+            <mat-icon>refresh</mat-icon>
+            Refresh
+        </button>
+    </header>
+
+    <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+
+    <mat-card>
+        <mat-card-title>Device status</mat-card-title>
+        <mat-card-content>
+            <div class="row">
+                <span class="badge" [class.medium]="pineai.reconStatus?.scanRunning">
+                    {{ pineai.reconStatus?.scanRunning ? 'Scan running' : 'Recon idle' }}
+                </span>
+                <span *ngIf="pineai.reconStatus?.captureRunning" class="badge high">
+                    Capture running
+                </span>
+                <span *ngIf="pineai.reconStatus?.scanRunning">
+                    {{ pineai.reconStatus?.scanPercent || 0 }}%
+                </span>
+                <span class="spacer"></span>
+                <button
+                    mat-stroked-button
+                    color="warn"
+                    *ngIf="pineai.reconStatus?.scanRunning"
+                    (click)="stop()"
+                    [disabled]="busy">
+                    Stop Recon
+                </button>
+            </div>
+            <mat-progress-bar
+                *ngIf="pineai.reconStatus?.scanRunning"
+                mode="determinate"
+                [value]="pineai.reconStatus?.scanPercent || 0">
+            </mat-progress-bar>
+        </mat-card-content>
+    </mat-card>
+
+    <mat-card>
+        <mat-card-title>Start bounded Recon</mat-card-title>
+        <mat-card-subtitle>No band values are guessed by PineAI.</mat-card-subtitle>
+        <mat-card-content>
+            <div *ngIf="!pineai.settings?.supported_bands?.length" class="warning-banner">
+                Configure a device-confirmed band value in Settings before starting Recon.
+            </div>
+            <form [formGroup]="form" class="stack">
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Device-confirmed band</mat-label>
+                        <mat-select formControlName="band">
+                            <mat-option
+                                *ngFor="let band of pineai.settings?.supported_bands"
+                                [value]="band.value">
+                                {{ band.value }} — {{ band.covers.join(' + ') }} GHz
+                                {{ band.is_default ? '(default)' : '' }}
+                            </mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Duration</mat-label>
+                        <mat-select formControlName="duration">
+                            <mat-option [value]="60">60 seconds</mat-option>
+                            <mat-option [value]="180">180 seconds</mat-option>
+                            <mat-option [value]="300">300 seconds</mat-option>
+                            <mat-option [value]="600">600 seconds</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                </div>
+                <mat-checkbox formControlName="confirmed">
+                    I confirm this passive Recon is authorized and within the approved time window.
+                </mat-checkbox>
+                <div class="actions">
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="start()"
+                        type="button"
+                        [disabled]="busy || pineai.reconStatus?.scanRunning || !pineai.settings?.supported_bands?.length">
+                        Start Recon
+                    </button>
+                </div>
+            </form>
+        </mat-card-content>
+    </mat-card>
+
+    <mat-card>
+        <mat-card-title>Saved scans</mat-card-title>
+        <mat-card-content>
+            <div *ngIf="!pineai.scans.length" class="empty-state">
+                <mat-icon>radar</mat-icon>
+                No saved Recon scans were returned by the Pineapple.
+            </div>
+            <mat-list *ngIf="pineai.scans.length">
+                <mat-list-item *ngFor="let scan of pineai.scans">
+                    <mat-icon mat-list-icon>search</mat-icon>
+                    <div mat-line>Scan {{ scan.scan_id }}</div>
+                    <div mat-line>{{ scan.date }}</div>
+                    <button
+                        mat-stroked-button
+                        (click)="load(scan)"
+                        [disabled]="loadingScanId !== null">
+                        {{ loadingScanId === scan.scan_id ? 'Loading…' :
+                           pineai.selectedScan?.scan_id === scan.scan_id ? 'Loaded' : 'Load' }}
+                    </button>
+                </mat-list-item>
+            </mat-list>
+        </mat-card-content>
+    </mat-card>
+</section>

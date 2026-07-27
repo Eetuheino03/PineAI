@@ -120,6 +120,30 @@ Common `ai_status.code` values:
 Provider failures return deterministic profiles as a partial result. A broader
 offline heuristic analyzer is intentionally deferred to a future release.
 
+## Frontend support actions (0.5)
+
+The combined frontend adds these Hak5 module actions:
+
+- `get_settings`
+- `update_settings`
+- `set_openai_api_key`
+- `delete_openai_api_key`
+- `prepare_profile_recon`
+- `prepare_attack_paths`
+
+Settings actions expose only non-secret configuration and API-key
+presence/source. Frontend-editable fields are limited to `language`,
+`share_ssids`, and the device-confirmed `supported_bands` allowlist.
+
+`set_openai_api_key` requires `transport_secure` as a boolean. If it is false,
+`insecure_transport_acknowledged` must be true. The key is stored directly in
+`/root/.PineAI/openai.key` with mode `0600` and is never returned.
+
+The two prepare actions accept the same inputs as their corresponding
+executing actions and return the exact filtered cloud payload without making a
+network request. See [frontend.md](frontend.md) and
+[schemas/frontend-v1.schema.json](schemas/frontend-v1.schema.json).
+
 ## Physical-device verification
 
 Before upstream publication, verify on a Mark VII:

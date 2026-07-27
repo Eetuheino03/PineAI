@@ -1,0 +1,69 @@
+<section class="view">
+    <header class="view-header">
+        <div>
+            <h2>Activity</h2>
+            <p>Local UI activity and the active engagement audit trail.</p>
+        </div>
+    </header>
+
+    <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+
+    <mat-card *ngIf="pineai.activeEngagement">
+        <mat-card-title>Add local operator note</mat-card-title>
+        <mat-card-subtitle>
+            Notes remain on the Pineapple and are excluded from AI payloads.
+        </mat-card-subtitle>
+        <mat-card-content>
+            <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Note</mat-label>
+                <textarea matInput [formControl]="note" rows="3" maxlength="1000"></textarea>
+                <mat-hint align="end">{{ note.value?.length || 0 }}/1000</mat-hint>
+            </mat-form-field>
+            <button mat-flat-button color="accent" (click)="addNote()" [disabled]="busy">
+                Record note
+            </button>
+        </mat-card-content>
+    </mat-card>
+
+    <div class="grid">
+        <mat-card>
+            <mat-card-title>UI activity</mat-card-title>
+            <mat-card-content>
+                <div *ngIf="!pineai.activity.length" class="empty-state">No activity yet.</div>
+                <mat-list>
+                    <mat-list-item *ngFor="let item of pineai.activity">
+                        <mat-icon
+                            mat-list-icon
+                            [color]="item.level === 'error' ? 'warn' : undefined">
+                            {{ item.level === 'error' ? 'error_outline' :
+                               item.level === 'warning' ? 'warning' :
+                               item.level === 'success' ? 'check_circle' : 'info' }}
+                        </mat-icon>
+                        <div mat-line>{{ item.title }}</div>
+                        <div mat-line>{{ item.time }} {{ item.detail }}</div>
+                    </mat-list-item>
+                </mat-list>
+            </mat-card-content>
+        </mat-card>
+
+        <mat-card>
+            <mat-card-title>Engagement events</mat-card-title>
+            <mat-card-content>
+                <div *ngIf="!pineai.activeEngagement" class="empty-state">
+                    Select an engagement to load its audit trail.
+                </div>
+                <mat-list *ngIf="pineai.activeEngagement">
+                    <mat-list-item *ngFor="let event of pineai.activeEngagement.events">
+                        <mat-icon mat-list-icon>history</mat-icon>
+                        <div mat-line>#{{ event.sequence }} {{ event.event_type }}</div>
+                        <div mat-line>
+                            {{ event.recorded_at }}
+                            {{ event.action_id ? '· ' + event.action_id : '' }}
+                        </div>
+                        <div mat-line *ngIf="event.summary">{{ event.summary }}</div>
+                    </mat-list-item>
+                </mat-list>
+            </mat-card-content>
+        </mat-card>
+    </div>
+</section>

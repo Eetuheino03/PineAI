@@ -7,7 +7,6 @@ import {Router} from '@angular/router';
 })
 export class ApiService {
     public static totalRequests = 0;
-    apiModuleBusy = document.getElementById('ApiModuleBusy');
 
     constructor(private http: HttpClient,
                 private router: Router) {}
@@ -23,10 +22,16 @@ export class ApiService {
     }
 
     setBusy(): void {
-        this.apiModuleBusy.style.display = 'block';
+        const busy = document.getElementById('ApiModuleBusy');
+        if (busy) {
+            busy.style.display = 'block';
+        }
     }
     setNotBusy(): void {
-        this.apiModuleBusy.style.display = 'none';
+        const busy = document.getElementById('ApiModuleBusy');
+        if (busy) {
+            busy.style.display = 'none';
+        }
     }
 
     static extractBaseHref(): string {
@@ -65,6 +70,43 @@ export class ApiService {
         });
 
         ApiService.totalRequests++;
+    }
+
+    moduleRequest<T>(payload: any): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            this.request(payload, (response: any) => {
+                if (response && response.error) {
+                    reject(response.error);
+                    return;
+                }
+                resolve(response as T);
+            });
+        });
+    }
+
+    nativeGet<T>(path: string): Promise<T> {
+        ApiService.totalRequests++;
+        return this.http.get<T>(
+            `${ApiService.extractBaseHref()}${path}`
+        ).toPromise().catch((error) => {
+            if (error && error.status === 401) {
+                this.unauth();
+            }
+            return Promise.reject(error && error.error ? error.error : error);
+        });
+    }
+
+    nativePost<T>(path: string, body: any): Promise<T> {
+        ApiService.totalRequests++;
+        return this.http.post<T>(
+            `${ApiService.extractBaseHref()}${path}`,
+            body
+        ).toPromise().catch((error) => {
+            if (error && error.status === 401) {
+                this.unauth();
+            }
+            return Promise.reject(error && error.error ? error.error : error);
+        });
     }
 
     APIGet(path: string, callback: (any) => void): any {

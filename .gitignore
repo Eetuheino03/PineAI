@@ -40,6 +40,8 @@ npm-debug.log
 yarn-error.log
 testem.log
 /typings
+/PineAI-*.tar.gz
+/PineAI-*.tar.gz.sha256
 
 # Python
 __pycache__/

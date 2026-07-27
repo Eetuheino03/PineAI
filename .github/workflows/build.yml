@@ -22,12 +22,18 @@ jobs:
       - run: npm ci
       - name: Run backend tests
         run: python -m unittest discover -s tests -v
+      - name: Run Angular frontend tests
+        run: npm test -- --watch=false --browsers=ChromeHeadless --progress=false
       - name: Compile Python sources
         run: python -m compileall -q projects/PineAI/src/module.py projects/PineAI/src/assets
       - name: Build Hak5 module package layout
-        run: PATH="$PWD/node_modules/.bin:$PATH" ./build.sh
-      - name: Verify backend assets are packaged
+        run: PATH="$PWD/node_modules/.bin:$PATH" ./build.sh package
+      - name: Verify release package
         run: |
+          test -f dist/PineAI/PineAI.umd.js
+          test -f dist/PineAI/module.py
+          test -f dist/PineAI/module.json
+          test -f dist/PineAI/module.svg
           test -f dist/PineAI/assets/pineai_backend/service.py
           test -f dist/PineAI/assets/pineai_backend/openai_client.py
           test -f dist/PineAI/assets/pineai_backend/engagement_store.py
@@ -37,3 +43,13 @@ jobs:
           test -f dist/PineAI/assets/pineai_backend/adaptive_recon_service.py
           test -f dist/PineAI/assets/pineai_cli.py
           test -z "$(find dist/PineAI -type f -name '*.pyc' -print -quit)"
+          test -f PineAI-0.5.0.tar.gz
+          test "$(tar -tzf PineAI-0.5.0.tar.gz | head -n 1)" = "PineAI/"
+          tar -tzf PineAI-0.5.0.tar.gz | grep -qx "PineAI/PineAI.umd.js"
+          sha256sum PineAI-0.5.0.tar.gz > PineAI-0.5.0.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PineAI-0.5.0
+          path: |
+            PineAI-0.5.0.tar.gz
+            PineAI-0.5.0.tar.gz.sha256

@@ -6,7 +6,7 @@ import os
 import secrets
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 DEFAULT_CONFIG_DIR = Path("/root/.PineAI")
@@ -16,12 +16,64 @@ DEFAULTS = {
     "language": "en",
     "share_ssids": False,
     "max_ai_targets": 50,
+    "supported_bands": [],
 }
 SUPPORTED_LANGUAGES = {"en", "fi"}
+MAX_SUPPORTED_BANDS = 8
 
 
 class ConfigError(ValueError):
     """Raised when PineAI configuration is invalid."""
+
+
+def _validate_supported_bands(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > MAX_SUPPORTED_BANDS:
+        raise ConfigError("supported_bands must contain 0-8 values")
+
+    normalized = []
+    seen_values = set()
+    default_count = 0
+    for band in value:
+        if not isinstance(band, dict) or set(band) != {
+            "value",
+            "covers",
+            "is_default",
+        }:
+            raise ConfigError("supported band shape is invalid")
+        raw_value = band["value"]
+        covers = band["covers"]
+        is_default = band["is_default"]
+        if (
+            not isinstance(raw_value, str)
+            or not raw_value
+            or len(raw_value) > 32
+            or any(ord(character) < 32 or ord(character) > 126 for character in raw_value)
+            or raw_value in seen_values
+        ):
+            raise ConfigError("supported band value is invalid")
+        if (
+            not isinstance(covers, list)
+            or not covers
+            or len(covers) > 2
+            or any(item not in ("2.4", "5") for item in covers)
+        ):
+            raise ConfigError("supported band coverage is invalid")
+        if not isinstance(is_default, bool):
+            raise ConfigError("supported band is_default is invalid")
+
+        default_count += int(is_default)
+        seen_values.add(raw_value)
+        normalized.append(
+            {
+                "value": raw_value,
+                "covers": sorted(set(covers)),
+                "is_default": is_default,
+            }
+        )
+
+    if default_count > 1:
+        raise ConfigError("only one supported band may be default")
+    return normalized
 
 
 def resolve_config_dir(config_dir: Optional[str] = None) -> Path:
@@ -87,6 +139,9 @@ def _validate_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         raise ConfigError("max_ai_targets must be an integer")
     if max_targets < 1 or max_targets > 50:
         raise ConfigError("max_ai_targets must be between 1 and 50")
+    result["supported_bands"] = _validate_supported_bands(
+        result.get("supported_bands")
+    )
     return result
 
 
@@ -118,10 +173,23 @@ def save_api_key(api_key: str, config_dir: Optional[str] = None) -> None:
         raise ConfigError("OpenAI API key must not be empty")
     if "\n" in api_key or "\r" in api_key:
         raise ConfigError("OpenAI API key must be a single line")
+    if len(api_key.strip()) > 1024:
+        raise ConfigError("OpenAI API key is too long")
     _atomic_private_write(
         resolve_config_dir(config_dir) / "openai.key",
         api_key.strip().encode("utf-8") + b"\n",
     )
+
+
+def delete_api_key(config_dir: Optional[str] = None) -> None:
+    """Delete only PineAI's managed key file, if present."""
+    path = resolve_config_dir(config_dir) / "openai.key"
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise ConfigError("Could not delete OpenAI API key: {0}".format(error))
 
 
 def load_api_key(config_dir: Optional[str] = None) -> Optional[str]:
@@ -161,10 +229,36 @@ def ensure_pseudonymization_key(config_dir: Optional[str] = None) -> bytes:
 def public_status(config_dir: Optional[str] = None) -> Dict[str, Any]:
     """Return settings that are safe to expose to the local module UI."""
     settings = load_settings(config_dir)
+    environment_key = os.environ.get("OPENAI_API_KEY")
+    key_path = resolve_config_dir(config_dir) / "openai.key"
+    if environment_key and environment_key.strip():
+        key_source = "environment"
+    elif key_path.exists():
+        key_source = "file"
+    else:
+        key_source = "none"
     return {
         "configured": load_api_key(config_dir) is not None,
+        "key_source": key_source,
         "model": settings["model"],
         "language": settings["language"],
         "share_ssids": settings["share_ssids"],
         "max_ai_targets": settings["max_ai_targets"],
+        "supported_bands": settings["supported_bands"],
     }
+
+
+def update_frontend_settings(
+    changes: Any, config_dir: Optional[str] = None
+) -> Dict[str, Any]:
+    """Update only settings that are intentionally exposed in the module UI."""
+    if not isinstance(changes, dict) or not changes:
+        raise ConfigError("settings must be a non-empty object")
+    allowed = {"language", "share_ssids", "supported_bands"}
+    unknown = set(changes) - allowed
+    if unknown:
+        raise ConfigError("settings contain unsupported fields")
+    settings = load_settings(config_dir)
+    settings.update(changes)
+    save_settings(settings, config_dir)
+    return public_status(config_dir)

@@ -12,13 +12,12 @@ The project is intentionally split into three focused capabilities:
 3. **Adaptive Recon** recommends additional Recon runs and requires explicit
    operator approval before any scan is started.
 
-Version `0.4.0` implements the Target Profiler, persistent Attack-Path Advisor,
-and Adaptive Recon backends. Adaptive Recon combines policy-approved
-information needs into one bounded scan plan, requires explicit operator
-approval, and returns an exact Hak5 REST descriptor for the future frontend.
-All three features have deterministic offline output and optional
-schema-constrained OpenAI enrichment. The frontend remains the
-upstream-compatible scaffold and the backend never starts a radio operation.
+Version `0.5.0` adds the complete Mark VII frontend for the Target Profiler,
+persistent Attack-Path Advisor, and Adaptive Recon backends. Operators can
+load or start bounded Recon scans, profile targets, define engagement scope,
+review advisory paths, approve one policy-valid Recon candidate, and record
+the result. All three features retain deterministic offline output and
+optional schema-constrained OpenAI enrichment.
 
 ## Compatibility
 
@@ -33,8 +32,9 @@ upstream-compatible scaffold and the backend never starts a radio operation.
 Use Node.js 16 for compatibility with the upstream Hak5 module build.
 
 ```bash
-npm install
-npm run build
+npm ci
+npm run build -- --prod
+npm test -- --watch=false --browsers=ChromeHeadless
 ```
 
 To create an installable archive:
@@ -43,9 +43,12 @@ To create an installable archive:
 ./build.sh package
 ```
 
-The resulting archive can be uploaded through the WiFi Pineapple management
-interface. During development, the built `dist/PineAI/` directory can be
-copied to `/pineapple/modules/`.
+The resulting `PineAI-0.5.0.tar.gz` archive can be uploaded through the WiFi
+Pineapple management interface. During development, the built
+`dist/PineAI/` directory can be copied to `/pineapple/modules/`.
+
+See [docs/frontend.md](docs/frontend.md) for the complete operator workflow,
+frontend/backend contracts, band capability setup, and Mark VII smoke test.
 
 ## Backend CLI
 
@@ -88,10 +91,10 @@ The `profile_recon` action accepts `scan`, optional `scan_metadata`, and:
 }
 ```
 
-The future frontend will obtain Recon data through the already-authenticated
-Hak5 session and pass it to this action. PineAI does not store the Pineapple
-root password. See [docs/backend.md](docs/backend.md) for the complete
-contract, privacy model, and error states.
+The frontend obtains Recon data through the already-authenticated Hak5 session
+and passes it to this action. PineAI does not store the Pineapple root
+password. See [docs/backend.md](docs/backend.md) for the complete contract,
+privacy model, and error states.
 
 Attack-Path Advisor's engagement lifecycle, frontend contract and examples are
 documented in
@@ -120,9 +123,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and
 
 PineAI is intended only for systems and wireless networks you own or
 are explicitly authorized to assess. AI output is advisory. The Target
-Profiler schema has no action or command field. Adaptive Recon can prepare an
-approved request descriptor but cannot execute it. Active operations must
-remain visible to and approved by the operator.
+Profiler schema has no action or command field. Attack paths never execute
+from the UI. Adaptive Recon may execute only the exact backend-approved
+`POST /api/recon/start` descriptor after explicit operator confirmation. The
+backend itself never calls the Hak5 REST API.
 
 ## License
 

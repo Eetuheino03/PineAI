@@ -1,0 +1,118 @@
+<section class="view">
+    <header class="view-header">
+        <div>
+            <h2>Adaptive Recon</h2>
+            <p>Combine selected information needs into one bounded Recon plan.</p>
+        </div>
+        <div class="row">
+            <button mat-stroked-button (click)="showPreview()" [disabled]="busy || runningScanId !== null">
+                Privacy preview
+            </button>
+            <button mat-flat-button color="accent" (click)="recommend()" [disabled]="busy || runningScanId !== null">
+                Recommend plan
+            </button>
+        </div>
+    </header>
+
+    <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+
+    <div *ngIf="!pineai.advisorResult || !pineai.selectedPathIds.length" class="empty-state">
+        <mat-icon>tune</mat-icon>
+        Select one Advisor path containing collect_additional_recon for each target.
+    </div>
+
+    <mat-card *ngIf="preview">
+        <div class="card-title-row">
+            <mat-card-title>Exact OpenAI payload</mat-card-title>
+            <button mat-icon-button aria-label="Close privacy preview" (click)="preview = null">
+                <mat-icon>close</mat-icon>
+            </button>
+        </div>
+        <mat-card-content>
+            <pre class="json-preview">{{ preview | json }}</pre>
+        </mat-card-content>
+    </mat-card>
+
+    <div *ngIf="runningScanId !== null" class="warning-banner">
+        <div class="row">
+            <div>
+                <strong>Adaptive Recon scan {{ runningScanId }} is running.</strong>
+                <div>{{ pineai.reconStatus?.scanPercent || 0 }}% complete</div>
+            </div>
+            <span class="spacer"></span>
+            <button mat-stroked-button color="warn" (click)="stopAndAbort()" [disabled]="busy">
+                Stop and record aborted
+            </button>
+        </div>
+        <mat-progress-bar
+            mode="determinate"
+            [value]="pineai.reconStatus?.scanPercent || 0">
+        </mat-progress-bar>
+    </div>
+
+    <mat-card *ngIf="pineai.adaptivePlan">
+        <div class="card-title-row">
+            <div>
+                <mat-card-title>Plan {{ pineai.adaptivePlan.plan_id }}</mat-card-title>
+                <mat-card-subtitle>
+                    {{ pineai.adaptivePlan.status }} · expires
+                    {{ pineai.adaptivePlan.recommendation_expires_at }}
+                </mat-card-subtitle>
+            </div>
+            <span
+                class="badge"
+                [class.complete]="pineai.adaptivePlan.source === 'ai'">
+                {{ pineai.adaptivePlan.source }}
+            </span>
+        </div>
+        <mat-card-content class="stack">
+            <p>{{ pineai.adaptivePlan.rationale }}</p>
+            <div class="chip-list">
+                <span class="badge">
+                    {{ (pineai.adaptivePlan.confidence * 100) | number:'1.0-0' }}% confidence
+                </span>
+                <span class="badge">
+                    {{ pineai.adaptivePlan.analysis?.desired_duration }}s target
+                </span>
+                <span class="badge">
+                    {{ pineai.adaptivePlan.target_ids?.length }} targets
+                </span>
+                <span class="badge">
+                    {{ pineai.sessionHistory.length }}/5 history snapshots
+                </span>
+            </div>
+
+            <mat-radio-group [(ngModel)]="selectedCandidateId" class="stack">
+                <mat-card
+                    *ngFor="let candidate of pineai.adaptivePlan.candidates"
+                    [class.success-banner]="candidate.candidate_id === pineai.adaptivePlan.selected_candidate_id">
+                    <mat-radio-button [value]="candidate.candidate_id">
+                        <strong>{{ candidate.request.scan_time }} seconds</strong>
+                        · {{ candidate.band_covers.join(' + ') }} GHz
+                        · rank {{ candidate.rank }}
+                    </mat-radio-button>
+                    <div class="muted">
+                        Candidate {{ candidate.candidate_id }} · device band ID {{ candidate.band_id }}
+                    </div>
+                </mat-card>
+            </mat-radio-group>
+
+            <div class="warning-banner">
+                PineAI will refresh Recon status, revalidate scope and send only the backend-returned
+                <code>POST /api/recon/start</code> descriptor. No free parameters are accepted.
+            </div>
+            <mat-checkbox [(ngModel)]="approvalConfirmed">
+                I reviewed the exact duration, band coverage, active authorization window and scope.
+            </mat-checkbox>
+            <div class="actions">
+                <button
+                    mat-flat-button
+                    color="accent"
+                    (click)="approveAndStart()"
+                    [disabled]="busy || !approvalConfirmed || !selectedCandidateId || runningScanId !== null">
+                    Approve and start Recon
+                </button>
+            </div>
+        </mat-card-content>
+    </mat-card>
+</section>

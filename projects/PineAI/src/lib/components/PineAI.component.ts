@@ -1,5 +1,5 @@
 import { Component, OnInit } from '@angular/core';
-import { ApiService } from '../services/api.service';
+import { PineAIService } from '../services/PineAI.service';
 
 @Component({
     selector: 'lib-PineAI',
@@ -7,21 +7,26 @@ import { ApiService } from '../services/api.service';
     styleUrls: ['./PineAI.component.css']
 })
 export class PineAIComponent implements OnInit {
-    constructor(private API: ApiService) { }
+    startupError = '';
 
-    backendStatus = 'Not checked';
+    constructor(public pineai: PineAIService) {}
 
-    checkBackend(): void {
-        this.API.request({
-            module: 'PineAI',
-            action: 'health'
-        }, (response) => {
-            this.backendStatus = response && response.status
-                ? response.status
-                : 'Unexpected response';
-        });
+    async ngOnInit(): Promise<void> {
+        try {
+            await this.pineai.initialize();
+        } catch (error) {
+            const failure = this.pineai.error(error);
+            this.startupError = `${failure.code}: ${failure.message}`;
+        }
     }
 
-    ngOnInit() {
+    async retry(): Promise<void> {
+        this.startupError = '';
+        try {
+            await this.pineai.initialize();
+        } catch (error) {
+            const failure = this.pineai.error(error);
+            this.startupError = `${failure.code}: ${failure.message}`;
+        }
     }
 }

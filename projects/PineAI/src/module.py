@@ -16,7 +16,13 @@ if ASSETS_DIRECTORY not in sys.path:
 from pineai_backend import __version__  # noqa: E402
 from pineai_backend.adaptive_recon_service import AdaptiveReconService  # noqa: E402
 from pineai_backend.advisor_service import AttackPathAdvisorService  # noqa: E402
-from pineai_backend.config import ConfigError, public_status  # noqa: E402
+from pineai_backend.config import (  # noqa: E402
+    ConfigError,
+    delete_api_key,
+    public_status,
+    save_api_key,
+    update_frontend_settings,
+)
 from pineai_backend.engagement_store import EngagementStore  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
 from pineai_backend.service import TargetProfilerService  # noqa: E402
@@ -37,6 +43,9 @@ def health(_request: Request):
             "backend_version": __version__,
             "model": status["model"],
             "api_key_configured": status["configured"],
+            "language": status["language"],
+            "share_ssids": status["share_ssids"],
+            "supported_band_count": len(status["supported_bands"]),
         }
     except ConfigError as failure:
         return (
@@ -80,6 +89,107 @@ def _backend_failure(failure: BackendError):
         },
         False,
     )
+
+
+def _configuration_failure(failure: ConfigError):
+    return (
+        {
+            "error": {
+                "code": "configuration_error",
+                "message": str(failure),
+            }
+        },
+        False,
+    )
+
+
+@module.handles_action("get_settings")
+def get_settings(_request: Request):
+    """Return the non-secret settings used by the frontend."""
+    try:
+        status = public_status()
+        return {
+            "schema_version": "1.0",
+            "model": status["model"],
+            "language": status["language"],
+            "share_ssids": status["share_ssids"],
+            "max_ai_targets": status["max_ai_targets"],
+            "supported_bands": status["supported_bands"],
+            "api_key_configured": status["configured"],
+            "api_key_source": status["key_source"],
+        }
+    except ConfigError as failure:
+        return _configuration_failure(failure)
+
+
+@module.handles_action("update_settings")
+def update_settings(request: Request):
+    """Persist only the frontend-editable non-secret settings."""
+    try:
+        status = update_frontend_settings(getattr(request, "settings", None))
+        return {
+            "schema_version": "1.0",
+            "model": status["model"],
+            "language": status["language"],
+            "share_ssids": status["share_ssids"],
+            "max_ai_targets": status["max_ai_targets"],
+            "supported_bands": status["supported_bands"],
+            "api_key_configured": status["configured"],
+            "api_key_source": status["key_source"],
+        }
+    except ConfigError as failure:
+        return _configuration_failure(failure)
+
+
+@module.handles_action("set_openai_api_key")
+def set_openai_api_key(request: Request):
+    """Store a key without echoing it back to the browser."""
+    try:
+        transport_secure = getattr(request, "transport_secure", None)
+        insecure_acknowledged = getattr(
+            request, "insecure_transport_acknowledged", False
+        )
+        if not isinstance(transport_secure, bool):
+            raise ConfigError("transport_secure must be a boolean")
+        if not transport_secure and insecure_acknowledged is not True:
+            raise ConfigError(
+                "insecure HTTP key submission requires explicit acknowledgement"
+            )
+        save_api_key(getattr(request, "api_key", None))
+        status = public_status()
+        return {
+            "api_key_configured": status["configured"],
+            "api_key_source": status["key_source"],
+        }
+    except ConfigError as failure:
+        return _configuration_failure(failure)
+
+
+@module.handles_action("delete_openai_api_key")
+def delete_openai_api_key(_request: Request):
+    """Delete the managed key file and report any environment override."""
+    try:
+        delete_api_key()
+        status = public_status()
+        return {
+            "api_key_configured": status["configured"],
+            "api_key_source": status["key_source"],
+        }
+    except ConfigError as failure:
+        return _configuration_failure(failure)
+
+
+@module.handles_action("prepare_profile_recon")
+def prepare_profile_recon(request: Request):
+    """Return the exact privacy-filtered profiler cloud payload."""
+    try:
+        return TargetProfilerService().prepare_recon(
+            getattr(request, "scan", None),
+            getattr(request, "scan_metadata", None),
+            getattr(request, "options", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
 
 
 @module.handles_action("advisor_capabilities")
@@ -161,6 +271,20 @@ def append_engagement_event(request: Request):
 def advise_attack_paths(request: Request):
     try:
         return AttackPathAdvisorService().advise(
+            getattr(request, "engagement_id", None),
+            getattr(request, "profile_result", None),
+            getattr(request, "target_ids", None),
+            getattr(request, "options", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("prepare_attack_paths")
+def prepare_attack_paths(request: Request):
+    """Return the exact policy-filtered advisor cloud payload."""
+    try:
+        return AttackPathAdvisorService().prepare_advice(
             getattr(request, "engagement_id", None),
             getattr(request, "profile_result", None),
             getattr(request, "target_ids", None),

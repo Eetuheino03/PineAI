@@ -1,18 +1,58 @@
-<mat-card>
-    <mat-card-title>PineAI</mat-card-title>
-    <mat-card-content>
-        <p>
-            AI-assisted reconnaissance for authorized WiFi Pineapple
-            assessments.
-        </p>
-        <p>
-            The initial scaffold exposes a safe backend health check. Target
-            profiling, attack-path advice and operator-approved adaptive Recon
-            will be added incrementally.
-        </p>
-        <button mat-flat-button color="accent" (click)="checkBackend()">
-            Check backend
-        </button>
-        <p>Backend status: {{ backendStatus }}</p>
-    </mat-card-content>
-</mat-card>
+<div class="pineai-shell">
+    <mat-toolbar class="pineai-toolbar">
+        <div>
+            <span class="pineai-title">PineAI</span>
+            <span class="pineai-subtitle">Authorized wireless assessment copilot</span>
+        </div>
+        <span class="toolbar-spacer"></span>
+        <mat-chip-list aria-label="PineAI status">
+            <mat-chip [class.status-ok]="pineai.health?.status === 'ok'">
+                Backend {{ pineai.health?.version || '—' }}
+            </mat-chip>
+            <mat-chip [class.status-ok]="pineai.settings?.api_key_configured">
+                AI {{ pineai.settings?.api_key_configured ? 'configured' : 'offline' }}
+            </mat-chip>
+        </mat-chip-list>
+    </mat-toolbar>
+
+    <div *ngIf="startupError" class="startup-error" role="alert">
+        <mat-icon>error_outline</mat-icon>
+        <div>
+            <strong>PineAI could not initialize.</strong>
+            <div>{{ startupError }}</div>
+        </div>
+        <button mat-stroked-button (click)="retry()">Retry</button>
+    </div>
+
+    <div *ngIf="pineai.initializing" class="loading-state" aria-live="polite">
+        <mat-spinner diameter="42"></mat-spinner>
+        <p>Loading backend and WiFi Pineapple state…</p>
+    </div>
+
+    <mat-tab-group *ngIf="pineai.initialized" dynamicHeight animationDuration="150ms">
+        <mat-tab label="Overview">
+            <lib-pineai-overview></lib-pineai-overview>
+        </mat-tab>
+        <mat-tab label="Recon">
+            <lib-pineai-recon></lib-pineai-recon>
+        </mat-tab>
+        <mat-tab label="Targets">
+            <lib-pineai-targets></lib-pineai-targets>
+        </mat-tab>
+        <mat-tab label="Engagement">
+            <lib-pineai-engagement></lib-pineai-engagement>
+        </mat-tab>
+        <mat-tab label="Advisor">
+            <lib-pineai-advisor></lib-pineai-advisor>
+        </mat-tab>
+        <mat-tab label="Adaptive Recon">
+            <lib-pineai-adaptive-recon></lib-pineai-adaptive-recon>
+        </mat-tab>
+        <mat-tab label="Activity">
+            <lib-pineai-activity></lib-pineai-activity>
+        </mat-tab>
+        <mat-tab label="Settings">
+            <lib-pineai-settings></lib-pineai-settings>
+        </mat-tab>
+    </mat-tab-group>
+</div>
