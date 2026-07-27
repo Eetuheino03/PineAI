@@ -1,0 +1,65 @@
+{
+  "APResults": [
+    {
+      "ssid": "Example-Corp",
+      "bssid": "AA:BB:CC:00:00:01",
+      "encryption": 5,
+      "hidden": 0,
+      "wps": 0,
+      "channel": 1,
+      "signal": -41,
+      "data": 120,
+      "last_seen": "2026-07-27T12:00:00Z",
+      "probes": 4,
+      "clients": [
+        {
+          "client_mac": "11:22:33:44:55:66",
+          "ap_mac": "AA:BB:CC:00:00:01",
+          "ap_channel": 1,
+          "data": 30,
+          "broadcast_probes": 2,
+          "direct_probes": 1,
+          "last_seen": "2026-07-27T12:00:00Z"
+        }
+      ]
+    },
+    {
+      "ssid": "Example-Corp",
+      "bssid": "AA:BB:CC:00:00:02",
+      "encryption": 5,
+      "hidden": 0,
+      "wps": 1,
+      "channel": 6,
+      "signal": -57,
+      "data": 80,
+      "last_seen": "2026-07-27T12:00:01Z",
+      "probes": 2,
+      "clients": []
+    },
+    {
+      "ssid": "",
+      "bssid": "DE:AD:BE:EF:00:01",
+      "encryption": 4,
+      "hidden": 1,
+      "wps": 0,
+      "channel": 11,
+      "signal": -72,
+      "data": 10,
+      "last_seen": "2026-07-27T12:00:02Z",
+      "probes": 0,
+      "clients": []
+    }
+  ],
+  "OutOfRangeClientResults": [
+    {
+      "client_mac": "22:33:44:55:66:77",
+      "ap_mac": "",
+      "ap_channel": 0,
+      "data": 1,
+      "broadcast_probes": 5,
+      "direct_probes": 0,
+      "last_seen": "2026-07-27T12:00:03Z"
+    }
+  ],
+  "UnassociatedClientResults": []
+}

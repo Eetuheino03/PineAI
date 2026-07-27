@@ -23,9 +23,13 @@ Mark VII module structure and should be suitable for a future pull request to
 Before opening a pull request:
 
 1. Run `npm install`.
-2. Run `npm run build`.
-3. Run `./build.sh package` in a Linux-compatible environment.
-4. Install the package on a physical Mark VII.
-5. Verify frontend/backend communication and uninstall/reinstall behavior.
+2. Run `python3 -m unittest discover -s tests -v`.
+3. Run `npm run build`.
+4. Run `./build.sh package` in a Linux-compatible environment.
+5. Confirm `dist/PineAI/assets/pineai_backend/` and
+   `dist/PineAI/assets/pineai_cli.py` exist.
+6. Install the package on a physical Mark VII.
+7. Verify backend actions, secret-file permissions, network TLS, and
+   uninstall/reinstall behavior.
 
 Security issues should be reported according to [SECURITY.md](SECURITY.md).

@@ -1,1 +1,6 @@
-This file is a placeholder for module assets that you may like to add.
+PineAI backend assets
+
+- pineai_backend/ contains the standard-library-only Target Profiler.
+- pineai_cli.py provides configure, status, prepare, and profile commands.
+
+See the repository docs/backend.md for the API, privacy model, and CLI usage.

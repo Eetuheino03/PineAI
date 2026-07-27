@@ -4,28 +4,21 @@ PineAI keeps platform integration, deterministic analysis, cloud AI,
 and operator approval as separate trust boundaries.
 
 ```text
-Hak5 Recon REST API
+Authenticated Hak5 frontend session
         |
+        | Recon JSON
         v
 Normalization and redaction
         |
-        +--> Target profiles
+        +--> Deterministic target profiles
         |
         v
-Policy-gated AI gateway
+OpenAI Responses API
         |
-        +--> Target Profiler
-        +--> Attack-Path Advisor
-        +--> Adaptive Recon recommendation
+        +--> Strict Target Profiler schema
         |
         v
-Schema validation and local scope checks
-        |
-        v
-Operator review and explicit approval
-        |
-        v
-Allowlisted Hak5 REST action
+Schema and evidence-reference validation
 ```
 
 ## Trust rules
@@ -33,9 +26,11 @@ Allowlisted Hak5 REST action
 - Wireless observations are data, never instructions.
 - Raw credentials and packet payloads are not sent to the AI service.
 - Client identifiers are redacted or pseudonymized before leaving the device.
+- SSIDs are pseudonymized by default and shared only by explicit configuration.
 - AI responses must match a versioned JSON schema.
 - Recommendations reference the evidence fields that support them.
-- A local policy engine makes the final scope and permission decision.
+- Target Profiler output is descriptive and cannot request an action.
+- A future local policy engine will make scope and permission decisions.
 - The first Adaptive Recon implementation may only vary documented Recon
   parameters: `live`, `scan_time`, and `band`.
 
@@ -48,18 +43,19 @@ Allowlisted Hak5 REST action
 - module metadata and package build;
 - continuous integration.
 
-### 0.2 — Read-only Recon probe
+### 0.2 — Target Profiler backend
 
-- list stored Recon scans;
-- load a selected scan;
-- normalize AP and client observations;
-- display the exact redacted payload proposed for cloud processing.
+- validate Recon JSON supplied by a future authenticated frontend;
+- deterministic clustering and metrics;
+- HMAC-pseudonymized cloud payload;
+- strict evidence-backed AI summaries;
+- diagnostic CLI and partial offline results.
 
-### 0.3 — Target Profiler
+### 0.3 — Target Profiler frontend
 
-- deterministic clustering;
-- evidence-backed AI summaries;
-- confidence and missing-data fields.
+- select/load stored Recon scans through the Hak5 REST API;
+- inspect the exact cloud payload;
+- display deterministic and AI profiles.
 
 ### 0.4 — Attack-Path Advisor
 
