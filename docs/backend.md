@@ -1,6 +1,6 @@
 # Target Profiler backend
 
-PineAI `0.2.0` contains a read-only Target Profiler backend. The implementation
+PineAI contains a read-only Target Profiler backend. The implementation
 uses only the Python standard library so it can run in the Mark VII firmware
 without adding packages.
 
@@ -130,6 +130,9 @@ Before upstream publication, verify on a Mark VII:
 - `health` and `profile_recon` module actions;
 - actual firmware Recon response shapes;
 - package install, uninstall, and reinstall.
+
+Attack-Path Advisor is documented separately in
+[attack-path-advisor.md](attack-path-advisor.md).
 
 ## References
 

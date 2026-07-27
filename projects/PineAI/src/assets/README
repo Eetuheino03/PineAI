@@ -1,6 +1,8 @@
 PineAI backend assets
 
-- pineai_backend/ contains the standard-library-only Target Profiler.
-- pineai_cli.py provides configure, status, prepare, and profile commands.
+- pineai_backend/ contains the standard-library-only Target Profiler,
+  engagement store and Attack-Path Advisor.
+- pineai_cli.py provides configuration, profiling, engagement and advisory
+  commands.
 
 See the repository docs/backend.md for the API, privacy model, and CLI usage.

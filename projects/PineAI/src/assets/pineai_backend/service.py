@@ -11,6 +11,7 @@ from .config import (
     load_api_key,
     load_settings,
 )
+from .errors import BackendError
 from .openai_client import OpenAIClient, OpenAIClientError
 from .profiler import (
     ReconValidationError,
@@ -21,7 +22,7 @@ from .profiler import (
 
 
 SCHEMA_VERSION = "1.0"
-BACKEND_VERSION = "0.2.0"
+BACKEND_VERSION = "0.3.0"
 ROLES = {
     "corporate",
     "guest",
@@ -33,15 +34,6 @@ ROLES = {
     "unknown",
 }
 INTEREST_LEVELS = {"low", "medium", "high"}
-
-
-class BackendError(ValueError):
-    """A validation/configuration error safe to return to the module caller."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.safe_message = message
 
 
 def _utc_now() -> str:

@@ -126,6 +126,28 @@ class OpenAIClientTests(unittest.TestCase):
             client.profile({"targets": []}, "en", "device_test")
         self.assertEqual(raised.exception.code, "invalid_response")
 
+    def test_advisor_uses_strict_schema_and_no_tools(self):
+        captured = {}
+        structured = {"targets": []}
+
+        def opener(api_request, timeout):
+            captured["body"] = json.loads(api_request.data.decode("utf-8"))
+            return FakeResponse(
+                response_body(
+                    [{"type": "output_text", "text": json.dumps(structured)}]
+                )
+            )
+
+        client = OpenAIClient("secret", "gpt-5.6-terra", opener=opener)
+        parsed, _usage = client.advise({"targets": []}, "fi", "device_test")
+        self.assertEqual(parsed, structured)
+        self.assertEqual(
+            captured["body"]["text"]["format"]["name"], "pineai_attack_paths"
+        )
+        self.assertTrue(captured["body"]["text"]["format"]["strict"])
+        self.assertFalse(captured["body"]["store"])
+        self.assertNotIn("tools", captured["body"])
+
 
 if __name__ == "__main__":
     unittest.main()

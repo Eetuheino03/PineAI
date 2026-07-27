@@ -53,10 +53,21 @@ class ModuleAdapterTests(unittest.TestCase):
         loaded = self.load_module()
         self.assertIn("health", loaded.module.actions)
         self.assertIn("profile_recon", loaded.module.actions)
+        for action in (
+            "advisor_capabilities",
+            "create_engagement",
+            "get_engagement",
+            "list_engagements",
+            "update_engagement",
+            "archive_engagement",
+            "append_engagement_event",
+            "advise_attack_paths",
+        ):
+            self.assertIn(action, loaded.module.actions)
         with tempfile.TemporaryDirectory() as directory:
             with mock.patch.dict(os.environ, {"PINEAI_CONFIG_DIR": directory}):
                 response = loaded.health(FakeRequest())
-        self.assertEqual(response["version"], "0.2.0")
+        self.assertEqual(response["version"], "0.3.0")
         self.assertFalse(response["api_key_configured"])
         self.assertNotIn("api_key", response)
 

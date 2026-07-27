@@ -16,9 +16,12 @@ Normalization and redaction
 OpenAI Responses API
         |
         +--> Strict Target Profiler schema
+        +--> Strict Attack-Path selection schema
         |
         v
 Schema and evidence-reference validation
+        |
+        +--> Revisioned engagement state and audit events
 ```
 
 ## Trust rules
@@ -30,7 +33,8 @@ Schema and evidence-reference validation
 - AI responses must match a versioned JSON schema.
 - Recommendations reference the evidence fields that support them.
 - Target Profiler output is descriptive and cannot request an action.
-- A future local policy engine will make scope and permission decisions.
+- The local Advisor policy engine makes scope and permission decisions.
+- AI never creates an action or changes authoritative risk metadata.
 - The first Adaptive Recon implementation may only vary documented Recon
   parameters: `live`, `scan_time`, and `band`.
 
@@ -51,17 +55,18 @@ Schema and evidence-reference validation
 - strict evidence-backed AI summaries;
 - diagnostic CLI and partial offline results.
 
-### 0.3 — Target Profiler frontend
+### 0.3 — Attack-Path Advisor backend
 
-- select/load stored Recon scans through the Hak5 REST API;
-- inspect the exact cloud payload;
-- display deterministic and AI profiles.
+- revisioned engagement scope and event history;
+- deterministic policy-approved paths;
+- strict AI selection from pre-approved path IDs;
+- module actions, CLI and versioned frontend schema.
 
-### 0.4 — Attack-Path Advisor
+### 0.4 — Target Profiler and Advisor frontend
 
-- engagement scope and objective;
-- allowlisted advisory action vocabulary;
-- risk, expected value, evidence requirement, and stop condition.
+- select/load Recon scans through the Hak5 REST API;
+- manage engagements and revisions;
+- display profiles, paths, approvals and events.
 
 ### 0.5 — Adaptive Recon
 

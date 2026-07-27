@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Eetuheino03/PineAI/docs/schemas/attack-path-advisor-v1.schema.json",
+  "title": "PineAI Attack-Path Advisor API v1",
+  "$defs": {
+    "targetId": {
+      "type": "string",
+      "pattern": "^target_[0-9a-f]{12}$"
+    },
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^evidence_[0-9a-f]{12}$"
+    },
+    "objectiveCode": {
+      "type": "string",
+      "enum": [
+        "wireless_mapping",
+        "enterprise_authentication",
+        "guest_network_security",
+        "captive_portal_security",
+        "rogue_ap_resilience",
+        "client_awareness",
+        "credential_capture_assessment"
+      ]
+    },
+    "actionId": {
+      "type": "string",
+      "enum": [
+        "collect_additional_recon",
+        "passive_handshake_capture",
+        "test_device_association",
+        "captive_portal_inspection",
+        "enterprise_eap_validation",
+        "authorized_deauthentication",
+        "evil_twin_simulation"
+      ]
+    },
+    "engagementInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "objectives",
+        "objective_notes",
+        "authorized_target_ids",
+        "allowed_actions",
+        "disruption_allowed",
+        "authorization_reference",
+        "valid_from",
+        "valid_until"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "objectives": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/objectiveCode"
+          }
+        },
+        "objective_notes": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "authorized_target_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/targetId"
+          }
+        },
+        "allowed_actions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/actionId"
+          }
+        },
+        "disruption_allowed": {
+          "type": "boolean"
+        },
+        "authorization_reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "valid_from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "valid_until": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "engagementEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_type",
+        "summary",
+        "target_id",
+        "action_id",
+        "evidence_ids"
+      ],
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "action_started",
+            "action_completed",
+            "action_failed",
+            "action_aborted",
+            "operator_note"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "target_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/targetId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "action_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/actionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_ids": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceId"
+          }
+        }
+      }
+    },
+    "adviseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engagement_id",
+        "profile_result",
+        "target_ids"
+      ],
+      "properties": {
+        "engagement_id": {
+          "type": "string",
+          "pattern": "^eng_[0-9a-f-]{36}$"
+        },
+        "profile_result": {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "targets"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "1.0"
+            },
+            "targets": {
+              "type": "array"
+            }
+          }
+        },
+        "target_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/targetId"
+          }
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "language": {
+              "type": "string",
+              "enum": [
+                "en",
+                "fi"
+              ]
+            },
+            "share_ssids": {
+              "type": "boolean"
+            },
+            "ai_enabled": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "pathResult": {
+      "type": "object",
+      "required": [
+        "path_id",
+        "template_id",
+        "target_id",
+        "rank",
+        "source",
+        "risk",
+        "detectability",
+        "requires_explicit_approval",
+        "steps",
+        "policy_checks"
+      ],
+      "properties": {
+        "path_id": {
+          "type": "string",
+          "pattern": "^path_[0-9a-f]{12}$"
+        },
+        "template_id": {
+          "type": "string"
+        },
+        "target_id": {
+          "$ref": "#/$defs/targetId"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "deterministic",
+            "ai"
+          ]
+        },
+        "risk": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "detectability": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "requires_explicit_approval": {
+          "type": "boolean"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3
+        },
+        "policy_checks": {
+          "type": "array"
+        }
+      }
+    }
+  }
+}

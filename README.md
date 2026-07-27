@@ -12,11 +12,12 @@ The project is intentionally split into three focused capabilities:
 3. **Adaptive Recon** recommends additional Recon runs and requires explicit
    operator approval before any scan is started.
 
-Version `0.2.0` implements the Target Profiler backend. It accepts Hak5 Recon
-JSON, produces deterministic target profiles, pseudonymizes cloud-bound
-identifiers, and optionally requests a schema-constrained analysis from the
-OpenAI Responses API. The frontend is still the upstream-compatible scaffold
-and no radio operation is started.
+Version `0.3.0` implements the Target Profiler and persistent Attack-Path
+Advisor backends. Advisor combines an engagement scope, Target Profiler output
+and append-only event history into policy-approved test paths. Both features
+have deterministic offline output and optional schema-constrained OpenAI
+enrichment. The frontend remains the upstream-compatible scaffold and no radio
+operation is started.
 
 ## Compatibility
 
@@ -90,6 +91,10 @@ The future frontend will obtain Recon data through the already-authenticated
 Hak5 session and pass it to this action. PineAI does not store the Pineapple
 root password. See [docs/backend.md](docs/backend.md) for the complete
 contract, privacy model, and error states.
+
+Attack-Path Advisor's engagement lifecycle, frontend contract and examples are
+documented in
+[docs/attack-path-advisor.md](docs/attack-path-advisor.md).
 
 ## Upstream contribution
 

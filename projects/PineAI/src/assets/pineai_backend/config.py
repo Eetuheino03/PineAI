@@ -65,6 +65,11 @@ def _atomic_private_write(path: Path, data: bytes) -> None:
             os.unlink(temporary_name)
 
 
+def write_private_file(path: Path, data: bytes) -> None:
+    """Atomically write a private file using Mark VII-safe permissions."""
+    _atomic_private_write(path, data)
+
+
 def _validate_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     result = dict(DEFAULTS)
     result.update(settings)

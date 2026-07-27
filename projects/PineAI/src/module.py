@@ -14,8 +14,11 @@ if ASSETS_DIRECTORY not in sys.path:
     sys.path.insert(0, ASSETS_DIRECTORY)
 
 from pineai_backend import __version__  # noqa: E402
+from pineai_backend.advisor_service import AttackPathAdvisorService  # noqa: E402
 from pineai_backend.config import ConfigError, public_status  # noqa: E402
-from pineai_backend.service import BackendError, TargetProfilerService  # noqa: E402
+from pineai_backend.engagement_store import EngagementStore  # noqa: E402
+from pineai_backend.errors import BackendError  # noqa: E402
+from pineai_backend.service import TargetProfilerService  # noqa: E402
 
 
 module = Module("PineAI", logging.INFO)
@@ -64,6 +67,106 @@ def profile_recon(request: Request):
             },
             False,
         )
+
+
+def _backend_failure(failure: BackendError):
+    return (
+        {
+            "error": {
+                "code": failure.code,
+                "message": failure.safe_message,
+            }
+        },
+        False,
+    )
+
+
+@module.handles_action("advisor_capabilities")
+def advisor_capabilities(_request: Request):
+    try:
+        return AttackPathAdvisorService().capabilities()
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("create_engagement")
+def create_engagement(request: Request):
+    try:
+        return EngagementStore().create(getattr(request, "engagement", None))
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("get_engagement")
+def get_engagement(request: Request):
+    try:
+        return EngagementStore().get(
+            getattr(request, "engagement_id", None),
+            getattr(request, "after_sequence", 0),
+            getattr(request, "limit", 100),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("list_engagements")
+def list_engagements(request: Request):
+    try:
+        return {
+            "engagements": EngagementStore().list(
+                getattr(request, "include_archived", False)
+            )
+        }
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("update_engagement")
+def update_engagement(request: Request):
+    try:
+        return EngagementStore().update(
+            getattr(request, "engagement_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "changes", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("archive_engagement")
+def archive_engagement(request: Request):
+    try:
+        return EngagementStore().archive(
+            getattr(request, "engagement_id", None),
+            getattr(request, "expected_revision", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("append_engagement_event")
+def append_engagement_event(request: Request):
+    try:
+        return EngagementStore().append_event(
+            getattr(request, "engagement_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "event", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("advise_attack_paths")
+def advise_attack_paths(request: Request):
+    try:
+        return AttackPathAdvisorService().advise(
+            getattr(request, "engagement_id", None),
+            getattr(request, "profile_result", None),
+            getattr(request, "target_ids", None),
+            getattr(request, "options", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
 
 
 if __name__ == "__main__":

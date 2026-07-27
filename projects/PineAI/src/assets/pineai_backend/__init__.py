@@ -1,6 +1,12 @@
-"""PineAI Target Profiler backend."""
+"""PineAI backend."""
 
-from .service import BackendError, TargetProfilerService
+from .advisor_service import AttackPathAdvisorService
+from .errors import BackendError
+from .service import TargetProfilerService
 
-__all__ = ["BackendError", "TargetProfilerService"]
-__version__ = "0.2.0"
+__all__ = [
+    "AttackPathAdvisorService",
+    "BackendError",
+    "TargetProfilerService",
+]
+__version__ = "0.3.0"

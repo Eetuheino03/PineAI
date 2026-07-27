@@ -18,6 +18,8 @@ import sys
 sys.path.insert(0, str(ASSETS))
 
 import pineai_cli  # noqa: E402
+from test_advisor import profile_result  # noqa: E402
+from test_engagement_store import TARGET_ID, engagement_value  # noqa: E402
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "recon_basic.json"
@@ -91,6 +93,53 @@ class CliTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(errors.getvalue())["error"]["code"], "invalid_input"
             )
+
+    def test_engagement_and_offline_advisor_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            engagement_input = Path(directory) / "engagement.json"
+            engagement_input.write_text(
+                json.dumps(engagement_value()), encoding="utf-8"
+            )
+            created_output = io.StringIO()
+            self.assertEqual(
+                pineai_cli.main(
+                    [
+                        "--config-dir",
+                        directory,
+                        "engagement",
+                        "create",
+                        "--input",
+                        str(engagement_input),
+                    ],
+                    stdout=created_output,
+                ),
+                0,
+            )
+            created = json.loads(created_output.getvalue())
+            profile_path = Path(directory) / "profile.json"
+            profile_path.write_text(json.dumps(profile_result()), encoding="utf-8")
+            advice_output = io.StringIO()
+            self.assertEqual(
+                pineai_cli.main(
+                    [
+                        "--config-dir",
+                        directory,
+                        "advise",
+                        "--engagement-id",
+                        created["engagement_id"],
+                        "--input",
+                        str(profile_path),
+                        "--target-id",
+                        TARGET_ID,
+                        "--no-ai",
+                    ],
+                    stdout=advice_output,
+                ),
+                0,
+            )
+            advice = json.loads(advice_output.getvalue())
+            self.assertEqual(advice["advisor_status"]["code"], "ai_disabled")
+            self.assertEqual(len(advice["target_results"][0]["paths"]), 3)
 
 
 if __name__ == "__main__":
