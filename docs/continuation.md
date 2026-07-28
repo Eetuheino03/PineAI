@@ -63,8 +63,6 @@ remove accidental CRLF-only changes before implementation commits.
   examples implemented
 - Package: `PineAI-0.6.0.tar.gz` built in WSL with root ownership, expected
   modes, and SHA-256 sidecar
-- CI artifact SHA-256:
-  `caa6f636cb625e5417b7bb55b6f5db61aa4533585bba3ad8de708e71cd77df63`
 
 ## Latest completed verification
 
@@ -86,8 +84,10 @@ remove accidental CRLF-only changes before implementation commits.
 
 ## Release handoff
 
-Publish the verified CI artifact and checksum as `v0.6.0` from this `main`
-state. Do not rebuild the release archive locally.
+Publish the verified CI artifact and its matching
+`PineAI-0.6.0.tar.gz.sha256` sidecar as `v0.6.0` from this `main` state. The
+sidecar attached to the release is authoritative because each CI archive has
+its own build timestamp. Do not rebuild the release archive locally.
 
 ## Next task
 
