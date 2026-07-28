@@ -23,8 +23,43 @@
     { "$ref": "#/$defs/reportResponse" }
   ],
   "x-module-actions": {
+    "health": {
+      "response": "#/$defs/genericObject"
+    },
+    "get_settings": {
+      "response": "#/$defs/genericObject"
+    },
+    "update_settings": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "set_openai_api_key": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "delete_openai_api_key": {
+      "response": "#/$defs/genericObject"
+    },
     "assurance_capabilities": {
       "response": "#/$defs/assuranceCapabilities"
+    },
+    "platform_capabilities": {
+      "response": "#/$defs/genericObject"
+    },
+    "list_measurement_profiles": {
+      "response": "#/$defs/genericObject"
+    },
+    "create_measurement_profile": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "update_measurement_profile": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "archive_measurement_profile": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
     },
     "create_assessment": {
       "request": "#/$defs/createAssessmentRequest",
@@ -54,13 +89,49 @@
       "request": "#/$defs/createBaselineRequest",
       "response": "#/$defs/baselineMutationResponse"
     },
+    "preview_consensus_baseline": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "create_consensus_baseline_version": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
     "list_baseline_versions": {
       "request": "#/$defs/listBaselinesRequest",
       "response": "#/$defs/baselineListResponse"
     },
+    "get_baseline_version": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
     "activate_baseline_version": {
       "request": "#/$defs/activateBaselineRequest",
       "response": "#/$defs/baselineMutationResponse"
+    },
+    "preview_inventory_csv": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "create_assurance_profile_version": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "list_assurance_profile_versions": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "get_assurance_profile_version": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "activate_assurance_profile_version": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "export_inventory_csv": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
     },
     "compare_recon": {
       "request": "#/$defs/compareReconRequest",
@@ -78,6 +149,14 @@
       "request": "#/$defs/updateFindingRequest",
       "response": "#/$defs/findingMutationResponse"
     },
+    "list_observed_changes": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
+    "get_evidence_bundle": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
     "prepare_ai_analysis": {
       "request": "#/$defs/aiAnalysisRequest",
       "response": "#/$defs/aiPrepareResponse"
@@ -86,14 +165,21 @@
       "request": "#/$defs/aiAnalysisRequest",
       "response": "#/$defs/aiAnalysisResponse"
     },
+    "prepare_report": {
+      "request": "#/$defs/genericObject",
+      "response": "#/$defs/genericObject"
+    },
     "generate_report": {
       "request": "#/$defs/reportRequest",
       "response": "#/$defs/reportResponse"
     }
   },
   "$defs": {
+    "genericObject": {
+      "type": "object"
+    },
     "schemaVersion": {
-      "enum": ["1.0", "1.1"]
+      "enum": ["1.0", "1.1", "1.2"]
     },
     "timestamp": {
       "type": "string",
@@ -219,26 +305,50 @@
         }
       }
     },
+    "legacyRuleCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "title", "severity"],
+      "properties": {
+        "rule_id": { "$ref": "#/$defs/ruleId" },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "severity": { "$ref": "#/$defs/severity" }
+      }
+    },
     "assuranceCapabilities": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "schema_version",
         "product_mode",
+        "product_position",
         "offline_complete",
         "comparability_states",
         "finding_statuses",
-        "rules",
         "limits",
         "authoritative_fields",
         "backend_version",
         "module_actions",
+        "consensus",
+        "assurance_profiles",
+        "result_types",
+        "certainty_levels",
+        "report_scopes",
+        "privacy_profiles",
+        "legacy_history",
         "ai_role",
         "recon_control"
       ],
       "properties": {
         "schema_version": { "$ref": "#/$defs/schemaVersion" },
-        "product_mode": { "const": "baseline_and_drift" },
+        "product_mode": { "const": "customer_audit_foundation" },
+        "product_position": {
+          "const": "Portable offline wireless change auditing for WiFi Pineapple"
+        },
         "offline_complete": { "const": true },
         "comparability_states": {
           "type": "array",
@@ -308,12 +418,22 @@
           }
         },
         "backend_version": {
-          "const": "0.6.1"
+          "const": "0.6.2"
         },
         "module_actions": {
           "type": "array",
           "prefixItems": [
+            { "const": "health" },
+            { "const": "get_settings" },
+            { "const": "update_settings" },
+            { "const": "set_openai_api_key" },
+            { "const": "delete_openai_api_key" },
             { "const": "assurance_capabilities" },
+            { "const": "platform_capabilities" },
+            { "const": "list_measurement_profiles" },
+            { "const": "create_measurement_profile" },
+            { "const": "update_measurement_profile" },
+            { "const": "archive_measurement_profile" },
             { "const": "create_assessment" },
             { "const": "get_assessment" },
             { "const": "list_assessments" },
@@ -321,17 +441,71 @@
             { "const": "archive_assessment" },
             { "const": "resolve_recon" },
             { "const": "create_baseline_version" },
+            { "const": "preview_consensus_baseline" },
+            { "const": "create_consensus_baseline_version" },
             { "const": "list_baseline_versions" },
+            { "const": "get_baseline_version" },
             { "const": "activate_baseline_version" },
+            { "const": "preview_inventory_csv" },
+            { "const": "create_assurance_profile_version" },
+            { "const": "list_assurance_profile_versions" },
+            { "const": "get_assurance_profile_version" },
+            { "const": "activate_assurance_profile_version" },
+            { "const": "export_inventory_csv" },
             { "const": "compare_recon" },
             { "const": "analyze_recon" },
             { "const": "list_findings" },
             { "const": "update_finding" },
+            { "const": "list_observed_changes" },
+            { "const": "get_evidence_bundle" },
             { "const": "prepare_ai_analysis" },
             { "const": "generate_ai_analysis" },
+            { "const": "prepare_report" },
             { "const": "generate_report" }
           ],
           "items": false
+        },
+        "consensus": { "type": "object" },
+        "assurance_profiles": { "type": "object" },
+        "result_types": { "type": "object" },
+        "certainty_levels": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "confirmed" },
+            { "const": "probable" },
+            { "const": "limited" }
+          ],
+          "items": false
+        },
+        "report_scopes": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "comparison" },
+            { "const": "assessment_current" },
+            { "const": "assessment_history" }
+          ],
+          "items": false
+        },
+        "privacy_profiles": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "local_full" },
+            { "const": "share_safe" }
+          ],
+          "items": false
+        },
+        "legacy_history": {
+          "type": "object",
+          "required": ["read_only", "rules"],
+          "properties": {
+            "read_only": { "const": true },
+            "rules": {
+              "type": "array",
+              "minItems": 8,
+              "maxItems": 8,
+              "items": { "$ref": "#/$defs/legacyRuleCapability" }
+            }
+          }
         },
         "ai_role": {
           "const": "non_authoritative_explanation_and_report_prose"
@@ -658,6 +832,29 @@
         "scan_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
         "radio_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
         "interface": { "oneOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] },
+        "measurement_profile_id": {
+          "oneOf": [
+            { "type": "string", "pattern": "^mprofile_[0-9a-f-]{36}$" },
+            { "type": "null" }
+          ]
+        },
+        "measurement_profile_version_id": {
+          "oneOf": [
+            { "type": "string", "pattern": "^mprofile_r[0-9]{4}$" },
+            { "type": "null" }
+          ]
+        },
+        "measurement_profile_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "measurement_profile_digest": {
+          "oneOf": [
+            { "$ref": "#/$defs/digest" },
+            { "type": "null" }
+          ]
+        },
         "declared_channels": {
           "oneOf": [
             {
@@ -686,6 +883,10 @@
         { "not": { "required": ["measurement_context", "scan_profile_id"] } },
         { "not": { "required": ["measurement_context", "radio_profile_id"] } },
         { "not": { "required": ["measurement_context", "interface"] } },
+        { "not": { "required": ["measurement_context", "measurement_profile_id"] } },
+        { "not": { "required": ["measurement_context", "measurement_profile_version_id"] } },
+        { "not": { "required": ["measurement_context", "measurement_profile_revision"] } },
+        { "not": { "required": ["measurement_context", "measurement_profile_digest"] } },
         { "not": { "required": ["measurement_context", "declared_channels"] } },
         { "not": { "required": ["measurement_context", "declared_bands"] } }
       ]
@@ -699,6 +900,29 @@
         "scan_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
         "radio_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
         "interface": { "oneOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] },
+        "measurement_profile_id": {
+          "oneOf": [
+            { "type": "string", "pattern": "^mprofile_[0-9a-f-]{36}$" },
+            { "type": "null" }
+          ]
+        },
+        "measurement_profile_version_id": {
+          "oneOf": [
+            { "type": "string", "pattern": "^mprofile_r[0-9]{4}$" },
+            { "type": "null" }
+          ]
+        },
+        "measurement_profile_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "measurement_profile_digest": {
+          "oneOf": [
+            { "$ref": "#/$defs/digest" },
+            { "type": "null" }
+          ]
+        },
         "declared_channels": {
           "oneOf": [
             {
@@ -825,6 +1049,24 @@
         "scan_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
         "radio_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
         "interface": { "oneOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] },
+        "measurement_profile_id": {
+          "oneOf": [
+            { "type": "string", "pattern": "^mprofile_[0-9a-f-]{36}$" },
+            { "type": "null" }
+          ]
+        },
+        "measurement_profile_version_id": {
+          "oneOf": [
+            { "type": "string", "pattern": "^mprofile_r[0-9]{4}$" },
+            { "type": "null" }
+          ]
+        },
+        "measurement_profile_digest": {
+          "oneOf": [
+            { "$ref": "#/$defs/digest" },
+            { "type": "null" }
+          ]
+        },
         "declared_channels": {
           "oneOf": [
             {
@@ -860,6 +1102,24 @@
         "scan_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
         "radio_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
         "interface": { "oneOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] },
+        "measurement_profile_id": {
+          "oneOf": [
+            { "type": "string", "pattern": "^mprofile_[0-9a-f-]{36}$" },
+            { "type": "null" }
+          ]
+        },
+        "measurement_profile_version_id": {
+          "oneOf": [
+            { "type": "string", "pattern": "^mprofile_r[0-9]{4}$" },
+            { "type": "null" }
+          ]
+        },
+        "measurement_profile_digest": {
+          "oneOf": [
+            { "$ref": "#/$defs/digest" },
+            { "type": "null" }
+          ]
+        },
         "declared_channels_scanned": {
           "oneOf": [
             {
@@ -1340,6 +1600,35 @@
         "access_point_count": {
           "type": "integer",
           "minimum": 0
+        },
+        "measurement_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "measurement_profile_id",
+            "measurement_profile_version_id",
+            "measurement_profile_digest"
+          ],
+          "properties": {
+            "measurement_profile_id": {
+              "oneOf": [
+                { "type": "string", "pattern": "^mprofile_[0-9a-f-]{36}$" },
+                { "type": "null" }
+              ]
+            },
+            "measurement_profile_version_id": {
+              "oneOf": [
+                { "type": "string", "pattern": "^mprofile_r[0-9]{4}$" },
+                { "type": "null" }
+              ]
+            },
+            "measurement_profile_digest": {
+              "oneOf": [
+                { "$ref": "#/$defs/digest" },
+                { "type": "null" }
+              ]
+            }
+          }
         }
       }
     },
@@ -1395,6 +1684,18 @@
           "oneOf": [{ "type": "boolean" }, { "type": "null" }]
         },
         "interface_match": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "measurement_profile_id_match": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "measurement_profile_version_id_match": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "measurement_profile_digest_match": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "measurement_profile_provenance_match": {
           "oneOf": [{ "type": "boolean" }, { "type": "null" }]
         },
         "channel_coverage_ratio": {
@@ -1581,7 +1882,7 @@
           "if": {
             "required": ["schema_version"],
             "properties": {
-              "schema_version": { "const": "1.1" }
+              "schema_version": { "enum": ["1.1", "1.2"] }
             }
           },
           "then": {

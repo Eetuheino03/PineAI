@@ -30,37 +30,81 @@
         <p>Loading Baseline &amp; Drift…</p>
     </div>
 
-    <mat-tab-group
-        *ngIf="pineai.initialized"
-        class="pineai-tabs"
-        dynamicHeight
-        animationDuration="150ms">
-        <mat-tab label="Overview">
-            <lib-pineai-overview></lib-pineai-overview>
-        </mat-tab>
-        <mat-tab label="Recon">
-            <lib-pineai-recon></lib-pineai-recon>
-        </mat-tab>
-        <mat-tab label="Assessments">
-            <lib-pineai-assessments></lib-pineai-assessments>
-        </mat-tab>
-        <mat-tab label="Baselines">
-            <lib-pineai-baselines></lib-pineai-baselines>
-        </mat-tab>
-        <mat-tab label="Assets &amp; Changes">
-            <lib-pineai-assets-changes></lib-pineai-assets-changes>
-        </mat-tab>
-        <mat-tab label="Findings">
-            <lib-pineai-findings></lib-pineai-findings>
-        </mat-tab>
-        <mat-tab label="Reports">
-            <lib-pineai-reports></lib-pineai-reports>
-        </mat-tab>
-        <mat-tab label="Activity">
-            <lib-pineai-activity></lib-pineai-activity>
-        </mat-tab>
-        <mat-tab label="Settings">
-            <lib-pineai-settings></lib-pineai-settings>
-        </mat-tab>
-    </mat-tab-group>
+    <div *ngIf="pineai.initialized">
+        <div class="mode-bar">
+            <mat-button-toggle-group
+                [(ngModel)]="mode"
+                aria-label="PineAI operating mode">
+                <mat-button-toggle value="guided">
+                    <mat-icon>assistant</mat-icon>
+                    Guided
+                </mat-button-toggle>
+                <mat-button-toggle value="expert">
+                    <mat-icon>dashboard</mat-icon>
+                    Expert
+                </mat-button-toggle>
+            </mat-button-toggle-group>
+            <span class="mode-help">
+                {{ mode === 'guided'
+                    ? 'Explicit checkpoints for a complete assessment'
+                    : 'Direct access to all nine specialist views' }}
+            </span>
+        </div>
+
+        <div
+            *ngIf="pineai.capabilitySummary() as capability"
+            class="capability-banner"
+            [ngClass]="capability.level"
+            role="status">
+            <mat-icon>
+                {{ capability.level === 'ready' ? 'check_circle' :
+                   capability.level === 'degraded' ? 'warning' : 'error' }}
+            </mat-icon>
+            <div>
+                <strong>{{ capability.title }}</strong>
+                <div>{{ capability.detail }}</div>
+                <div *ngIf="capability.unavailable.length" class="capability-detail">
+                    Unavailable: {{ capability.unavailable.join(', ') }}
+                </div>
+            </div>
+        </div>
+
+        <lib-pineai-guided-assessment
+            *ngIf="mode === 'guided'">
+        </lib-pineai-guided-assessment>
+
+        <mat-tab-group
+            *ngIf="mode === 'expert'"
+            class="pineai-tabs"
+            dynamicHeight
+            animationDuration="150ms">
+            <mat-tab label="Overview">
+                <lib-pineai-overview></lib-pineai-overview>
+            </mat-tab>
+            <mat-tab label="Recon">
+                <lib-pineai-recon></lib-pineai-recon>
+            </mat-tab>
+            <mat-tab label="Assessments">
+                <lib-pineai-assessments></lib-pineai-assessments>
+            </mat-tab>
+            <mat-tab label="Baselines">
+                <lib-pineai-baselines></lib-pineai-baselines>
+            </mat-tab>
+            <mat-tab label="Assets &amp; Changes">
+                <lib-pineai-assets-changes></lib-pineai-assets-changes>
+            </mat-tab>
+            <mat-tab label="Findings">
+                <lib-pineai-findings></lib-pineai-findings>
+            </mat-tab>
+            <mat-tab label="Reports">
+                <lib-pineai-reports></lib-pineai-reports>
+            </mat-tab>
+            <mat-tab label="Activity">
+                <lib-pineai-activity></lib-pineai-activity>
+            </mat-tab>
+            <mat-tab label="Settings">
+                <lib-pineai-settings></lib-pineai-settings>
+            </mat-tab>
+        </mat-tab-group>
+    </div>
 </div>

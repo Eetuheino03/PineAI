@@ -11,6 +11,8 @@ MAX_ACCESS_POINTS = 1000
 MAX_CLIENTS = 10000
 MAX_TEXT_LENGTH = 128
 MAC_PATTERN = re.compile(r"^[0-9A-F]{12}$")
+COLON_MAC_PATTERN = re.compile(r"^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$")
+HYPHEN_MAC_PATTERN = re.compile(r"^(?:[0-9A-F]{2}-){5}[0-9A-F]{2}$")
 MAC_IN_TEXT_PATTERN = re.compile(
     r"(?i)(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}"
 )
@@ -49,6 +51,30 @@ def _canonical_mac(value: Any) -> str:
         return text
     return ":".join(
         compact[index : index + 2] for index in range(0, 12, 2)
+    )
+
+
+def _canonical_bssid(value: Any, index: int) -> str:
+    """Return a strict canonical BSSID or reject the AP observation.
+
+    Client addresses are allowed to be absent in documented Recon responses,
+    but an access point without an unambiguous BSSID cannot participate in
+    stable asset resolution or inventory reconciliation.
+    """
+    text = _sanitize_text(value, 32).strip().upper()
+    if MAC_PATTERN.match(text):
+        compact = text
+    elif COLON_MAC_PATTERN.match(text):
+        compact = text.replace(":", "")
+    elif HYPHEN_MAC_PATTERN.match(text):
+        compact = text.replace("-", "")
+    else:
+        raise ReconValidationError(
+            "AP bssid at index {0} must be a 48-bit MAC address".format(index)
+        )
+    return ":".join(
+        compact[position : position + 2]
+        for position in range(0, 12, 2)
     )
 
 
@@ -123,7 +149,7 @@ def _normalize_ap(
         raise ReconValidationError(
             "AP clients at index {0} must be an array".format(index)
         )
-    bssid = _canonical_mac(access_point.get("bssid", ""))
+    bssid = _canonical_bssid(access_point.get("bssid"), index)
     return {
         "ssid": _sanitize_text(access_point.get("ssid", "")),
         "bssid": bssid,
@@ -188,6 +214,9 @@ def validate_and_normalize_scan(
         _normalize_ap(access_point, index, database)
         for index, access_point in enumerate(access_points)
     ]
+    bssids = [access_point["bssid"] for access_point in normalized_aps]
+    if len(set(bssids)) != len(bssids):
+        raise ReconValidationError("scan.APResults contains a duplicate BSSID")
     normalized_out_of_range = [
         _normalize_client(client, index)
         for index, client in enumerate(out_of_range)

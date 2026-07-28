@@ -25,25 +25,79 @@
                 </div>
                 <div class="row">
                     <mat-form-field appearance="outline">
+                        <mat-label>Report scope</mat-label>
+                        <mat-select
+                            [(ngModel)]="reportScopeType"
+                            (selectionChange)="resetReportPreview()">
+                            <mat-option value="comparison">Current comparison</mat-option>
+                            <mat-option value="assessment_current">Current assessment state</mat-option>
+                            <mat-option value="assessment_history">Full assessment history</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <mat-form-field
+                        *ngIf="reportScopeType === 'comparison'"
+                        appearance="outline">
+                        <mat-label>Saved comparison</mat-label>
+                        <mat-select
+                            [(ngModel)]="selectedComparisonId"
+                            (selectionChange)="resetReportPreview()">
+                            <mat-option
+                                *ngFor="let comparison of comparisons()"
+                                [value]="comparisonId(comparison)">
+                                {{ comparison.created_at || comparison.analyzed_at ||
+                                   comparisonId(comparison) }}
+                            </mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Privacy profile</mat-label>
+                        <mat-select
+                            [(ngModel)]="privacyProfile"
+                            (selectionChange)="resetReportPreview()">
+                            <mat-option value="local_full">
+                                Local full evidence
+                            </mat-option>
+                            <mat-option value="share_safe">
+                                Share-safe pseudonymized export
+                            </mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
                         <mat-label>Format</mat-label>
-                        <mat-select [(ngModel)]="format">
+                        <mat-select
+                            [(ngModel)]="format"
+                            (selectionChange)="resetReportPreview()">
                             <mat-option value="html">Standalone HTML</mat-option>
                             <mat-option value="json">JSON</mat-option>
                         </mat-select>
                     </mat-form-field>
                     <mat-checkbox
                         [(ngModel)]="includeAi"
+                        (change)="resetReportPreview()"
                         [disabled]="!pineai.aiAnalysisValue()">
                         Include clearly labelled AI text
                     </mat-checkbox>
                 </div>
+                <div
+                    *ngIf="privacyProfile === 'share_safe'"
+                    class="warning-banner">
+                    Share-safe export removes or pseudonymizes local identifiers.
+                    Review the exact manifest before generating a file.
+                </div>
                 <div class="actions">
+                    <button
+                        mat-stroked-button
+                        (click)="prepareReport()"
+                        [disabled]="busy ||
+                            (reportScopeType === 'comparison' && !selectedComparisonId)">
+                        Prepare scope &amp; privacy
+                    </button>
                     <button
                         mat-flat-button
                         color="accent"
                         (click)="generateReport()"
-                        [disabled]="busy || !pineai.hasComparison()">
-                        Generate report
+                        [disabled]="busy || !pineai.reportScopePreview">
+                        Generate exact manifest
                     </button>
                     <button
                         mat-stroked-button
@@ -53,6 +107,25 @@
                         Download
                     </button>
                 </div>
+                <mat-card
+                    *ngIf="pineai.reportScopePreview"
+                    style="margin-top: 16px">
+                    <mat-card-title>Authoritative scope manifest</mat-card-title>
+                    <mat-card-subtitle class="mono break-all">
+                        {{ pineai.reportScopePreview.scope_digest }}
+                    </mat-card-subtitle>
+                    <mat-card-content>
+                        <div
+                            *ngFor="let warning of
+                                (pineai.reportScopePreview.warnings ||
+                                 pineai.reportScopePreview.manifest?.warnings || [])"
+                            class="warning-banner">
+                            {{ warning }}
+                        </div>
+                        <pre class="json-preview">
+{{ pineai.reportScopePreview.manifest | json }}</pre>
+                    </mat-card-content>
+                </mat-card>
                 <div *ngIf="pineai.report" class="stack" style="margin-top: 16px">
                     <div class="row">
                         <strong>{{ pineai.report.filename }}</strong>
@@ -164,7 +237,7 @@
                     <mat-card-title>Non-authoritative AI text</mat-card-title>
                     <mat-card-content>
                         <div class="warning-banner">
-                            This prose does not change finding severity, confidence, status or evidence.
+                            This prose does not change finding severity, certainty, status or evidence.
                         </div>
                         <pre class="json-preview">{{ aiText() }}</pre>
                     </mat-card-content>

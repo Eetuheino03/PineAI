@@ -2,7 +2,7 @@
     <header class="view-header">
         <div>
             <h2>Findings</h2>
-            <p>Rule-based findings with evidence, confidence and an auditable lifecycle.</p>
+            <p>Rule-based findings with evidence, categorical certainty and an auditable lifecycle.</p>
         </div>
         <button
             mat-stroked-button
@@ -72,7 +72,7 @@
                 <div class="chip-list">
                     <span class="badge" [ngClass]="finding.severity">{{ finding.severity || 'unknown' }}</span>
                     <span class="badge" [ngClass]="finding.status">{{ finding.status }}</span>
-                    <span class="badge">Confidence {{ confidence(finding.confidence) }}</span>
+                    <span class="badge">Certainty {{ certainty(finding) }}</span>
                 </div>
             </div>
             <mat-card-content class="stack">
@@ -93,6 +93,8 @@
                         </span>
                     </div>
                 </div>
+                <lib-pineai-evidence-viewer [finding]="finding">
+                </lib-pineai-evidence-viewer>
                 <div class="muted">
                     First {{ finding.first_seen || '—' }} · Last {{ finding.last_seen || '—' }}
                     <span *ngIf="finding.occurrence_count">

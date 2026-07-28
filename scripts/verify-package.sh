@@ -80,6 +80,13 @@ REQUIRED_FILES=(
     PineAI/assets/pineai_backend/assurance.py
     PineAI/assets/pineai_backend/assurance_service.py
     PineAI/assets/pineai_backend/assessment_store.py
+    PineAI/assets/pineai_backend/assurance_profiles.py
+    PineAI/assets/pineai_backend/backup.py
+    PineAI/assets/pineai_backend/consensus.py
+    PineAI/assets/pineai_backend/customer_analysis.py
+    PineAI/assets/pineai_backend/customer_store.py
+    PineAI/assets/pineai_backend/platform.py
+    PineAI/assets/pineai_backend/storage_transaction.py
     PineAI/assets/pineai_backend/openai_client.py
     PineAI/assets/pineai_backend/reports.py
 )

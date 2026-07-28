@@ -19,8 +19,9 @@ from .config import resolve_config_dir, write_private_file
 from .errors import BackendError
 
 
-ASSESSMENT_SCHEMA_VERSION = "1.0"
-SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1")
+ASSESSMENT_SCHEMA_VERSION = "1.1"
+SUPPORTED_ASSESSMENT_SCHEMA_VERSIONS = ("1.0", "1.1")
+SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1", "1.2")
 ASSESSMENT_ID_PATTERN = re.compile(
     r"^assessment_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
     r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -655,12 +656,18 @@ class AssessmentStore:
         if (
             not isinstance(metadata, dict)
             or metadata.get("assessment_id") != assessment_id
+            or metadata.get("schema_version")
+            not in SUPPORTED_ASSESSMENT_SCHEMA_VERSIONS
             or metadata.get("status") not in ASSESSMENT_STATUSES
             or not isinstance(metadata.get("revision"), int)
         ):
             raise BackendError(
                 "storage_error", "assessment metadata is invalid"
             )
+        # Legacy metadata is adapted in memory. Immutable v0.6.0/v0.6.1
+        # documents are never rewritten merely because they were read.
+        metadata.setdefault("active_assurance_profile_version", None)
+        metadata.setdefault("storage_writer_version", metadata["schema_version"])
         return metadata
 
     def _write_metadata(self, metadata: Dict[str, Any]) -> None:
@@ -732,6 +739,19 @@ class AssessmentStore:
             raise BackendError(
                 "assessment_archived", "assessment is archived"
             )
+        if metadata.get("schema_version") == "1.0":
+            previous = metadata["schema_version"]
+            metadata["schema_version"] = ASSESSMENT_SCHEMA_VERSION
+            metadata["storage_writer_version"] = ASSESSMENT_SCHEMA_VERSION
+            metadata.setdefault("active_assurance_profile_version", None)
+            self._append_event(
+                metadata,
+                "storage_schema_migrated",
+                {
+                    "from_schema_version": previous,
+                    "to_schema_version": ASSESSMENT_SCHEMA_VERSION,
+                },
+            )
 
     def _advance_revision(self, metadata: Dict[str, Any]) -> str:
         now = _utc_now()
@@ -791,7 +811,8 @@ class AssessmentStore:
         )
         if (
             not isinstance(document, dict)
-            or document.get("schema_version") != ASSESSMENT_SCHEMA_VERSION
+            or document.get("schema_version")
+            not in SUPPORTED_ASSESSMENT_SCHEMA_VERSIONS
             or not isinstance(document.get("findings"), list)
         ):
             raise BackendError("storage_error", "finding storage is invalid")
@@ -828,6 +849,8 @@ class AssessmentStore:
             "status": "active",
             "revision": 1,
             "active_baseline_version": None,
+            "active_assurance_profile_version": None,
+            "storage_writer_version": ASSESSMENT_SCHEMA_VERSION,
             "created_at": now,
             "updated_at": now,
             "last_event_sequence": 0,

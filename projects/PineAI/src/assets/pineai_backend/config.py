@@ -1,6 +1,7 @@
 """Secure local configuration for PineAI."""
 
 import base64
+import hashlib
 import json
 import os
 import secrets
@@ -24,6 +25,14 @@ MAX_SUPPORTED_BANDS = 8
 
 class ConfigError(ValueError):
     """Raised when PineAI configuration is invalid."""
+
+
+class IdentityKeyError(ConfigError):
+    """Raised when persisted identity-bound data cannot be addressed safely."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 def _validate_supported_bands(value: Any) -> List[Dict[str, Any]]:
@@ -207,23 +216,93 @@ def load_api_key(config_dir: Optional[str] = None) -> Optional[str]:
     return value or None
 
 
-def ensure_pseudonymization_key(config_dir: Optional[str] = None) -> bytes:
-    """Return a persistent 256-bit HMAC key, generating it on first use."""
-    path = resolve_config_dir(config_dir) / "pseudonymization.key"
-    if path.exists():
+def _identity_bound_data_exists(directory: Path) -> bool:
+    """Return whether replacing the HMAC identity would orphan persisted IDs."""
+    # Measurement profiles have UUID/revision identities and can safely exist
+    # before the first HMAC-backed assessment. Assessment snapshots, evidence,
+    # baselines, occurrences and findings cannot.
+    for name in ("assessments",):
+        root = directory / name
+        if not root.exists():
+            continue
         try:
-            raw = base64.b64decode(path.read_bytes().strip(), validate=True)
-        except (OSError, ValueError) as error:
-            raise ConfigError(
-                "Could not read pseudonymization key: {0}".format(error)
-            )
-        if len(raw) != 32:
-            raise ConfigError("Pseudonymization key must contain 32 bytes")
-        return raw
+            if any(path.is_file() for path in root.rglob("*")):
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _read_pseudonymization_key(path: Path) -> bytes:
+    try:
+        raw = base64.b64decode(path.read_bytes().strip(), validate=True)
+    except (OSError, ValueError) as error:
+        raise IdentityKeyError(
+            "identity_key_invalid",
+            "PineAI identity key is invalid; restore the matching backup",
+        ) from error
+    if len(raw) != 32:
+        raise IdentityKeyError(
+            "identity_key_invalid",
+            "PineAI identity key is invalid; restore the matching backup",
+        )
+    return raw
+
+
+def identity_fingerprint(secret: bytes) -> str:
+    """Return a safe identifier for an identity key without exposing the key."""
+    if not isinstance(secret, bytes) or len(secret) != 32:
+        raise IdentityKeyError(
+            "identity_key_invalid", "PineAI identity key is invalid"
+        )
+    return "identity_{0}".format(hashlib.sha256(secret).hexdigest()[:16])
+
+
+def ensure_pseudonymization_key(config_dir: Optional[str] = None) -> bytes:
+    """Return the persistent HMAC key without silently changing stored IDs."""
+    directory = resolve_config_dir(config_dir)
+    path = directory / "pseudonymization.key"
+    if path.exists():
+        return _read_pseudonymization_key(path)
+
+    if _identity_bound_data_exists(directory):
+        raise IdentityKeyError(
+            "identity_key_missing",
+            "PineAI identity key is missing; restore the matching backup",
+        )
 
     raw = secrets.token_bytes(32)
     _atomic_private_write(path, base64.b64encode(raw) + b"\n")
     return raw
+
+
+def public_identity_status(config_dir: Optional[str] = None) -> Dict[str, Any]:
+    """Return identity continuity state without returning secret material."""
+    directory = resolve_config_dir(config_dir)
+    path = directory / "pseudonymization.key"
+    bound_data = _identity_bound_data_exists(directory)
+    if not path.exists():
+        return {
+            "status": "blocked" if bound_data else "uninitialized",
+            "code": "identity_key_missing" if bound_data else None,
+            "fingerprint": None,
+            "bound_data_present": bound_data,
+        }
+    try:
+        secret = _read_pseudonymization_key(path)
+    except IdentityKeyError as failure:
+        return {
+            "status": "blocked",
+            "code": failure.code,
+            "fingerprint": None,
+            "bound_data_present": bound_data,
+        }
+    return {
+        "status": "ready",
+        "code": None,
+        "fingerprint": identity_fingerprint(secret),
+        "bound_data_present": bound_data,
+    }
 
 
 def public_status(config_dir: Optional[str] = None) -> Dict[str, Any]:
@@ -245,6 +324,7 @@ def public_status(config_dir: Optional[str] = None) -> Dict[str, Any]:
         "share_ssids": settings["share_ssids"],
         "max_ai_targets": settings["max_ai_targets"],
         "supported_bands": settings["supported_bands"],
+        "identity": public_identity_status(config_dir),
     }
 
 

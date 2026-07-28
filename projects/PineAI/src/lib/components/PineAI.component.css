@@ -55,6 +55,51 @@ mat-chip.status-ok {
     background: #fff;
 }
 
+.mode-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    max-width: 1180px;
+    margin: 14px auto 0;
+    padding: 0 22px;
+}
+
+.mode-help {
+    color: #61707a;
+    font-size: 13px;
+}
+
+.capability-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    max-width: 1136px;
+    margin: 14px auto 0;
+    padding: 12px 14px;
+    border-radius: 8px;
+}
+
+.capability-banner.ready {
+    background: #e3f5ec;
+    border-left: 4px solid #23805f;
+}
+
+.capability-banner.degraded {
+    background: #fff5dc;
+    border-left: 4px solid #dc9418;
+}
+
+.capability-banner.blocked {
+    background: #fbe9e7;
+    border-left: 4px solid #c62828;
+}
+
+.capability-detail {
+    color: #61707a;
+    font-size: 12px;
+    margin-top: 3px;
+}
+
 .startup-error {
     border-left: 4px solid #c62828;
 }
@@ -88,6 +133,16 @@ mat-chip.status-ok {
     .startup-error {
         align-items: flex-start;
         flex-wrap: wrap;
+        margin: 12px;
+    }
+
+    .mode-bar {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 0 12px;
+    }
+
+    .capability-banner {
         margin: 12px;
     }
 }

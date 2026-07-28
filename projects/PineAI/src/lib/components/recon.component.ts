@@ -15,6 +15,15 @@ export class ReconComponent {
 
     constructor(public pineai: PineAIService) {}
 
+    selectMeasurementProfile(profileId: string): void {
+        const profile = this.pineai.measurementProfiles.find(
+            (value) => this.pineai.measurementProfileId(value) === profileId
+        ) || null;
+        this.pineai.applyMeasurementProfile(profile);
+        this.declaredChannelsText =
+            (this.pineai.measurementContext.declared_channels || []).join(', ');
+    }
+
     onDeclaredChannelsChange(val: string): void {
         this.declaredChannelsText = val;
         if (!val || !val.trim()) {

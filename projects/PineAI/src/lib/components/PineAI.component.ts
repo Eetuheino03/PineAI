@@ -8,6 +8,7 @@ import { PineAIService } from '../services/PineAI.service';
 })
 export class PineAIComponent implements OnInit {
     startupError = '';
+    mode: 'guided' | 'expert' = 'guided';
 
     constructor(public pineai: PineAIService) {}
 

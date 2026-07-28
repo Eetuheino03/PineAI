@@ -1,8 +1,8 @@
 {
     "name": "PineAI",
     "title": "PineAI",
-    "description": "Deterministic WiFi baseline, drift, evidence, findings, and optional AI-assisted reporting.",
-    "version": "0.6.1",
+    "description": "Portable offline wireless change auditing with consensus baselines, inventory policy, evidence, and customer reports.",
+    "version": "0.6.2",
     "author": "Eetuheino03",
     "firmware_required": "1.0.0",
     "devices": ["wifipineapplemk7"]

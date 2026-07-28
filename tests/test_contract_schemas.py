@@ -1,6 +1,7 @@
 import copy
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -23,6 +24,10 @@ def prefix_constants(value):
 
 
 class ContractSchemaTests(unittest.TestCase):
+    def capabilities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            return AssuranceService(config_dir=directory).capabilities()
+
     def test_release_versions_are_identical_without_optional_dependencies(self):
         module_metadata = json.loads(
             (
@@ -58,7 +63,7 @@ class ContractSchemaTests(unittest.TestCase):
 
     def test_public_actions_match_runtime_capabilities(self):
         schema = load_schema()
-        capabilities = AssuranceService().capabilities()
+        capabilities = self.capabilities()
         documented = list(schema["x-module-actions"])
         self.assertEqual(documented, capabilities["module_actions"])
         self.assertEqual(
@@ -74,7 +79,7 @@ class ContractSchemaTests(unittest.TestCase):
     def test_deterministic_enums_and_rules_match_runtime(self):
         schema = load_schema()
         definitions = schema["$defs"]
-        capabilities = AssuranceService().capabilities()
+        capabilities = self.capabilities()
         self.assertEqual(
             definitions["comparabilityStatus"]["enum"],
             capabilities["comparability_states"],
@@ -85,7 +90,16 @@ class ContractSchemaTests(unittest.TestCase):
         )
         self.assertEqual(
             definitions["ruleId"]["enum"],
-            [item["rule_id"] for item in capabilities["rules"]],
+            [
+                item["rule_id"]
+                for item in capabilities["legacy_history"]["rules"]
+            ],
+        )
+        self.assertTrue(
+            all(
+                "base_confidence" not in item
+                for item in capabilities["legacy_history"]["rules"]
+            )
         )
         documented_rules = definitions["assuranceCapabilities"]["properties"][
             "rules"
@@ -135,7 +149,7 @@ class ContractSchemaTests(unittest.TestCase):
             definitions["measurementContextInput"]["additionalProperties"]
         )
         self.assertEqual(
-            len(definitions["scanMetadataInput"]["allOf"]), 7
+            len(definitions["scanMetadataInput"]["allOf"]), 11
         )
 
     def test_removed_attack_contracts_are_not_published(self):
@@ -183,7 +197,7 @@ class ContractSchemaTests(unittest.TestCase):
 
         validate_def(snapshot, "resolvedSnapshot")
         comparison_res = compare_snapshots(snapshot, snapshot)
-        validate_def(AssuranceService().capabilities(), "assuranceCapabilities")
+        validate_def(self.capabilities(), "assuranceCapabilities")
         validate_def(comparison_res, "comparison")
         validate_def(comparison_res["comparability"], "comparability")
 

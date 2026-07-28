@@ -206,7 +206,15 @@ class CliTests(unittest.TestCase):
                 0,
             )
             analyzed = json.loads(analyzed_output.getvalue())
-            self.assertEqual(len(analyzed["findings"]), 1)
+            # Baseline-only drift is an observed change, not a security
+            # finding. Findings require an active assurance policy.
+            self.assertEqual(len(analyzed["observed_changes"]), 1)
+            self.assertEqual(analyzed["policy_deviations"], [])
+            self.assertEqual(analyzed["security_findings"], [])
+            self.assertEqual(analyzed["findings"], [])
+            self.assertEqual(
+                analyzed["policy_evaluation_status"], "not_configured"
+            )
 
             report_output = io.StringIO()
             self.assertEqual(

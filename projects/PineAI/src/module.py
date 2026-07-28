@@ -44,9 +44,9 @@ def _service():
 
 
 def _store():
-    from pineai_backend.assessment_store import AssessmentStore
+    from pineai_backend.customer_store import CustomerAuditStore
 
-    return AssessmentStore()
+    return CustomerAuditStore()
 
 
 def _settings_response(status):
@@ -80,7 +80,10 @@ def health(_request: Request):
         return {
             "status": "ok",
             "module": "PineAI",
-            "product_mode": "baseline_and_drift",
+            "product_mode": "customer_audit_foundation",
+            "product_position": (
+                "Portable offline wireless change auditing for WiFi Pineapple"
+            ),
             "version": __version__,
             "backend_version": __version__,
             "model": status["model"],
@@ -89,6 +92,7 @@ def health(_request: Request):
             "share_ssids": status["share_ssids"],
             "offline_complete": True,
             "recon_control": False,
+            "identity": status["identity"],
         }
     except ConfigError as failure:
         return _configuration_failure(failure)
@@ -166,12 +170,75 @@ def assurance_capabilities(_request: Request):
         return _backend_failure(failure)
 
 
+@module.handles_action("platform_capabilities")
+def platform_capabilities(_request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().platform_capabilities()
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("list_measurement_profiles")
+def list_measurement_profiles(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().list_measurement_profiles(
+            getattr(request, "include_archived", False)
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("create_measurement_profile")
+def create_measurement_profile(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().create_measurement_profile(
+            getattr(request, "profile", None)
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("update_measurement_profile")
+def update_measurement_profile(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().update_measurement_profile(
+            getattr(request, "measurement_profile_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "changes", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("archive_measurement_profile")
+def archive_measurement_profile(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().archive_measurement_profile(
+            getattr(request, "measurement_profile_id", None),
+            getattr(request, "expected_revision", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
 @module.handles_action("create_assessment")
 def create_assessment(request: Request):
     from pineai_backend.errors import BackendError
 
     try:
-        return _store().create(getattr(request, "assessment", None))
+        return _service().create_assessment(
+            getattr(request, "assessment", None)
+        )
     except BackendError as failure:
         return _backend_failure(failure)
 
@@ -263,6 +330,37 @@ def create_baseline_version(request: Request):
         return _backend_failure(failure)
 
 
+@module.handles_action("preview_consensus_baseline")
+def preview_consensus_baseline(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().preview_consensus_baseline(
+            getattr(request, "observations", None),
+            getattr(request, "max_source_age_hours", 24),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("create_consensus_baseline_version")
+def create_consensus_baseline_version(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        result = _service().create_consensus_baseline_version(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "observations", None),
+            getattr(request, "label", ""),
+            getattr(request, "max_source_age_hours", 24),
+        )
+        result["baseline"] = result.pop("baseline_version")
+        return result
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
 @module.handles_action("list_baseline_versions")
 def list_baseline_versions(request: Request):
     from pineai_backend.errors import BackendError
@@ -270,6 +368,23 @@ def list_baseline_versions(request: Request):
     try:
         return _service().list_baseline_versions(
             getattr(request, "assessment_id", None)
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("get_baseline_version")
+def get_baseline_version(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().get_baseline_version(
+            getattr(request, "assessment_id", None),
+            getattr(
+                request,
+                "baseline_version_id",
+                getattr(request, "baseline_version", None),
+            ),
         )
     except BackendError as failure:
         return _backend_failure(failure)
@@ -287,6 +402,98 @@ def activate_baseline_version(request: Request):
         )
         result["baseline"] = result.pop("baseline_version")
         return result
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("preview_inventory_csv")
+def preview_inventory_csv(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().preview_inventory_csv(
+            getattr(request, "content", None),
+            getattr(request, "delimiter", "comma"),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("create_assurance_profile_version")
+def create_assurance_profile_version(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        result = _service().create_assurance_profile_version(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "label", ""),
+            getattr(request, "inventory_preview", None),
+            getattr(request, "profile", None),
+            getattr(request, "coverage_mode", "partial"),
+        )
+        result["assurance_profile"] = result.pop(
+            "assurance_profile_version"
+        )
+        return result
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("list_assurance_profile_versions")
+def list_assurance_profile_versions(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().list_assurance_profile_versions(
+            getattr(request, "assessment_id", None)
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("get_assurance_profile_version")
+def get_assurance_profile_version(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().get_assurance_profile_version(
+            getattr(request, "assessment_id", None),
+            getattr(request, "assurance_profile_version_id", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("activate_assurance_profile_version")
+def activate_assurance_profile_version(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        result = _service().activate_assurance_profile_version(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "assurance_profile_version_id", None),
+            getattr(request, "authoritative_confirmation", False),
+        )
+        result["assurance_profile"] = result.pop(
+            "assurance_profile_version"
+        )
+        return result
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("export_inventory_csv")
+def export_inventory_csv(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().export_inventory_csv(
+            getattr(request, "assessment_id", None),
+            getattr(request, "assurance_profile_version_id", None),
+            getattr(request, "delimiter", "comma"),
+        )
     except BackendError as failure:
         return _backend_failure(failure)
 
@@ -355,6 +562,33 @@ def update_finding(request: Request):
         return _backend_failure(failure)
 
 
+@module.handles_action("list_observed_changes")
+def list_observed_changes(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().list_observed_changes(
+            getattr(request, "assessment_id", None),
+            getattr(request, "comparison_id", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("get_evidence_bundle")
+def get_evidence_bundle(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().get_evidence_bundle(
+            getattr(request, "assessment_id", None),
+            getattr(request, "comparison_id", None),
+            getattr(request, "item_id", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
 @module.handles_action("prepare_ai_analysis")
 def prepare_ai_analysis(request: Request):
     from pineai_backend.errors import BackendError
@@ -385,6 +619,21 @@ def generate_ai_analysis(request: Request):
         return _backend_failure(failure)
 
 
+@module.handles_action("prepare_report")
+def prepare_report_action(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().prepare_report(
+            getattr(request, "assessment_id", None),
+            getattr(request, "scope", None),
+            getattr(request, "privacy_profile", "local_full"),
+            getattr(request, "comparison_id", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
 @module.handles_action("generate_report")
 def generate_report_action(request: Request):
     from pineai_backend.errors import BackendError
@@ -395,6 +644,9 @@ def generate_report_action(request: Request):
             getattr(request, "comparison_id", None),
             getattr(request, "format", None),
             getattr(request, "ai_analysis", None),
+            getattr(request, "scope", None),
+            getattr(request, "privacy_profile", "local_full"),
+            getattr(request, "scope_digest", None),
         )
     except BackendError as failure:
         return _backend_failure(failure)

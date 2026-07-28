@@ -1,0 +1,70 @@
+<mat-card class="evidence-viewer">
+    <div class="card-title-row">
+        <div>
+            <strong>Before / after evidence</strong>
+            <div class="mono muted">
+                {{ finding?.finding_id || 'Finding unavailable' }}
+            </div>
+        </div>
+        <button
+            mat-stroked-button
+            (click)="toggle()"
+            [disabled]="busy || !finding">
+            {{ busy ? 'Loading…' : expanded ? 'Hide evidence' : 'View evidence' }}
+        </button>
+    </div>
+
+    <div *ngIf="expanded" class="stack evidence-content">
+        <div *ngIf="errorMessage" class="error-banner" role="alert">
+            {{ errorMessage }}
+        </div>
+        <div *ngIf="bundle?.comparability" class="row">
+            <span>Comparability</span>
+            <span
+                class="badge"
+                [ngClass]="bundle.comparability.status">
+                {{ bundle.comparability.status }}
+            </span>
+            <span
+                *ngIf="!bundle.comparability.absence_findings_allowed"
+                class="muted">
+                Absence is not treated as proof in this comparison.
+            </span>
+        </div>
+        <div *ngIf="bundle && !pairs().length" class="empty-state">
+            The backend returned no canonical before/after pairs.
+        </div>
+        <div class="evidence-pair" *ngFor="let pair of pairs()">
+            <div class="evidence-pair-heading">
+                <strong>{{ pair.field }}</strong>
+                <span class="badge">{{ pair.change_type || pair.interpretation_code || 'evidence' }}</span>
+            </div>
+            <div class="evidence-columns">
+                <div class="evidence-side">
+                    <div class="eyebrow">Before</div>
+                    <pre class="evidence-value">{{ displayValue(pair.before) }}</pre>
+                    <div *ngIf="pair.before" class="mono muted">
+                        {{ pair.before.evidence_id }}
+                        <span *ngIf="pair.before.observed_at">
+                            · {{ pair.before.observed_at }}
+                        </span>
+                    </div>
+                </div>
+                <div class="evidence-side">
+                    <div class="eyebrow">After</div>
+                    <pre class="evidence-value">{{ displayValue(pair.after) }}</pre>
+                    <div *ngIf="pair.after" class="mono muted">
+                        {{ pair.after.evidence_id }}
+                        <span *ngIf="pair.after.observed_at">
+                            · {{ pair.after.observed_at }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <details *ngIf="bundle">
+            <summary>Structured evidence metadata</summary>
+            <pre class="json-preview">{{ bundle | json }}</pre>
+        </details>
+    </div>
+</mat-card>

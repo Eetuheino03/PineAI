@@ -27,14 +27,81 @@
             but versions cannot be created or activated.
         </div>
         <mat-card>
-            <mat-card-title>Create version from resolved scan</mat-card-title>
+            <mat-card-title>Create immutable baseline version</mat-card-title>
             <mat-card-subtitle>
                 Assessment: {{ pineai.activeAssessment.name }} · revision {{ pineai.activeAssessment.revision }}
             </mat-card-subtitle>
-            <mat-card-content>
-                <div *ngIf="!pineai.resolvedScan" class="warning-banner">
+            <mat-card-content class="stack">
+                <mat-radio-group
+                    [(ngModel)]="sourceMode"
+                    class="row"
+                    aria-label="Baseline source">
+                    <mat-radio-button value="consensus">
+                        Consensus from 2–5 saved scans
+                    </mat-radio-button>
+                    <mat-radio-button value="single">
+                        Legacy single resolved scan
+                    </mat-radio-button>
+                </mat-radio-group>
+
+                <div *ngIf="sourceMode === 'single' && !pineai.resolvedScan" class="warning-banner">
                     Load and resolve a Recon scan first. Raw Recon JSON is not stored in the baseline.
                 </div>
+
+                <ng-container *ngIf="sourceMode === 'consensus'">
+                    <div class="notice">
+                        Policy <span class="mono">{{ pineai.consensusPolicyId() }}</span>.
+                        Raw observations remain in session memory and only the
+                        normalized consensus is persisted.
+                    </div>
+                    <div class="row">
+                        <span class="badge">
+                            {{ pineai.workflow.snapshot.selected_scans.length }} selected
+                        </span>
+                        <span class="muted">Select between two and five.</span>
+                    </div>
+                    <mat-selection-list>
+                        <mat-list-option
+                            *ngFor="let scan of pineai.scans"
+                            [selected]="candidateSelected(scan)"
+                            [disabled]="loadingScanId !== '' ||
+                                (!candidateSelected(scan) &&
+                                 pineai.workflow.snapshot.selected_scans.length >= 5)"
+                            (selectedChange)="toggleCandidate(scan, $event)">
+                            <span class="mono">Scan {{ scan.scan_id }}</span>
+                            <span class="muted"> · {{ scan.date || 'timestamp unavailable' }}</span>
+                        </mat-list-option>
+                    </mat-selection-list>
+                    <div class="row">
+                        <mat-form-field appearance="outline">
+                            <mat-label>Maximum source age (hours)</mat-label>
+                            <input
+                                matInput
+                                type="number"
+                                min="1"
+                                max="8760"
+                                [(ngModel)]="maxSourceAgeHours">
+                        </mat-form-field>
+                        <button
+                            mat-stroked-button
+                            (click)="previewConsensus()"
+                            [disabled]="busy ||
+                                pineai.workflow.snapshot.selected_scans.length < 2">
+                            Preview consensus
+                        </button>
+                    </div>
+                    <mat-expansion-panel *ngIf="pineai.consensusPreview">
+                        <mat-expansion-panel-header>
+                            <mat-panel-title>Consensus preview</mat-panel-title>
+                            <mat-panel-description>
+                                {{ pineai.consensusPreview.baseline_model?.summary?.core_asset_count || 0 }}
+                                core AP(s)
+                            </mat-panel-description>
+                        </mat-expansion-panel-header>
+                        <pre class="json-preview">{{ pineai.consensusPreview | json }}</pre>
+                    </mat-expansion-panel>
+                </ng-container>
+
                 <mat-form-field appearance="outline" class="full-width">
                     <mat-label>Version label (optional)</mat-label>
                     <input matInput [formControl]="label" maxlength="128">
@@ -45,8 +112,9 @@
                         mat-flat-button
                         color="accent"
                         (click)="create()"
-                        [disabled]="busy || !pineai.resolvedScan ||
-                            !pineai.assessmentMutable()">
+                        [disabled]="busy || !pineai.assessmentMutable() ||
+                            (sourceMode === 'single' && !pineai.resolvedScan) ||
+                            (sourceMode === 'consensus' && !pineai.consensusPreview)">
                         Create immutable version
                     </button>
                 </div>

@@ -19,9 +19,9 @@ from .recon import (
 )
 
 
-ASSURANCE_SCHEMA_VERSION = "1.1"
-SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1")
-QUALITY_MODEL_VERSION = "1.0"
+ASSURANCE_SCHEMA_VERSION = "1.2"
+SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1", "1.2")
+QUALITY_MODEL_VERSION = "1.1"
 MAX_METADATA_TEXT = 256
 ALLOWED_COVERAGE = ("2.4", "5")
 COMPARABILITY_STATES = ("comparable", "partially_comparable", "not_comparable")
@@ -30,6 +30,14 @@ ASSET_ID_PATTERN = re.compile(r"^ap_[0-9a-f]{12}$")
 NETWORK_ID_PATTERN = re.compile(r"^network_[0-9a-f]{12}$")
 EVIDENCE_ID_PATTERN = re.compile(r"^evidence_[0-9a-f]{12}$")
 MAC_IN_TEXT_PATTERN = re.compile(r"(?i)(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}")
+MEASUREMENT_PROFILE_ID_PATTERN = re.compile(
+    r"^mprofile_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+MEASUREMENT_PROFILE_VERSION_ID_PATTERN = re.compile(
+    r"^mprofile_r[0-9]{4}$"
+)
+MEASUREMENT_PROFILE_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 RULE_REGISTRY = {
     "new_access_point": {
@@ -141,6 +149,10 @@ def normalize_measurement_context(value: Any) -> Dict[str, Any]:
         "interface",
         "declared_channels",
         "declared_bands",
+        "measurement_profile_id",
+        "measurement_profile_version_id",
+        "measurement_profile_revision",
+        "measurement_profile_digest",
     }
     if set(value) - allowed:
         raise BackendError(
@@ -152,6 +164,61 @@ def normalize_measurement_context(value: Any) -> Dict[str, Any]:
     scan_profile_id = _clean_text(value.get("scan_profile_id"), 128) or None
     radio_profile_id = _clean_text(value.get("radio_profile_id"), 128) or None
     interface = _clean_text(value.get("interface"), 64) or None
+    measurement_profile_id = (
+        _clean_text(value.get("measurement_profile_id"), 64) or None
+    )
+    measurement_profile_version_id = (
+        _clean_text(value.get("measurement_profile_version_id"), 32)
+        or None
+    )
+    measurement_profile_digest = (
+        _clean_text(value.get("measurement_profile_digest"), 64).lower()
+        or None
+    )
+    legacy_revision = value.get("measurement_profile_revision")
+    if legacy_revision is not None:
+        if (
+            not isinstance(legacy_revision, int)
+            or isinstance(legacy_revision, bool)
+            or legacy_revision < 1
+            or legacy_revision > 9999
+        ):
+            raise BackendError(
+                "invalid_scan_metadata",
+                "measurement_profile_revision must be between 1 and 9999",
+            )
+        derived_version_id = "mprofile_r{0:04d}".format(legacy_revision)
+        if (
+            measurement_profile_version_id is not None
+            and measurement_profile_version_id != derived_version_id
+        ):
+            raise BackendError(
+                "invalid_scan_metadata",
+                "measurement profile version fields conflict",
+            )
+        measurement_profile_version_id = derived_version_id
+    for field, field_value, pattern in (
+        (
+            "measurement_profile_id",
+            measurement_profile_id,
+            MEASUREMENT_PROFILE_ID_PATTERN,
+        ),
+        (
+            "measurement_profile_version_id",
+            measurement_profile_version_id,
+            MEASUREMENT_PROFILE_VERSION_ID_PATTERN,
+        ),
+        (
+            "measurement_profile_digest",
+            measurement_profile_digest,
+            MEASUREMENT_PROFILE_DIGEST_PATTERN,
+        ),
+    ):
+        if field_value is not None and not pattern.match(field_value):
+            raise BackendError(
+                "invalid_scan_metadata",
+                "{0} is invalid".format(field),
+            )
 
     declared_channels_input = value.get("declared_channels")
     declared_channels = None
@@ -177,7 +244,7 @@ def normalize_measurement_context(value: Any) -> Dict[str, Any]:
             bands_set.add(band)
         declared_bands = sorted(bands_set)
 
-    return {
+    result = {
         "location_id": location_id,
         "measurement_point_id": measurement_point_id,
         "scan_profile_id": scan_profile_id,
@@ -186,6 +253,17 @@ def normalize_measurement_context(value: Any) -> Dict[str, Any]:
         "declared_channels": declared_channels,
         "declared_bands": declared_bands,
     }
+    for field, field_value in (
+        ("measurement_profile_id", measurement_profile_id),
+        (
+            "measurement_profile_version_id",
+            measurement_profile_version_id,
+        ),
+        ("measurement_profile_digest", measurement_profile_digest),
+    ):
+        if field_value is not None:
+            result[field] = field_value
+    return result
 
 
 def normalize_scan_metadata(value: Any) -> Dict[str, Any]:
@@ -214,6 +292,10 @@ def normalize_scan_metadata(value: Any) -> Dict[str, Any]:
         "interface",
         "declared_channels",
         "declared_bands",
+        "measurement_profile_id",
+        "measurement_profile_version_id",
+        "measurement_profile_revision",
+        "measurement_profile_digest",
     }
     if set(value) - allowed:
         raise BackendError(
@@ -231,6 +313,10 @@ def normalize_scan_metadata(value: Any) -> Dict[str, Any]:
         "interface",
         "declared_channels",
         "declared_bands",
+        "measurement_profile_id",
+        "measurement_profile_version_id",
+        "measurement_profile_revision",
+        "measurement_profile_digest",
     )
     raw_mc = value.get("measurement_context")
     if raw_mc is None:
@@ -291,6 +377,40 @@ def _unique_sorted(values: Iterable[Any]) -> List[Any]:
     return sorted(set(values))
 
 
+def _canonical_json_sort_key(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _canonicalize_normalized_scan(value: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove source-array ordering from a normalized Recon observation."""
+    access_points = []
+    for source in value["access_points"]:
+        access_point = dict(source)
+        access_point["clients"] = sorted(
+            (dict(client) for client in source.get("clients", [])),
+            key=_canonical_json_sort_key,
+        )
+        access_points.append(access_point)
+    access_points.sort(key=lambda item: item["bssid"])
+    return {
+        "access_points": access_points,
+        "out_of_range_clients": sorted(
+            (dict(client) for client in value["out_of_range_clients"]),
+            key=_canonical_json_sort_key,
+        ),
+        "unassociated_clients": sorted(
+            (dict(client) for client in value["unassociated_clients"]),
+            key=_canonical_json_sort_key,
+        ),
+        "input_bytes": value["input_bytes"],
+    }
+
+
 def _median(numbers: List[int]) -> Optional[int]:
     if not numbers:
         return None
@@ -320,6 +440,7 @@ def resolve_assets(
         normalized = validate_and_normalize_scan(scan, oui_database=oui_database)
     except ReconValidationError as failure:
         raise BackendError("invalid_recon", str(failure))
+    normalized = _canonicalize_normalized_scan(normalized)
     metadata = normalize_scan_metadata(scan_metadata)
 
     identity_seed = {
@@ -466,6 +587,13 @@ def resolve_assets(
             "scan_profile_id": mc["scan_profile_id"],
             "radio_profile_id": mc["radio_profile_id"],
             "interface": mc["interface"],
+            "measurement_profile_id": mc.get("measurement_profile_id"),
+            "measurement_profile_version_id": mc.get(
+                "measurement_profile_version_id"
+            ),
+            "measurement_profile_digest": mc.get(
+                "measurement_profile_digest"
+            ),
             "declared_coverage": declared_coverage,
             "observed_coverage": sorted(observed_bands),
             "effective_coverage": effective_coverage,
@@ -522,6 +650,49 @@ def evaluate_comparability(
     radio_profile_match = _match_state(baseline_profile.get("radio_profile_id"), current_profile.get("radio_profile_id"))
     scan_profile_match = _match_state(baseline_profile.get("scan_profile_id"), current_profile.get("scan_profile_id"))
     interface_match = _match_state(baseline_profile.get("interface"), current_profile.get("interface"))
+    provenance_fields = (
+        "measurement_profile_id",
+        "measurement_profile_version_id",
+        "measurement_profile_digest",
+    )
+    provenance_field_matches = {
+        field: _match_state(
+            baseline_profile.get(field), current_profile.get(field)
+        )
+        for field in provenance_fields
+    }
+    provenance_values = [
+        baseline_profile.get(field)
+        for field in provenance_fields
+    ] + [
+        current_profile.get(field)
+        for field in provenance_fields
+    ]
+    provenance_present = any(
+        value is not None for value in provenance_values
+    )
+    provenance_complete = all(
+        value is not None for value in provenance_values
+    )
+    if not provenance_present:
+        measurement_profile_provenance_match = None
+        provenance_blocks_full_comparability = False
+    elif not provenance_complete:
+        measurement_profile_provenance_match = None
+        provenance_blocks_full_comparability = True
+        reasons.append("measurement_profile_provenance_incomplete")
+    else:
+        measurement_profile_provenance_match = all(
+            value is True for value in provenance_field_matches.values()
+        )
+        provenance_blocks_full_comparability = (
+            not measurement_profile_provenance_match
+        )
+        if provenance_blocks_full_comparability:
+            reasons.append("measurement_profile_provenance_mismatch")
+    for field, matches in provenance_field_matches.items():
+        if matches is False:
+            reasons.append("{0}_mismatch".format(field))
 
     if location_match is False:
         reasons.append("location_mismatch")
@@ -661,6 +832,7 @@ def evaluate_comparability(
         or scan_profile_match is not True
         or radio_profile_match is not True
         or interface_match is not True
+        or provenance_blocks_full_comparability
         or comparison_quality_score is None
         or comparison_quality_score < 0.75
         or baseline_ap_detection_ratio < 0.50
@@ -694,6 +866,18 @@ def evaluate_comparability(
         "scan_profile_match": scan_profile_match,
         "radio_profile_match": radio_profile_match,
         "interface_match": interface_match,
+        "measurement_profile_id_match": provenance_field_matches[
+            "measurement_profile_id"
+        ],
+        "measurement_profile_version_id_match": provenance_field_matches[
+            "measurement_profile_version_id"
+        ],
+        "measurement_profile_digest_match": provenance_field_matches[
+            "measurement_profile_digest"
+        ],
+        "measurement_profile_provenance_match": (
+            measurement_profile_provenance_match
+        ),
         "channel_coverage_ratio": channel_coverage_ratio,
         "eligible_baseline_ap_count": eligible_baseline_ap_count,
         "reobserved_baseline_ap_count": reobserved_baseline_ap_count,
@@ -704,11 +888,19 @@ def evaluate_comparability(
             "coverage": sorted(baseline_coverage),
             "scan_time": baseline_time,
             "access_point_count": baseline_count,
+            "measurement_profile": {
+                field: baseline_profile.get(field)
+                for field in provenance_fields
+            },
         },
         "current": {
             "coverage": sorted(current_coverage),
             "scan_time": current_time,
             "access_point_count": current_count,
+            "measurement_profile": {
+                field: current_profile.get(field)
+                for field in provenance_fields
+            },
         },
     }
 

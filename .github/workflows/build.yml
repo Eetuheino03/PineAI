@@ -51,6 +51,13 @@ jobs:
           test -f dist/PineAI/assets/pineai_backend/recon.py
           test -f dist/PineAI/assets/pineai_backend/assessment_store.py
           test -f dist/PineAI/assets/pineai_backend/assurance_service.py
+          test -f dist/PineAI/assets/pineai_backend/assurance_profiles.py
+          test -f dist/PineAI/assets/pineai_backend/consensus.py
+          test -f dist/PineAI/assets/pineai_backend/customer_analysis.py
+          test -f dist/PineAI/assets/pineai_backend/customer_store.py
+          test -f dist/PineAI/assets/pineai_backend/storage_transaction.py
+          test -f dist/PineAI/assets/pineai_backend/platform.py
+          test -f dist/PineAI/assets/pineai_backend/backup.py
           test -f dist/PineAI/assets/pineai_backend/ai_analysis.py
           test -f dist/PineAI/assets/pineai_backend/reports.py
           test -f dist/PineAI/assets/pineai_backend/openai_client.py

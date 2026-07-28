@@ -79,6 +79,27 @@
             Set absolute measurement context for comparability enforcement between scans.
         </mat-card-subtitle>
         <mat-card-content class="stack">
+            <div class="row">
+                <mat-form-field appearance="outline">
+                    <mat-label>Apply measurement profile</mat-label>
+                    <mat-select
+                        [value]="pineai.measurementProfileId(
+                            pineai.selectedMeasurementProfile)"
+                        (selectionChange)="selectMeasurementProfile($event.value)">
+                        <mat-option value="">Ad hoc context</mat-option>
+                        <mat-option
+                            *ngFor="let profile of pineai.measurementProfiles"
+                            [value]="pineai.measurementProfileId(profile)">
+                            {{ profile.name }} · revision {{ profile.revision }}
+                        </mat-option>
+                    </mat-select>
+                </mat-form-field>
+                <span
+                    *ngIf="pineai.selectedMeasurementProfile"
+                    class="badge complete">
+                    Versioned preset copied
+                </span>
+            </div>
             <div *ngIf="!pineai.measurementContext.location_id || !pineai.measurementContext.measurement_point_id" class="warning-banner" style="margin-bottom: 8px;">
                 Measurement context incomplete. Location ID and Measurement Point ID are required for fully comparable status. Without them, absence findings (e.g. missing APs) are disabled.
             </div>
