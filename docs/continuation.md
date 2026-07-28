@@ -54,8 +54,9 @@ remove accidental CRLF-only changes before implementation commits.
 
 - Phase: v0.6.1 release hardening
 - Direction checkpoint commit: `201b291`
-- Pull request: `#16`, merged into `main`
-- Merge commit: `255a8db`
+- Baseline & Drift pull request: `#16`, merged into `main` as `255a8db`
+- v0.6.1 release-hardening pull request: `#24`
+- Latest implementation and main-integration commit verified by CI: `c34a8cf`
 - Backend: deterministic resolver, assessment storage, comparability, eight
   finding rules, lifecycle, optional AI explanation boundary, and reports
   implemented
@@ -84,8 +85,11 @@ remove accidental CRLF-only changes before implementation commits.
 - Package ownership, modes, paths, symlinks, required contents, embedded
   version, extracted Python compilation, and checksum round trip: passed
 - Secret-pattern scan: no committed OpenAI-style API key found
-- GitHub Actions and release-asset checksum: pending the release-hardening
-  commit and pull request
+- GitHub Actions on pull request `#24`: passed for both the push and pull
+  request events:
+  - `30351527983`
+  - `30351530748`
+- Published release-asset checksum: pending tag and pre-release creation
 
 Physical Mark VII smoke testing is intentionally pending. No device files,
 settings, radios, or stored assessment data were changed during v0.6.1
