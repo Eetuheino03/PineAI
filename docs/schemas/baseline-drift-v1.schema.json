@@ -308,7 +308,7 @@
           }
         },
         "backend_version": {
-          "const": "0.6.0"
+          "const": "0.6.1"
         },
         "module_actions": {
           "type": "array",
@@ -651,20 +651,74 @@
           "maxLength": 128
         },
         "measurement_context": {
-          "type": "object"
+          "$ref": "#/$defs/measurementContextInput"
         },
-        "location_id": { "type": "string", "maxLength": 128 },
-        "measurement_point_id": { "type": "string", "maxLength": 128 },
-        "scan_profile_id": { "type": "string", "maxLength": 128 },
-        "radio_profile_id": { "type": "string", "maxLength": 128 },
-        "interface": { "type": "string", "maxLength": 64 },
+        "location_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "measurement_point_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "scan_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "radio_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "interface": { "oneOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] },
         "declared_channels": {
-          "type": "array",
-          "items": { "type": "integer", "minimum": 1, "maximum": 200 }
+          "oneOf": [
+            {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "integer", "minimum": 1, "maximum": 200 }
+            },
+            { "type": "null" }
+          ]
         },
         "declared_bands": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/band" }
+          "oneOf": [
+            {
+              "type": "array",
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/band" }
+            },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        { "not": { "required": ["measurement_context", "location_id"] } },
+        { "not": { "required": ["measurement_context", "measurement_point_id"] } },
+        { "not": { "required": ["measurement_context", "scan_profile_id"] } },
+        { "not": { "required": ["measurement_context", "radio_profile_id"] } },
+        { "not": { "required": ["measurement_context", "interface"] } },
+        { "not": { "required": ["measurement_context", "declared_channels"] } },
+        { "not": { "required": ["measurement_context", "declared_bands"] } }
+      ]
+    },
+    "measurementContextInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "location_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "measurement_point_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "scan_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "radio_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "interface": { "oneOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] },
+        "declared_channels": {
+          "oneOf": [
+            {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "integer", "minimum": 1, "maximum": 200 }
+            },
+            { "type": "null" }
+          ]
+        },
+        "declared_bands": {
+          "oneOf": [
+            {
+              "type": "array",
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/band" }
+            },
+            { "type": "null" }
+          ]
         }
       }
     },
@@ -1334,7 +1388,13 @@
         "measurement_point_match": {
           "oneOf": [{ "type": "boolean" }, { "type": "null" }]
         },
+        "scan_profile_match": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
         "radio_profile_match": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "interface_match": {
           "oneOf": [{ "type": "boolean" }, { "type": "null" }]
         },
         "channel_coverage_ratio": {
@@ -1515,7 +1575,30 @@
         },
         "summary": { "$ref": "#/$defs/diffSummary" },
         "current_snapshot": { "$ref": "#/$defs/resolvedSnapshot" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["schema_version"],
+            "properties": {
+              "schema_version": { "const": "1.1" }
+            }
+          },
+          "then": {
+            "properties": {
+              "comparability": {
+                "required": [
+                  "location_match",
+                  "measurement_point_match",
+                  "scan_profile_match",
+                  "radio_profile_match",
+                  "interface_match"
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     "confidenceFactors": {
       "type": "object",

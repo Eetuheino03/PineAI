@@ -142,6 +142,15 @@ class ModuleAdapterTests(unittest.TestCase):
         self.assertFalse(success)
         self.assertEqual(response["error"]["code"], "invalid_recon")
 
+    def test_deprecated_relative_position_input_is_rejected(self):
+        loaded = self.load_module()
+        request_value = FakeRequest()
+        request_value.position_confirmation = "different"
+        response, success = loaded.compare_recon(request_value)
+        self.assertFalse(success)
+        self.assertEqual(response["error"]["code"], "invalid_request")
+        self.assertIn("measurement_context", response["error"]["message"])
+
     def test_module_actions_complete_the_offline_assurance_workflow(self):
         loaded = self.load_module()
         scan = json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -151,6 +160,9 @@ class ModuleAdapterTests(unittest.TestCase):
             "source": "hak5_recon",
             "location_id": "loc-1",
             "measurement_point_id": "point-1",
+            "scan_profile_id": "full-sweep-v1",
+            "radio_profile_id": "mk7-radio-a",
+            "interface": "wlan1mon",
             "declared_channels": [1, 6, 11],
         }
         with tempfile.TemporaryDirectory() as directory:

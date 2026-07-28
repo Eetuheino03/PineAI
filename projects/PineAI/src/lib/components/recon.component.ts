@@ -49,6 +49,7 @@ export class ReconComponent {
         this.errorMessage = '';
         try {
             await this.pineai.loadScan(scan);
+            this.declaredChannelsText = (this.pineai.measurementContext.declared_channels || []).join(', ');
         } catch (error) {
             this.errorMessage = this.pineai.errorText(error);
         } finally {

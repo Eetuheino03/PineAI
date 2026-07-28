@@ -4,8 +4,9 @@ PineAI is an offline-first wireless assurance module for the WiFi Pineapple
 Mark VII. It turns saved Hak5 Recon observations into immutable baselines,
 deterministic changes, evidence-backed findings, and exportable reports.
 
-PineAI is not an attack module. Version `0.6.0` replaces the earlier
-reconnaissance-copilot workflow with **Baseline & Drift**:
+PineAI is not an attack module. Version `0.6.1` continues and hardens the
+**Baseline & Drift** direction introduced in `0.6.0`, which replaced the
+earlier reconnaissance-copilot workflow:
 
 1. load a saved Recon scan through the authenticated Hak5 session;
 2. resolve access points and SSIDs into stable local assets;
@@ -33,8 +34,9 @@ Use Node.js 16 for compatibility with the upstream Hak5 module build.
 
 ```bash
 npm ci
+python3 -m pip install -r requirements-dev.txt
 npm run build -- --prod
-npm test -- --watch=false --browsers=ChromeHeadless
+npm test -- --watch=false --browsers=ChromeHeadlessCI
 python3 -m unittest discover -s tests -v
 ```
 
@@ -42,11 +44,17 @@ Create an installable archive with:
 
 ```bash
 ./build.sh package
+bash scripts/verify-package.sh PineAI-0.6.1.tar.gz
 ```
 
-The resulting `PineAI-0.6.0.tar.gz` archive can be uploaded through the WiFi
+The resulting `PineAI-0.6.1.tar.gz` archive can be uploaded through the WiFi
 Pineapple management interface. During development, copy the built
 `dist/PineAI/` directory to `/pineapple/modules/PineAI/`.
+
+The `v0.6.1` release is published as a pre-release until its smoke test is
+completed on a physical Mark VII. Automated tests, package integrity, and
+offline behavior are verified independently; no physical-device verification
+is claimed yet.
 
 ## Operator workflow
 
@@ -59,7 +67,7 @@ GET /api/recon/scans/:scan_id
 
 The Angular frontend uses the already-authenticated Hak5 session and passes
 the loaded JSON to the PineAI module backend. PineAI does not store the
-Pineapple root password and `0.6.0` does not start or stop a Recon scan.
+Pineapple root password and `0.6.1` does not start or stop a Recon scan.
 
 The recommended sequence is:
 
@@ -124,7 +132,7 @@ files use mode `0600`. Generated reports are returned in memory for download
 and are not persisted by PineAI. Baseline versions are immutable and
 activation always requires an explicit, revision-checked request.
 
-Legacy engagement data is neither migrated nor read by `0.6.0`. It is left
+Legacy engagement data is neither migrated nor read by `0.6.1`. It is left
 untouched so an operator can recover or remove it separately.
 
 ## Upstream contribution
@@ -146,9 +154,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md),
 ## Safety and scope
 
 Use PineAI only with wireless environments you own or are authorized to
-assess. The module is read-only toward the radio in `0.6.0`: it analyzes saved
+assess. The module is read-only toward the radio in `0.6.1`: it analyzes saved
 Recon results and cannot execute validation steps, shell commands, deauth,
 evil-twin, association, capture, or scan-start actions.
+
+The physical Mark VII smoke test for `v0.6.1` is pending. This limitation is
+also recorded in the release notes and implementation handoff.
 
 ## License
 

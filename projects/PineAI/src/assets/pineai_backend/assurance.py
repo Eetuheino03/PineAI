@@ -223,16 +223,27 @@ def normalize_scan_metadata(value: Any) -> Dict[str, Any]:
     scan_id_value = value.get("scan_id", value.get("id"))
     duration_value = value.get("scan_time", value.get("duration"))
 
+    context_fields = (
+        "location_id",
+        "measurement_point_id",
+        "scan_profile_id",
+        "radio_profile_id",
+        "interface",
+        "declared_channels",
+        "declared_bands",
+    )
     raw_mc = value.get("measurement_context")
     if raw_mc is None:
         direct_mc = {
-            k: value[k] for k in (
-                "location_id", "measurement_point_id", "scan_profile_id",
-                "radio_profile_id", "interface", "declared_channels", "declared_bands"
-            ) if k in value
+            key: value[key] for key in context_fields if key in value
         }
         measurement_context = normalize_measurement_context(direct_mc)
     else:
+        if any(key in value for key in context_fields):
+            raise BackendError(
+                "invalid_scan_metadata",
+                "measurement context must use either the nested or direct form, not both",
+            )
         measurement_context = normalize_measurement_context(raw_mc)
 
     result = {
@@ -425,9 +436,10 @@ def resolve_assets(
     network_list.sort(key=lambda item: item["network_id"])
     evidence.sort(key=lambda item: item["evidence_id"])
 
-    effective_coverage = metadata["coverage"] or sorted(observed_bands)
-    observed_channels = sorted(set(ap["channel"] for ap in access_points))
     mc = metadata["measurement_context"]
+    declared_coverage = metadata["coverage"] or (mc["declared_bands"] or [])
+    effective_coverage = declared_coverage or sorted(observed_bands)
+    observed_channels = sorted(set(ap["channel"] for ap in access_points))
 
     med_signal = _median(valid_signals)
     signal_summary = {
@@ -454,7 +466,7 @@ def resolve_assets(
             "scan_profile_id": mc["scan_profile_id"],
             "radio_profile_id": mc["radio_profile_id"],
             "interface": mc["interface"],
-            "declared_coverage": metadata["coverage"],
+            "declared_coverage": declared_coverage,
             "observed_coverage": sorted(observed_bands),
             "effective_coverage": effective_coverage,
             "declared_channels_scanned": mc["declared_channels"],
@@ -497,7 +509,7 @@ def _match_state(val1: Optional[str], val2: Optional[str]) -> Optional[bool]:
 
 
 def evaluate_comparability(
-    baseline: Dict[str, Any], current: Dict[str, Any], position_confirmation: Optional[str] = None
+    baseline: Dict[str, Any], current: Dict[str, Any]
 ) -> Dict[str, Any]:
     """Decide whether state transitions and absence findings are trustworthy."""
     baseline_profile = _profile(baseline)
@@ -508,6 +520,8 @@ def evaluate_comparability(
     location_match = _match_state(baseline_profile.get("location_id"), current_profile.get("location_id"))
     measurement_point_match = _match_state(baseline_profile.get("measurement_point_id"), current_profile.get("measurement_point_id"))
     radio_profile_match = _match_state(baseline_profile.get("radio_profile_id"), current_profile.get("radio_profile_id"))
+    scan_profile_match = _match_state(baseline_profile.get("scan_profile_id"), current_profile.get("scan_profile_id"))
+    interface_match = _match_state(baseline_profile.get("interface"), current_profile.get("interface"))
 
     if location_match is False:
         reasons.append("location_mismatch")
@@ -517,9 +531,17 @@ def evaluate_comparability(
         reasons.append("measurement_point_mismatch")
         hard_gate_failed = True
 
-    if position_confirmation == "different":
-        reasons.append("position_confirmation_different")
+    if scan_profile_match is False:
+        reasons.append("scan_profile_mismatch")
         hard_gate_failed = True
+    elif scan_profile_match is None:
+        reasons.append("scan_profile_unknown")
+
+    if interface_match is False:
+        reasons.append("interface_mismatch")
+        hard_gate_failed = True
+    elif interface_match is None:
+        reasons.append("interface_unknown")
 
     if location_match is not True or measurement_point_match is not True:
         if baseline.get("schema_version") == "1.0" or current.get("schema_version") == "1.0":
@@ -636,6 +658,9 @@ def evaluate_comparability(
     elif (
         location_match is not True
         or measurement_point_match is not True
+        or scan_profile_match is not True
+        or radio_profile_match is not True
+        or interface_match is not True
         or comparison_quality_score is None
         or comparison_quality_score < 0.75
         or baseline_ap_detection_ratio < 0.50
@@ -666,7 +691,9 @@ def evaluate_comparability(
         "quality_factors": quality_factors,
         "location_match": location_match,
         "measurement_point_match": measurement_point_match,
+        "scan_profile_match": scan_profile_match,
         "radio_profile_match": radio_profile_match,
+        "interface_match": interface_match,
         "channel_coverage_ratio": channel_coverage_ratio,
         "eligible_baseline_ap_count": eligible_baseline_ap_count,
         "reobserved_baseline_ap_count": reobserved_baseline_ap_count,
@@ -687,10 +714,10 @@ def evaluate_comparability(
 
 
 def compare_snapshots(
-    baseline: Dict[str, Any], current: Dict[str, Any], position_confirmation: Optional[str] = None
+    baseline: Dict[str, Any], current: Dict[str, Any]
 ) -> Dict[str, Any]:
     """Return deterministic AP and SSID drift between two resolved snapshots."""
-    comparability = evaluate_comparability(baseline, current, position_confirmation=position_confirmation)
+    comparability = evaluate_comparability(baseline, current)
     baseline_aps = {item["asset_id"]: item for item in baseline["access_points"]}
     current_aps = {item["asset_id"]: item for item in current["access_points"]}
     baseline_networks = {

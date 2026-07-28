@@ -5,8 +5,11 @@ machine-readable definitions are in
 [`baseline-drift-v1.schema.json`](schemas/baseline-drift-v1.schema.json).
 
 All module requests include `"module": "PineAI"` in the Hak5 envelope. The
-examples below show only action-specific fields. Contract
-`schema_version` is `"1.0"`.
+examples below show only action-specific fields. Assessment, settings,
+finding, AI, and report records retain schema version `"1.0"`. Resolved
+snapshots, deterministic comparisons, capability metadata, and their response
+wrappers use assurance schema version `"1.1"`. The schema file accepts stored
+assurance `"1.0"` records for backward-compatible reads.
 
 ## Common behavior
 
@@ -41,14 +44,15 @@ Returns runtime state without secrets or stored identifiers:
 {
   "status": "ok",
   "module": "PineAI",
-  "version": "0.6.0",
-  "backend_version": "0.6.0",
+  "version": "0.6.1",
+  "backend_version": "0.6.1",
   "product_mode": "baseline_and_drift",
   "offline_complete": true,
   "model": "gpt-5.6-terra",
   "api_key_configured": false,
   "language": "en",
-  "share_ssids": false
+  "share_ssids": false,
+  "recon_control": false
 }
 ```
 
@@ -57,7 +61,8 @@ Returns runtime state without secrets or stored identifiers:
 Takes no action-specific fields. It returns the comparability and finding
 states, the authoritative eight-rule registry, storage limits, authoritative
 field names, public module actions, the non-authoritative AI role, and
-`offline_complete:true`.
+`offline_complete:true`. It reports `schema_version:"1.1"` and
+`backend_version:"0.6.1"`.
 
 Clients should render registry metadata but must continue to treat returned
 finding severity and confidence as authoritative per-analysis values.
@@ -173,7 +178,7 @@ Request:
 ```
 
 The response is archived assessment metadata with the new event in `events`.
-Archiving is irreversible through the `0.6.0` public API. Archived assessments
+Archiving is irreversible through the `0.6.1` public API. Archived assessments
 remain readable. They cannot create or activate baselines, compare or persist
 new Recon analyses, or update finding state. Existing stored comparisons remain
 available for deterministic JSON/HTML report export and optional read-only AI
@@ -202,7 +207,15 @@ Request:
     "scan_time": 300,
     "coverage": ["2.4"],
     "source": "hak5_recon",
-    "label": "Office sweep"
+    "label": "Office sweep",
+    "measurement_context": {
+      "location_id": "plant-a",
+      "measurement_point_id": "north-wall",
+      "scan_profile_id": "full-sweep-v1",
+      "radio_profile_id": "mk7-radio-a",
+      "interface": "wlan1mon",
+      "declared_channels": [1, 6, 11]
+    }
   }
 }
 ```
@@ -215,8 +228,15 @@ For scan metadata, `id` is accepted as an alias of `scan_id` and `duration` as
 an alias of `scan_time`. Duration is 1–86400 seconds. Explicit fields take
 precedence over aliases.
 
+Measurement context may use the nested `measurement_context` object shown
+above or the legacy direct context fields, but never both in one request.
+Unknown context fields and mixed forms return `invalid_scan_metadata`.
+`declared_bands` inside measurement context supplies declared coverage only
+when top-level `coverage` is absent; top-level `coverage` takes precedence.
+
 The response is a resolved snapshot containing:
 
+- response and snapshot `schema_version:"1.1"`;
 - `snapshot_id`, `snapshot_digest`, and nullable `observed_at`;
 - normalized `scan_metadata`;
 - a `comparability_profile`;
@@ -324,7 +344,15 @@ Request:
     "scan_time": 300,
     "coverage": ["2.4"],
     "source": "hak5_recon",
-    "label": "Weekly verification"
+    "label": "Weekly verification",
+    "measurement_context": {
+      "location_id": "plant-a",
+      "measurement_point_id": "north-wall",
+      "scan_profile_id": "full-sweep-v1",
+      "radio_profile_id": "mk7-radio-a",
+      "interface": "wlan1mon",
+      "declared_channels": [1, 6, 11]
+    }
   }
 }
 ```
@@ -333,7 +361,7 @@ Response:
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "mode": "preview",
   "assessment_revision": 3,
   "baseline": {},
@@ -344,6 +372,11 @@ Response:
       "positive_findings_allowed": true,
       "absence_findings_allowed": true,
       "lifecycle_updates_allowed": true,
+      "location_match": true,
+      "measurement_point_match": true,
+      "scan_profile_match": true,
+      "radio_profile_match": true,
+      "interface_match": true,
       "reasons": [],
       "baseline": {},
       "current": {}
@@ -370,6 +403,14 @@ no candidate findings and leaves finding lifecycle untouched.
 observed, applies the documented confidence penalty, and suppresses missing-AP
 findings.
 
+Known `location_id` or `measurement_point_id` mismatch is
+`not_comparable`. Known `scan_profile_id` or `interface` mismatch is also
+`not_comparable`. A known `radio_profile_id` mismatch is
+`partially_comparable`: observed changes remain available, while absence
+findings are disabled. Unknown scan/radio/interface profile values also limit
+the result to `partially_comparable`. The obsolete relative
+`position_confirmation` input is rejected; it is not part of the public API.
+
 ### `analyze_recon`
 
 Request adds `expected_revision` to the `compare_recon` fields:
@@ -390,7 +431,7 @@ Response:
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "assessment": {},
   "comparison": {},
   "findings": [],
@@ -593,7 +634,7 @@ For Baseline & Drift, editable settings are:
 ```
 
 The API key is accepted only in the request body, stored in a `0600` file, and
-never echoed. Runtime band allowlists are not used by `0.6.0`.
+never echoed. Runtime band allowlists are not used by `0.6.1`.
 
 ## Error codes
 

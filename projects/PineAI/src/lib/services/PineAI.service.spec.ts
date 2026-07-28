@@ -18,7 +18,7 @@ describe('PineAIService Baseline & Drift', () => {
     it('initializes when optional settings, Recon and assessment calls fail', async () => {
         api.moduleRequest.and.callFake((payload: any) => {
             if (payload.action === 'health') {
-                return Promise.resolve({status: 'ok', version: '0.6.0'});
+                return Promise.resolve({status: 'ok', version: '0.6.1'});
             }
             if (payload.action === 'assurance_capabilities') {
                 return Promise.resolve({schema_version: '1.0'});

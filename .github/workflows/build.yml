@@ -20,12 +20,18 @@ jobs:
         with:
           python-version: "3.8"
       - run: npm ci
+      - name: Install Python test dependencies
+        run: python -m pip install -r requirements-dev.txt
       - name: Run backend tests
         run: python -m unittest discover -s tests -v
       - name: Run Angular frontend tests
-        run: npm test -- --watch=false --browsers=ChromeHeadless --progress=false
+        run: npm test -- --watch=false --browsers=ChromeHeadlessCI --progress=false
       - name: Compile Python sources
         run: python -m compileall -q projects/PineAI/src/module.py projects/PineAI/src/assets
+      - name: Resolve module version
+        run: |
+          VERSION="$(python -c 'import json; print(json.load(open("projects/PineAI/src/module.json"))["version"])')"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Scan tracked source for likely committed API keys
         run: |
           if git grep -nE 'sk-(proj-)?[A-Za-z0-9_-]{20,}'; then
@@ -36,6 +42,7 @@ jobs:
         run: PATH="$PWD/node_modules/.bin:$PATH" ./build.sh package
       - name: Verify release package
         run: |
+          PACKAGE="PineAI-${VERSION}.tar.gz"
           test -f dist/PineAI/PineAI.umd.js
           test -f dist/PineAI/module.py
           test -f dist/PineAI/module.json
@@ -53,15 +60,17 @@ jobs:
           test ! -e dist/PineAI/assets/pineai_backend/engagement_store.py
           test ! -e dist/PineAI/assets/pineai_backend/profiler.py
           test -z "$(find dist/PineAI -type f -name '*.pyc' -print -quit)"
-          test -f PineAI-0.6.0.tar.gz
-          test "$(tar -tzf PineAI-0.6.0.tar.gz | sed -n '1p')" = "PineAI/"
-          tar -tzf PineAI-0.6.0.tar.gz PineAI/PineAI.umd.js > /dev/null
-          test "$(tar --numeric-owner -tvzf PineAI-0.6.0.tar.gz PineAI/module.py | awk '{print $1, $2}')" = "-rwxr-xr-x 0/0"
-          test "$(tar --numeric-owner -tvzf PineAI-0.6.0.tar.gz PineAI/module.json | awk '{print $1, $2}')" = "-rw-r--r-- 0/0"
-          sha256sum PineAI-0.6.0.tar.gz > PineAI-0.6.0.tar.gz.sha256
+          test -f "$PACKAGE"
+          test "$(tar -tzf "$PACKAGE" | sed -n '1p')" = "PineAI/"
+          tar -tzf "$PACKAGE" PineAI/PineAI.umd.js > /dev/null
+          test "$(tar --numeric-owner -tvzf "$PACKAGE" PineAI/module.py | awk '{print $1, $2}')" = "-rwxr-xr-x 0/0"
+          test "$(tar --numeric-owner -tvzf "$PACKAGE" PineAI/module.json | awk '{print $1, $2}')" = "-rw-r--r-- 0/0"
+          bash scripts/verify-package.sh "$PACKAGE"
+          sha256sum "$PACKAGE" > "$PACKAGE.sha256"
+          sha256sum -c "$PACKAGE.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: PineAI-0.6.0
+          name: PineAI-${{ env.VERSION }}
           path: |
-            PineAI-0.6.0.tar.gz
-            PineAI-0.6.0.tar.gz.sha256
+            PineAI-${{ env.VERSION }}.tar.gz
+            PineAI-${{ env.VERSION }}.tar.gz.sha256

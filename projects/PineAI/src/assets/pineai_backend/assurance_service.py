@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
+from . import __version__
 from .ai_analysis import AssuranceAIService, validate_ai_analysis
 from .assurance import (
     ASSURANCE_SCHEMA_VERSION,
@@ -16,7 +17,7 @@ from .errors import BackendError
 from .reports import generate_report
 
 
-BACKEND_VERSION = "0.6.0"
+BACKEND_VERSION = __version__
 
 
 def _revision(value: Any) -> int:

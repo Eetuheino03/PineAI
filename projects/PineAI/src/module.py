@@ -60,6 +60,16 @@ def _settings_response(status):
     }
 
 
+def _reject_deprecated_comparison_fields(request):
+    from pineai_backend.errors import BackendError
+
+    if getattr(request, "position_confirmation", None) is not None:
+        raise BackendError(
+            "invalid_request",
+            "position_confirmation is not supported; use absolute measurement_context fields",
+        )
+
+
 @module.handles_action("health")
 def health(_request: Request):
     """Return only safe startup information and never import analysis services."""
@@ -286,6 +296,7 @@ def compare_recon(request: Request):
     from pineai_backend.errors import BackendError
 
     try:
+        _reject_deprecated_comparison_fields(request)
         return _service().compare_recon(
             getattr(request, "assessment_id", None),
             getattr(request, "scan", None),
@@ -300,6 +311,7 @@ def analyze_recon(request: Request):
     from pineai_backend.errors import BackendError
 
     try:
+        _reject_deprecated_comparison_fields(request)
         return _service().analyze_recon(
             getattr(request, "assessment_id", None),
             getattr(request, "expected_revision", None),
