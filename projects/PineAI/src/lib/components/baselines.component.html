@@ -1,0 +1,88 @@
+<section class="view">
+    <header class="view-header">
+        <div>
+            <h2>Baselines</h2>
+            <p>Immutable, versioned reference states. Activation always requires operator confirmation.</p>
+        </div>
+        <button
+            mat-stroked-button
+            (click)="refresh()"
+            [disabled]="busy || !pineai.activeAssessment">
+            <mat-icon>refresh</mat-icon>
+            Refresh
+        </button>
+    </header>
+
+    <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+    <div *ngIf="successMessage" class="success-banner" role="status">{{ successMessage }}</div>
+
+    <div *ngIf="!pineai.activeAssessment" class="empty-state">
+        <mat-icon>fact_check</mat-icon>
+        Select an assessment before managing baselines.
+    </div>
+
+    <div *ngIf="pineai.activeAssessment" class="stack">
+        <div *ngIf="!pineai.assessmentMutable()" class="warning-banner">
+            This assessment is archived. Baseline history remains readable,
+            but versions cannot be created or activated.
+        </div>
+        <mat-card>
+            <mat-card-title>Create version from resolved scan</mat-card-title>
+            <mat-card-subtitle>
+                Assessment: {{ pineai.activeAssessment.name }} · revision {{ pineai.activeAssessment.revision }}
+            </mat-card-subtitle>
+            <mat-card-content>
+                <div *ngIf="!pineai.resolvedScan" class="warning-banner">
+                    Load and resolve a Recon scan first. Raw Recon JSON is not stored in the baseline.
+                </div>
+                <mat-form-field appearance="outline" class="full-width">
+                    <mat-label>Version label (optional)</mat-label>
+                    <input matInput [formControl]="label" maxlength="128">
+                    <mat-hint>For example, Initial approved office baseline.</mat-hint>
+                </mat-form-field>
+                <div class="actions">
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="create()"
+                        [disabled]="busy || !pineai.resolvedScan ||
+                            !pineai.assessmentMutable()">
+                        Create immutable version
+                    </button>
+                </div>
+            </mat-card-content>
+        </mat-card>
+
+        <mat-card>
+            <mat-card-title>Version history</mat-card-title>
+            <mat-card-content>
+                <div *ngIf="!pineai.baselines.length" class="empty-state">
+                    No baseline versions exist for this assessment.
+                </div>
+                <mat-list *ngIf="pineai.baselines.length">
+                    <mat-list-item *ngFor="let baseline of pineai.baselines">
+                        <mat-icon mat-list-icon>layers</mat-icon>
+                        <div mat-line class="mono">
+                            {{ pineai.baselineId(baseline) || 'Identifier unavailable' }}
+                        </div>
+                        <div mat-line>
+                            {{ baseline.label || baseline.created_at || ('Version ' + (baseline.version || '—')) }}
+                        </div>
+                        <span
+                            *ngIf="pineai.activeBaselineId() === pineai.baselineId(baseline) || baseline.is_active"
+                            class="badge complete">
+                            Active
+                        </span>
+                        <button
+                            *ngIf="pineai.activeBaselineId() !== pineai.baselineId(baseline) && !baseline.is_active"
+                            mat-stroked-button
+                            (click)="activate(baseline)"
+                            [disabled]="busy || !pineai.assessmentMutable()">
+                            Activate
+                        </button>
+                    </mat-list-item>
+                </mat-list>
+            </mat-card-content>
+        </mat-card>
+    </div>
+</section>

@@ -1,8 +1,8 @@
 {
     "name": "PineAI",
     "title": "PineAI",
-    "description": "AI-assisted target profiling, attack-path advice, and adaptive reconnaissance for authorized WiFi assessments.",
-    "version": "0.5.0",
+    "description": "Deterministic WiFi baseline, drift, evidence, findings, and optional AI-assisted reporting.",
+    "version": "0.6.0",
     "author": "Eetuheino03",
     "firmware_required": "1.0.0",
     "devices": ["wifipineapplemk7"]

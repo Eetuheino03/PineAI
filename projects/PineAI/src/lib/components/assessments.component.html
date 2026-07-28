@@ -1,0 +1,100 @@
+<section class="view">
+    <header class="view-header">
+        <div>
+            <h2>Assessments</h2>
+            <p>One assessment represents one location or wireless environment.</p>
+        </div>
+        <div class="row">
+            <mat-checkbox [(ngModel)]="showArchived" (change)="refresh()">
+                Include archived
+            </mat-checkbox>
+            <button mat-stroked-button (click)="newAssessment()">New assessment</button>
+        </div>
+    </header>
+
+    <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+    <div *ngIf="successMessage" class="success-banner" role="status">{{ successMessage }}</div>
+
+    <div class="grid two">
+        <mat-card>
+            <mat-card-title>Saved assessments</mat-card-title>
+            <mat-card-content>
+                <div *ngIf="!pineai.assessments.length" class="empty-state">
+                    No assessments found. Create the first environment record.
+                </div>
+                <mat-list *ngIf="pineai.assessments.length">
+                    <mat-list-item *ngFor="let assessment of pineai.assessments">
+                        <mat-icon mat-list-icon>fact_check</mat-icon>
+                        <div mat-line>{{ assessment.name }}</div>
+                        <div mat-line>
+                            {{ assessment.location || 'No location' }} · revision {{ assessment.revision }}
+                        </div>
+                        <button
+                            mat-stroked-button
+                            (click)="select(assessment.assessment_id)"
+                            [disabled]="busy">
+                            {{ pineai.activeAssessment?.assessment_id === assessment.assessment_id ?
+                               'Selected' : 'Open' }}
+                        </button>
+                    </mat-list-item>
+                </mat-list>
+            </mat-card-content>
+        </mat-card>
+
+        <mat-card>
+            <div class="card-title-row">
+                <div>
+                    <mat-card-title>{{ editMode ? 'Assessment details' : 'New assessment' }}</mat-card-title>
+                    <mat-card-subtitle *ngIf="pineai.activeAssessment">
+                        ID <span class="mono">{{ pineai.activeAssessment.assessment_id }}</span>
+                        · revision {{ pineai.activeAssessment.revision }}
+                    </mat-card-subtitle>
+                </div>
+                <span
+                    *ngIf="pineai.activeAssessment?.status"
+                    class="badge"
+                    [class.complete]="pineai.activeAssessment?.status === 'active'">
+                    {{ pineai.activeAssessment.status }}
+                </span>
+            </div>
+            <mat-card-content>
+                <form [formGroup]="form" class="stack">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Name</mat-label>
+                        <input matInput formControlName="name" maxlength="100">
+                        <mat-error *ngIf="form.get('name').hasError('required')">Name is required.</mat-error>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Location</mat-label>
+                        <input matInput formControlName="location" maxlength="200">
+                        <mat-hint>For example, office, plant or lab name.</mat-hint>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Local notes</mat-label>
+                        <textarea matInput formControlName="notes" rows="5" maxlength="2000"></textarea>
+                        <mat-hint>Stored locally and never sent to the AI provider.</mat-hint>
+                    </mat-form-field>
+                    <div class="actions">
+                        <button
+                            mat-flat-button
+                            color="accent"
+                            type="button"
+                            (click)="save()"
+                            [disabled]="busy || (editMode && !pineai.assessmentMutable())">
+                            {{ editMode ? 'Save changes' : 'Create assessment' }}
+                        </button>
+                        <button
+                            *ngIf="editMode"
+                            mat-stroked-button
+                            color="warn"
+                            type="button"
+                            (click)="archive()"
+                            [disabled]="busy || !pineai.assessmentMutable()">
+                            Archive
+                        </button>
+                    </div>
+                </form>
+            </mat-card-content>
+        </mat-card>
+    </div>
+</section>

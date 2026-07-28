@@ -50,7 +50,35 @@ remove accidental CRLF-only changes before implementation commits.
 
 ## Current state
 
-- Phase: 1 - product-direction checkpoint
-- Last completed verification: legacy Python suite, 74 tests passed
-- Next task: create the development branch and commit only the two direction
-  documents before changing implementation files
+- Phase: 5 - local implementation and package validation complete
+- Direction checkpoint commit: `201b291`
+- Backend: deterministic resolver, assessment storage, comparability, eight
+  finding rules, lifecycle, optional AI explanation boundary, and reports
+  implemented
+- Frontend: all nine Baseline & Drift views implemented; no radio controls or
+  old attack-oriented branding remain
+- Contract: `baseline-drift-v1.schema.json` and complete frontend/backend
+  examples implemented
+- Package: `PineAI-0.6.0.tar.gz` built in WSL with root ownership, expected
+  modes, and SHA-256 sidecar
+
+## Latest completed verification
+
+- Windows Python: 60 tests passed; two POSIX-only permission checks skipped
+- WSL Python: 60 tests passed, including `0700`/`0600` permission checks
+- Angular/ChromeHeadless: 14 tests passed
+- Angular production build: passed
+- WSL package build: passed
+- Extracted package Python compilation: passed
+- Package content check: passed; no legacy advisor, adaptive-Recon,
+  engagement-store, profiler, source-map, minified duplicate, bytecode, or
+  cache files
+- Secret-pattern scan: no committed OpenAI-style API key found
+
+## Next task
+
+Commit the implementation, push `feature/baseline-drift-v0.6`, wait for the
+Python 3.8 / Node 16 GitHub Actions job, review the exact CI-built package,
+merge to `main`, tag `v0.6.0`, publish the release assets, and then record the
+physical Mark VII smoke-test result. The device smoke test is the only
+hardware-dependent verification still outstanding.

@@ -1,12 +1,16 @@
-PineAI backend assets
+PineAI module assets
+====================
 
-- pineai_backend/ contains the standard-library-only Target Profiler,
-  engagement store, Attack-Path Advisor and Adaptive Recon planner.
-- pineai_cli.py provides configuration, profiling, engagement, advisory and
-  operator-approved Recon plan lifecycle commands.
-- The Angular frontend can manage non-secret preferences and a managed API key
-  through module actions. Secrets are never returned to the browser.
+- `pineai_backend/` contains the standard-library-only Baseline & Drift
+  resolver, private assessment store, deterministic finding engine, report
+  generator, and optional non-authoritative OpenAI client.
+- `pineai_cli.py` provides local administration, baseline, comparison,
+  finding, privacy-preview, AI-analysis, and report commands.
 
-See the repository docs/backend.md, docs/attack-path-advisor.md and
-docs/adaptive-recon.md for the API, privacy model and CLI usage. The complete
-frontend workflow is documented in docs/frontend.md.
+Runtime state is stored under `/root/.PineAI/` with private permissions. Raw
+Hak5 Recon responses are processed in memory and are not persisted. Real SSIDs
+and BSSIDs remain local; BSSIDs and MAC addresses are never sent to an AI
+provider, and SSID sharing is opt-in.
+
+See `docs/backend-api.md`, `docs/frontend.md`, and
+`docs/product-direction.md` in the source repository.

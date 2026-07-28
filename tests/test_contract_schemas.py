@@ -6,84 +6,122 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "projects" / "PineAI" / "src" / "assets"
+SCHEMA_PATH = ROOT / "docs" / "schemas" / "baseline-drift-v1.schema.json"
 sys.path.insert(0, str(ASSETS))
 
-from pineai_backend.advisor import advisor_capabilities  # noqa: E402
-from pineai_backend.adaptive_recon import adaptive_recon_capabilities  # noqa: E402
-from pineai_backend.config import MAX_SUPPORTED_BANDS  # noqa: E402
+from pineai_backend.assurance_service import AssuranceService  # noqa: E402
+
+
+def load_schema():
+    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+
+
+def prefix_constants(value):
+    return [item["const"] for item in value["prefixItems"]]
 
 
 class ContractSchemaTests(unittest.TestCase):
-    def test_documented_enums_match_runtime_capabilities(self):
-        path = (
-            ROOT
-            / "docs"
-            / "schemas"
-            / "attack-path-advisor-v1.schema.json"
-        )
-        schema = json.loads(path.read_text(encoding="utf-8"))
-        capabilities = advisor_capabilities()
-        documented_objectives = schema["$defs"]["objectiveCode"]["enum"]
-        documented_actions = schema["$defs"]["actionId"]["enum"]
-        runtime_actions = [item["action_id"] for item in capabilities["actions"]]
-        self.assertEqual(documented_objectives, capabilities["objective_codes"])
-        self.assertEqual(documented_actions, runtime_actions)
+    def test_schema_is_valid_json_with_resolvable_local_definitions(self):
+        schema = load_schema()
         self.assertEqual(
-            schema["$defs"]["adviseRequest"]["properties"]["target_ids"]["maxItems"],
-            capabilities["limits"]["targets_per_request"],
+            schema["$schema"],
+            "https://json-schema.org/draft/2020-12/schema",
+        )
+        definitions = schema["$defs"]
+
+        def visit(value):
+            if isinstance(value, dict):
+                reference = value.get("$ref")
+                if reference and reference.startswith("#/$defs/"):
+                    self.assertIn(reference.split("/")[-1], definitions)
+                for item in value.values():
+                    visit(item)
+            elif isinstance(value, list):
+                for item in value:
+                    visit(item)
+
+        visit(schema)
+
+    def test_public_actions_match_runtime_capabilities(self):
+        schema = load_schema()
+        capabilities = AssuranceService().capabilities()
+        documented = list(schema["x-module-actions"])
+        self.assertEqual(documented, capabilities["module_actions"])
+        self.assertEqual(
+            prefix_constants(
+                schema["$defs"]["assuranceCapabilities"]["properties"][
+                    "module_actions"
+                ]
+            ),
+            capabilities["module_actions"],
+        )
+        self.assertFalse(capabilities["recon_control"])
+
+    def test_deterministic_enums_and_rules_match_runtime(self):
+        schema = load_schema()
+        definitions = schema["$defs"]
+        capabilities = AssuranceService().capabilities()
+        self.assertEqual(
+            definitions["comparabilityStatus"]["enum"],
+            capabilities["comparability_states"],
+        )
+        self.assertEqual(
+            definitions["findingStatus"]["enum"],
+            capabilities["finding_statuses"],
+        )
+        self.assertEqual(
+            definitions["ruleId"]["enum"],
+            [item["rule_id"] for item in capabilities["rules"]],
+        )
+        documented_rules = definitions["assuranceCapabilities"]["properties"][
+            "rules"
+        ]
+        self.assertEqual(documented_rules["minItems"], 8)
+        self.assertEqual(documented_rules["maxItems"], 8)
+        documented_limits = definitions["assuranceCapabilities"]["properties"][
+            "limits"
+        ]["required"]
+        self.assertEqual(
+            set(documented_limits),
+            set(capabilities["limits"]),
         )
 
-    def test_adaptive_recon_schema_matches_runtime_capabilities(self):
-        path = ROOT / "docs" / "schemas" / "adaptive-recon-v1.schema.json"
-        schema = json.loads(path.read_text(encoding="utf-8"))
-        capabilities = adaptive_recon_capabilities()
+    def test_boundary_contracts_are_explicit(self):
+        definitions = load_schema()["$defs"]
+        metadata = definitions["scanMetadataInput"]["properties"]
+        self.assertIn("id", metadata)
+        self.assertIn("duration", metadata)
+        self.assertEqual(metadata["scan_time"]["minimum"], 1)
+        self.assertEqual(metadata["scan_time"]["maximum"], 86400)
         self.assertEqual(
-            schema["$defs"]["planState"]["enum"], capabilities["states"]
+            definitions["operatorFindingStatus"]["enum"],
+            ["open", "acknowledged", "false_positive"],
+        )
+        self.assertIn(
+            "baseline_version",
+            definitions["activateBaselineRequest"]["properties"],
+        )
+        self.assertNotIn(
+            "baseline_version_id",
+            definitions["activateBaselineRequest"]["properties"],
         )
         self.assertEqual(
-            schema["$defs"]["planRequest"]["properties"]["selected_path_ids"][
-                "maxItems"
-            ],
-            capabilities["limits"]["targets_per_plan"],
+            set(definitions["aiOptions"]["properties"]),
+            {"language", "share_ssids"},
         )
         self.assertEqual(
-            schema["$defs"]["planRequest"]["properties"]["history"]["maxItems"],
-            capabilities["limits"]["history_snapshots"],
-        )
-        self.assertEqual(
-            schema["$defs"]["deviceContext"]["properties"]["supported_bands"][
-                "maxItems"
-            ],
-            capabilities["limits"]["supported_bands"],
-        )
-        self.assertEqual(
-            schema["$defs"]["scanRequest"]["properties"]["scan_time"]["minimum"],
-            capabilities["limits"]["minimum_scan_time"],
-        )
-        self.assertEqual(
-            schema["$defs"]["scanRequest"]["properties"]["scan_time"]["maximum"],
-            capabilities["limits"]["maximum_scan_time"],
-        )
-        self.assertEqual(
-            (
-                schema["$defs"]["restDescriptor"]["properties"]["method"]["const"],
-                schema["$defs"]["restDescriptor"]["properties"]["path"]["const"],
-            ),
-            (
-                capabilities["rest"]["method"],
-                capabilities["rest"]["path"],
-            ),
+            definitions["reportResponse"]["properties"]["mime_type"]["enum"],
+            ["application/json", "text/html"],
         )
 
-    def test_frontend_settings_schema_matches_runtime_limits(self):
-        path = ROOT / "docs" / "schemas" / "frontend-v1.schema.json"
-        schema = json.loads(path.read_text(encoding="utf-8"))
-        settings = schema["$defs"]["settings"]["properties"]
-        band = schema["$defs"]["band"]["properties"]
-        self.assertEqual(settings["supported_bands"]["maxItems"], MAX_SUPPORTED_BANDS)
-        self.assertEqual(settings["language"]["enum"], ["en", "fi"])
-        self.assertEqual(band["value"]["maxLength"], 32)
-        self.assertEqual(band["covers"]["items"]["enum"], ["2.4", "5"])
+    def test_removed_attack_contracts_are_not_published(self):
+        schema_directory = SCHEMA_PATH.parent
+        for name in (
+            "attack-path-advisor-v1.schema.json",
+            "adaptive-recon-v1.schema.json",
+            "frontend-v1.schema.json",
+        ):
+            self.assertFalse((schema_directory / name).exists(), name)
 
 
 if __name__ == "__main__":

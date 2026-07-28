@@ -17,10 +17,7 @@ ASSETS = (
 )
 sys.path.insert(0, str(ASSETS))
 
-from pineai_backend.openai_client import (  # noqa: E402
-    OpenAIClient,
-    OpenAIClientError,
-)
+from pineai_backend.openai_client import OpenAIClient, OpenAIClientError  # noqa: E402
 
 
 class FakeResponse:
@@ -44,28 +41,48 @@ def response_body(content):
     }
 
 
+def valid_analysis():
+    return {
+        "summary": "Observed deterministic changes.",
+        "finding_explanations": [],
+        "report_sections": {
+            "executive_summary": "Summary",
+            "technical_summary": "Technical",
+            "change_summary": "Changes",
+            "limitations": [],
+        },
+    }
+
+
 class OpenAIClientTests(unittest.TestCase):
-    def test_success_uses_strict_schema_and_no_tools(self):
+    def test_assurance_analysis_is_strict_stored_false_and_has_no_tools(self):
         captured = {}
-        structured = {"overall_summary": "ok", "targets": []}
 
         def opener(api_request, timeout):
             captured["body"] = json.loads(api_request.data.decode("utf-8"))
             captured["authorization"] = api_request.headers["Authorization"]
             return FakeResponse(
                 response_body(
-                    [{"type": "output_text", "text": json.dumps(structured)}]
+                    [{"type": "output_text", "text": json.dumps(valid_analysis())}]
                 )
             )
 
         client = OpenAIClient("secret", "gpt-5.6-terra", opener=opener)
-        parsed, usage = client.profile({"targets": []}, "en", "device_test")
-        self.assertEqual(parsed, structured)
+        parsed, usage = client.analyze_assurance(
+            {"findings": []}, "fi", "device_test"
+        )
+        self.assertEqual(parsed, valid_analysis())
         self.assertEqual(usage["total_tokens"], 15)
-        self.assertFalse(captured["body"]["store"])
-        self.assertTrue(captured["body"]["text"]["format"]["strict"])
-        self.assertNotIn("tools", captured["body"])
+        body = captured["body"]
+        self.assertFalse(body["store"])
+        self.assertEqual(body["reasoning"], {"effort": "low"})
+        self.assertTrue(body["text"]["format"]["strict"])
+        self.assertEqual(
+            body["text"]["format"]["name"], "pineai_assurance_analysis"
+        )
+        self.assertNotIn("tools", body)
         self.assertEqual(captured["authorization"], "Bearer secret")
+        self.assertIn("authoritative", body["input"][0]["content"])
 
     def test_refusal(self):
         client = OpenAIClient(
@@ -76,10 +93,10 @@ class OpenAIClientTests(unittest.TestCase):
             ),
         )
         with self.assertRaises(OpenAIClientError) as raised:
-            client.profile({"targets": []}, "en", "device_test")
+            client.analyze_assurance({}, "en", "device_test")
         self.assertEqual(raised.exception.code, "refusal")
 
-    def test_http_errors_are_classified(self):
+    def test_http_errors_are_classified_without_leaking_body(self):
         for status, expected in (
             (401, "authentication_error"),
             (429, "rate_limited"),
@@ -101,88 +118,31 @@ class OpenAIClientTests(unittest.TestCase):
                 "secret", "model", opener=opener, max_attempts=1
             )
             with self.assertRaises(OpenAIClientError) as raised:
-                client.profile({"targets": []}, "en", "device_test")
+                client.analyze_assurance({}, "en", "device_test")
             self.assertEqual(raised.exception.code, expected)
             self.assertNotIn("secret upstream body", str(raised.exception))
 
-    def test_timeout_is_classified(self):
-        def opener(*_args, **_kwargs):
-            raise socket.timeout()
-
-        client = OpenAIClient("secret", "model", opener=opener, max_attempts=1)
-        with self.assertRaises(OpenAIClientError) as raised:
-            client.profile({"targets": []}, "en", "device_test")
-        self.assertEqual(raised.exception.code, "network_error")
-
-    def test_invalid_json_output_is_rejected(self):
+    def test_timeout_and_invalid_json_are_classified(self):
         client = OpenAIClient(
+            "secret",
+            "model",
+            opener=lambda *_args, **_kwargs: (_ for _ in ()).throw(socket.timeout()),
+            max_attempts=1,
+        )
+        with self.assertRaises(OpenAIClientError) as timeout:
+            client.analyze_assurance({}, "en", "device_test")
+        self.assertEqual(timeout.exception.code, "network_error")
+
+        invalid = OpenAIClient(
             "secret",
             "model",
             opener=lambda *_args, **_kwargs: FakeResponse(
                 response_body([{"type": "output_text", "text": "not json"}])
             ),
         )
-        with self.assertRaises(OpenAIClientError) as raised:
-            client.profile({"targets": []}, "en", "device_test")
-        self.assertEqual(raised.exception.code, "invalid_response")
-
-    def test_advisor_uses_strict_schema_and_no_tools(self):
-        captured = {}
-        structured = {"targets": []}
-
-        def opener(api_request, timeout):
-            captured["body"] = json.loads(api_request.data.decode("utf-8"))
-            return FakeResponse(
-                response_body(
-                    [{"type": "output_text", "text": json.dumps(structured)}]
-                )
-            )
-
-        client = OpenAIClient("secret", "gpt-5.6-terra", opener=opener)
-        parsed, _usage = client.advise({"targets": []}, "fi", "device_test")
-        self.assertEqual(parsed, structured)
-        self.assertEqual(
-            captured["body"]["text"]["format"]["name"], "pineai_attack_paths"
-        )
-        self.assertTrue(captured["body"]["text"]["format"]["strict"])
-        self.assertFalse(captured["body"]["store"])
-        self.assertNotIn("tools", captured["body"])
-
-    def test_adaptive_recon_uses_strict_schema_and_no_tools(self):
-        captured = {}
-        structured = {
-            "candidate_id": "reconcandidate_aaaaaaaaaaaa",
-            "target_ids": ["target_aaaaaaaaaaaa"],
-            "confidence": 0.7,
-            "rationale": "Bounded candidate",
-            "expected_information": [],
-            "evidence_ids": [],
-            "missing_evidence": [],
-        }
-
-        def opener(api_request, timeout):
-            captured["body"] = json.loads(api_request.data.decode("utf-8"))
-            return FakeResponse(
-                response_body(
-                    [{"type": "output_text", "text": json.dumps(structured)}]
-                )
-            )
-
-        client = OpenAIClient("secret", "gpt-5.6-terra", opener=opener)
-        parsed, usage = client.plan_adaptive_recon(
-            {"candidate_plans": []}, "en", "device_test"
-        )
-        self.assertEqual(parsed, structured)
-        self.assertEqual(usage["total_tokens"], 15)
-        body = captured["body"]
-        self.assertEqual(body["model"], "gpt-5.6-terra")
-        self.assertEqual(body["reasoning"], {"effort": "low"})
-        self.assertFalse(body["store"])
-        self.assertEqual(
-            body["text"]["format"]["name"], "pineai_adaptive_recon"
-        )
-        self.assertTrue(body["text"]["format"]["strict"])
-        self.assertNotIn("tools", body)
+        with self.assertRaises(OpenAIClientError) as response:
+            invalid.analyze_assurance({}, "en", "device_test")
+        self.assertEqual(response.exception.code, "invalid_response")
 
 
 if __name__ == "__main__":

@@ -2,16 +2,20 @@
     <header class="view-header">
         <div>
             <h2>Settings</h2>
-            <p>Privacy, AI access and device-confirmed Recon capabilities.</p>
+            <p>Offline-first language, privacy and optional AI provider access.</p>
         </div>
     </header>
 
     <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
     <div *ngIf="successMessage" class="success-banner" role="status">{{ successMessage }}</div>
+    <div *ngIf="pineai.panelErrors.settings && !errorMessage" class="warning-banner">
+        Stored settings could not be loaded. Safe offline defaults are active:
+        {{ pineai.panelErrors.settings.code }} — {{ pineai.panelErrors.settings.message }}
+    </div>
 
-    <div class="grid">
+    <div class="grid two">
         <mat-card>
-            <mat-card-title>AI and privacy</mat-card-title>
+            <mat-card-title>Language and privacy</mat-card-title>
             <mat-card-content>
                 <form [formGroup]="settingsForm" class="stack">
                     <mat-form-field appearance="outline">
@@ -22,35 +26,44 @@
                         </mat-select>
                     </mat-form-field>
                     <mat-slide-toggle formControlName="share_ssids">
-                        Share real SSID values with OpenAI
+                        Share real SSID values in optional AI requests
                     </mat-slide-toggle>
-                    <div class="warning-banner" *ngIf="settingsForm.value.share_ssids">
-                        SSIDs will be sent as observed data. MAC addresses remain pseudonymized.
+                    <div *ngIf="settingsForm.value.share_ssids" class="warning-banner">
+                        SSIDs are untrusted observed data and will be sent only after a privacy preview.
+                        MAC and BSSID values remain pseudonymized.
+                    </div>
+                    <div *ngIf="!settingsForm.value.share_ssids" class="success-banner">
+                        SSID sharing is disabled. This is the recommended default.
                     </div>
                     <div class="row">
-                        <span>Model</span>
+                        <span>Configured model</span>
                         <span class="spacer"></span>
-                        <strong>{{ pineai.settings?.model }}</strong>
+                        <strong>{{ pineai.settings?.model || pineai.health?.model || 'Backend default' }}</strong>
                     </div>
-                    <div class="row">
-                        <span>API key</span>
-                        <span class="spacer"></span>
-                        <span class="badge" [class.complete]="pineai.settings?.api_key_configured">
-                            {{ pineai.settings?.api_key_configured ?
-                               'configured via ' + pineai.settings?.api_key_source :
-                               'not configured' }}
-                        </span>
+                    <div class="actions">
+                        <button mat-flat-button color="accent" type="button" (click)="saveSettings()" [disabled]="busy">
+                            Save settings
+                        </button>
                     </div>
                 </form>
             </mat-card-content>
         </mat-card>
 
         <mat-card>
-            <mat-card-title>OpenAI API key</mat-card-title>
+            <mat-card-title>Optional OpenAI API key</mat-card-title>
             <mat-card-subtitle>
-                The key is sent once to the backend and is never returned to this page.
+                The key is sent once, stored with backend file permissions and never returned.
             </mat-card-subtitle>
             <mat-card-content>
+                <div class="row">
+                    <span>Current state</span>
+                    <span class="spacer"></span>
+                    <span class="badge" [class.complete]="pineai.settings?.api_key_configured">
+                        {{ pineai.settings?.api_key_configured ?
+                           'Configured via ' + (pineai.settings?.api_key_source || 'backend') :
+                           'Not configured — offline mode' }}
+                    </span>
+                </div>
                 <form [formGroup]="keyForm" class="stack" autocomplete="off">
                     <mat-form-field appearance="outline">
                         <mat-label>New API key</mat-label>
@@ -62,8 +75,8 @@
                             maxlength="1024">
                     </mat-form-field>
                     <div *ngIf="!secureTransport" class="error-banner">
-                        This management page uses HTTP. The API key can be exposed to anyone able
-                        to observe this network connection. HTTPS or SSH/CLI is safer.
+                        This management page uses HTTP. Anyone able to observe this connection may see
+                        the one-time key submission. HTTPS or the device CLI is safer.
                     </div>
                     <mat-checkbox
                         *ngIf="!secureTransport"
@@ -87,52 +100,4 @@
             </mat-card-content>
         </mat-card>
     </div>
-
-    <mat-card>
-        <div class="card-title-row">
-            <div>
-                <mat-card-title>Device-confirmed Recon bands</mat-card-title>
-                <mat-card-subtitle>
-                    Enter exact opaque values accepted by this Mark VII. PineAI ships no guessed defaults.
-                </mat-card-subtitle>
-            </div>
-            <button mat-stroked-button (click)="addBand()" [disabled]="bands.length >= 8">
-                Add band
-            </button>
-        </div>
-        <mat-card-content>
-            <form [formGroup]="settingsForm">
-                <div formArrayName="supported_bands" class="stack">
-                    <div
-                        class="row"
-                        *ngFor="let group of bands.controls; let index = index"
-                        [formGroupName]="index">
-                        <mat-form-field appearance="outline">
-                            <mat-label>Exact Hak5 band value</mat-label>
-                            <input matInput formControlName="value" maxlength="32">
-                        </mat-form-field>
-                        <mat-checkbox formControlName="cover24">2.4 GHz</mat-checkbox>
-                        <mat-checkbox formControlName="cover5">5 GHz</mat-checkbox>
-                        <mat-checkbox formControlName="is_default">Default</mat-checkbox>
-                        <button
-                            mat-icon-button
-                            color="warn"
-                            type="button"
-                            aria-label="Remove band"
-                            (click)="removeBand(index)">
-                            <mat-icon>delete</mat-icon>
-                        </button>
-                    </div>
-                </div>
-                <div *ngIf="!bands.length" class="empty-state">
-                    No band capabilities configured. Recon start controls remain disabled.
-                </div>
-                <div class="actions">
-                    <button mat-flat-button color="accent" type="button" (click)="saveSettings()" [disabled]="busy">
-                        Save settings
-                    </button>
-                </div>
-            </form>
-        </mat-card-content>
-    </mat-card>
 </section>

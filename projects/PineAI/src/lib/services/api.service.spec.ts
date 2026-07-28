@@ -37,7 +37,7 @@ describe('ApiService', () => {
     it('rejects backend module errors with the safe error object', async () => {
         const promise = service.moduleRequest<any>({
             module: 'PineAI',
-            action: 'profile_recon'
+            action: 'resolve_recon'
         });
         http.expectOne('/api/module/request').flush({
             error: {code: 'invalid_recon', message: 'Invalid Recon data'}
@@ -49,8 +49,8 @@ describe('ApiService', () => {
 
     it('preserves native Hak5 paths and request bodies', async () => {
         const body = {live: false, scan_time: 180, band: 'confirmed'};
-        const promise = service.nativePost<any>('/api/recon/start', body);
-        const request = http.expectOne('/api/recon/start');
+        const promise = service.nativePost<any>('/api/test/echo', body);
+        const request = http.expectOne('/api/test/echo');
         expect(request.request.method).toBe('POST');
         expect(request.request.body).toEqual(body);
         request.flush({scanRunning: true, scanID: 7});

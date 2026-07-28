@@ -254,7 +254,7 @@ def update_frontend_settings(
     """Update only settings that are intentionally exposed in the module UI."""
     if not isinstance(changes, dict) or not changes:
         raise ConfigError("settings must be a non-empty object")
-    allowed = {"language", "share_ssids", "supported_bands"}
+    allowed = {"language", "share_ssids"}
     unknown = set(changes) - allowed
     if unknown:
         raise ConfigError("settings contain unsupported fields")

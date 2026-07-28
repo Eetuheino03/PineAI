@@ -76,13 +76,31 @@ build_module() {
 
 package() {
     VERS=$(grep '"version"' "dist/$MODULENAME/module.json" | awk '{split($0, a, ": "); gsub("\"", "", a[2]); gsub(",", "", a[2]); print a[2]}')
-    rm -f "$MODULENAME-$VERS.tar.gz"
+    PACKAGE_PATH="$PWD/$MODULENAME-$VERS.tar.gz"
+    PACKAGE_STAGE=$(mktemp -d "${TMPDIR:-/tmp}/pineai-package.XXXXXX")
+
+    cleanup_package_stage() {
+        rm -rf -- "$PACKAGE_STAGE"
+    }
+    trap cleanup_package_stage RETURN
+
+    rm -f "$PACKAGE_PATH"
     echo "[*] Packaging $MODULENAME (Version $VERS)"
-    (
-        cd "dist/"
-        tar -pczf "$MODULENAME-$VERS.tar.gz" "$MODULENAME"
-        mv "$MODULENAME-$VERS.tar.gz" ../
-    )
+    mkdir -p "$PACKAGE_STAGE/$MODULENAME"
+    cp -R "dist/$MODULENAME/." "$PACKAGE_STAGE/$MODULENAME/"
+
+    find "$PACKAGE_STAGE/$MODULENAME" -type d -exec chmod 755 {} +
+    find "$PACKAGE_STAGE/$MODULENAME" -type f -exec chmod 644 {} +
+    chmod 755 "$PACKAGE_STAGE/$MODULENAME/module.py"
+    if [[ -f "$PACKAGE_STAGE/$MODULENAME/assets/pineai_cli.py" ]]; then
+        chmod 755 "$PACKAGE_STAGE/$MODULENAME/assets/pineai_cli.py"
+    fi
+
+    tar --owner=0 --group=0 --numeric-owner \
+        -czf "$PACKAGE_PATH" -C "$PACKAGE_STAGE" "$MODULENAME"
+
+    cleanup_package_stage
+    trap - RETURN
 }
 
 copy_to_device() {

@@ -1,0 +1,165 @@
+<section class="view">
+    <header class="view-header">
+        <div>
+            <h2>Assets &amp; Changes</h2>
+            <p>Deterministic resolution, comparability, diff and rule evaluation.</p>
+        </div>
+        <div class="row">
+            <button
+                mat-stroked-button
+                (click)="resolve()"
+                [disabled]="busy || !pineai.selectedScanData">
+                Resolve
+            </button>
+            <button
+                mat-stroked-button
+                (click)="compare()"
+                [disabled]="busy || !snapshot || !pineai.activeBaselineId() ||
+                    !pineai.assessmentMutable()">
+                Preview comparison
+            </button>
+            <button
+                mat-flat-button
+                color="accent"
+                (click)="analyze()"
+                [disabled]="busy || !snapshot || !pineai.activeBaselineId() ||
+                    !pineai.assessmentMutable()">
+                Save analysis
+            </button>
+        </div>
+    </header>
+
+    <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+    <div *ngIf="successMessage" class="success-banner" role="status">{{ successMessage }}</div>
+    <div
+        *ngIf="pineai.activeAssessment && !pineai.assessmentMutable()"
+        class="warning-banner">
+        This assessment is archived. Saved comparisons remain available for
+        reports, but new comparisons and analyses are disabled.
+    </div>
+
+    <div *ngIf="!pineai.selectedScanData" class="empty-state">
+        <mat-icon>radar</mat-icon>
+        Load a saved Recon scan first.
+    </div>
+
+    <div *ngIf="pineai.selectedScanData && !snapshot" class="notice">
+        Resolve the selected scan to inspect its normalized assets. Resolution is fully offline.
+    </div>
+
+    <div *ngIf="snapshot" class="stack">
+        <div class="grid">
+            <mat-card>
+                <mat-card-content>
+                    <div class="metric">{{ accessPoints.length }}</div>
+                    <div class="metric-label">Access points</div>
+                </mat-card-content>
+            </mat-card>
+            <mat-card>
+                <mat-card-content>
+                    <div class="metric">{{ networks.length }}</div>
+                    <div class="metric-label">SSID / network assets</div>
+                </mat-card-content>
+            </mat-card>
+            <mat-card>
+                <mat-card-content>
+                    <div class="metric">{{ candidateFindings.length }}</div>
+                    <div class="metric-label">Candidate findings</div>
+                </mat-card-content>
+            </mat-card>
+        </div>
+
+        <mat-card *ngIf="comparison">
+            <div class="card-title-row">
+                <div>
+                    <mat-card-title>Comparability</mat-card-title>
+                    <mat-card-subtitle>
+                        Absence rules only run when the backend marks scans comparable.
+                    </mat-card-subtitle>
+                </div>
+                <span
+                    class="badge"
+                    [ngClass]="pineai.comparabilityLabel(comparison)">
+                    {{ pineai.comparabilityLabel(comparison) }}
+                </span>
+            </div>
+            <mat-card-content>
+                <div
+                    *ngIf="pineai.comparability(comparison)?.reasons?.length"
+                    class="stack">
+                    <div
+                        *ngFor="let reason of pineai.comparability(comparison).reasons"
+                        class="muted">
+                        {{ reason }}
+                    </div>
+                </div>
+                <div class="row" *ngIf="comparison.comparison_id">
+                    <span>Comparison ID</span>
+                    <span class="spacer"></span>
+                    <span class="mono break-all">{{ comparison.comparison_id }}</span>
+                </div>
+            </mat-card-content>
+        </mat-card>
+
+        <mat-card>
+            <mat-card-title>Resolved access points</mat-card-title>
+            <mat-card-subtitle>Observed identifiers are displayed as untrusted data.</mat-card-subtitle>
+            <mat-card-content>
+                <div *ngIf="!accessPoints.length" class="empty-state">No access points resolved.</div>
+                <mat-list *ngIf="accessPoints.length">
+                    <mat-list-item *ngFor="let ap of accessPoints">
+                        <mat-icon mat-list-icon>router</mat-icon>
+                        <div mat-line>
+                            <span class="untrusted">{{ ssid(ap) }}</span>
+                        </div>
+                        <div mat-line class="mono">
+                            {{ id(ap) || 'No stable ID' }} · channel {{ ap.channel || '—' }}
+                        </div>
+                        <span class="badge">{{ ap.encryption_code !== undefined ?
+                            ap.encryption_code : (ap.encryption || 'unknown') }}</span>
+                    </mat-list-item>
+                </mat-list>
+            </mat-card-content>
+        </mat-card>
+
+        <mat-card>
+            <mat-card-title>Deterministic diff</mat-card-title>
+            <mat-card-content>
+                <div *ngIf="!comparison" class="empty-state">
+                    Preview a comparison against the active baseline.
+                </div>
+                <div *ngIf="comparison && !groups().length" class="success-banner">
+                    No structured changes were returned.
+                </div>
+                <mat-expansion-panel *ngFor="let group of groups()">
+                    <mat-expansion-panel-header>
+                        <mat-panel-title>{{ group.name || 'Changes' }}</mat-panel-title>
+                        <mat-panel-description>{{ group.items.length }} item(s)</mat-panel-description>
+                    </mat-expansion-panel-header>
+                    <pre class="json-preview">{{ group.items | json }}</pre>
+                </mat-expansion-panel>
+            </mat-card-content>
+        </mat-card>
+
+        <mat-card *ngIf="candidateFindings.length">
+            <mat-card-title>Candidate findings</mat-card-title>
+            <mat-card-subtitle>
+                Severity and confidence are authoritative backend values, never AI output.
+            </mat-card-subtitle>
+            <mat-card-content class="stack">
+                <div *ngFor="let finding of candidateFindings">
+                    <div class="card-title-row">
+                        <strong>{{ finding.title || finding.rule_id }}</strong>
+                        <div class="chip-list">
+                            <span class="badge" [ngClass]="finding.severity">{{ finding.severity }}</span>
+                            <span class="badge">{{ finding.confidence }}</span>
+                        </div>
+                    </div>
+                    <div class="muted">{{ finding.summary || finding.description }}</div>
+                    <div class="mono break-all">{{ finding.finding_id || finding.candidate_id }}</div>
+                    <mat-divider></mat-divider>
+                </div>
+            </mat-card-content>
+        </mat-card>
+    </div>
+</section>

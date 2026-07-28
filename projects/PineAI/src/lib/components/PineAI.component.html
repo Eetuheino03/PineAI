@@ -1,8 +1,8 @@
 <div class="pineai-shell">
     <mat-toolbar class="pineai-toolbar">
-        <div>
+        <div class="brand">
             <span class="pineai-title">PineAI</span>
-            <span class="pineai-subtitle">Authorized wireless assessment copilot</span>
+            <span class="pineai-subtitle">Wireless baseline and drift assurance</span>
         </div>
         <span class="toolbar-spacer"></span>
         <mat-chip-list aria-label="PineAI status">
@@ -10,7 +10,7 @@
                 Backend {{ pineai.health?.version || '—' }}
             </mat-chip>
             <mat-chip [class.status-ok]="pineai.settings?.api_key_configured">
-                AI {{ pineai.settings?.api_key_configured ? 'configured' : 'offline' }}
+                {{ pineai.settings?.api_key_configured ? 'AI optional' : 'Offline ready' }}
             </mat-chip>
         </mat-chip-list>
     </mat-toolbar>
@@ -18,35 +18,43 @@
     <div *ngIf="startupError" class="startup-error" role="alert">
         <mat-icon>error_outline</mat-icon>
         <div>
-            <strong>PineAI could not initialize.</strong>
+            <strong>PineAI backend is unavailable.</strong>
             <div>{{ startupError }}</div>
+            <p>The application only blocks when the core module backend cannot answer.</p>
         </div>
         <button mat-stroked-button (click)="retry()">Retry</button>
     </div>
 
     <div *ngIf="pineai.initializing" class="loading-state" aria-live="polite">
         <mat-spinner diameter="42"></mat-spinner>
-        <p>Loading backend and WiFi Pineapple state…</p>
+        <p>Loading Baseline &amp; Drift…</p>
     </div>
 
-    <mat-tab-group *ngIf="pineai.initialized" dynamicHeight animationDuration="150ms">
+    <mat-tab-group
+        *ngIf="pineai.initialized"
+        class="pineai-tabs"
+        dynamicHeight
+        animationDuration="150ms">
         <mat-tab label="Overview">
             <lib-pineai-overview></lib-pineai-overview>
         </mat-tab>
         <mat-tab label="Recon">
             <lib-pineai-recon></lib-pineai-recon>
         </mat-tab>
-        <mat-tab label="Targets">
-            <lib-pineai-targets></lib-pineai-targets>
+        <mat-tab label="Assessments">
+            <lib-pineai-assessments></lib-pineai-assessments>
         </mat-tab>
-        <mat-tab label="Engagement">
-            <lib-pineai-engagement></lib-pineai-engagement>
+        <mat-tab label="Baselines">
+            <lib-pineai-baselines></lib-pineai-baselines>
         </mat-tab>
-        <mat-tab label="Advisor">
-            <lib-pineai-advisor></lib-pineai-advisor>
+        <mat-tab label="Assets &amp; Changes">
+            <lib-pineai-assets-changes></lib-pineai-assets-changes>
         </mat-tab>
-        <mat-tab label="Adaptive Recon">
-            <lib-pineai-adaptive-recon></lib-pineai-adaptive-recon>
+        <mat-tab label="Findings">
+            <lib-pineai-findings></lib-pineai-findings>
+        </mat-tab>
+        <mat-tab label="Reports">
+            <lib-pineai-reports></lib-pineai-reports>
         </mat-tab>
         <mat-tab label="Activity">
             <lib-pineai-activity></lib-pineai-activity>

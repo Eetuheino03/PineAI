@@ -13,44 +13,43 @@ export class OverviewComponent {
     constructor(public pineai: PineAIService) {}
 
     get nextAction(): string {
-        if (!this.pineai.settings || !this.pineai.settings.supported_bands.length) {
-            return 'Configure at least one device-confirmed Recon band in Settings.';
+        if (!this.pineai.activeAssessment) {
+            return 'Create or select an assessment for this wireless environment.';
         }
         if (!this.pineai.selectedScanData) {
-            return 'Load an existing Recon scan or start a bounded scan.';
+            return 'Load a saved Recon scan from the Pineapple.';
         }
-        if (!this.pineai.profileResult) {
-            return 'Profile the selected Recon scan.';
+        if (!this.pineai.resolvedScan) {
+            return 'Resolve the selected scan into deterministic assets.';
         }
-        if (!this.pineai.selectedTargetIds.length) {
-            return 'Select up to ten authorized targets.';
+        if (!this.pineai.activeBaselineId()) {
+            return 'Create and explicitly activate the first baseline version.';
         }
-        if (!this.pineai.activeEngagement) {
-            return 'Create or select an engagement with an active authorization window.';
+        if (!this.pineai.comparison && !this.pineai.analysis) {
+            return 'Preview the scan against the active baseline.';
         }
-        if (!this.pineai.advisorResult) {
-            return 'Generate policy-filtered attack-path advice.';
+        if (!this.pineai.analysis) {
+            return 'Save the comparison to update the finding lifecycle.';
         }
-        if (!this.pineai.selectedPathIds.length) {
-            return 'Select Recon-capable advisor paths for Adaptive Recon.';
-        }
-        return 'Review and recommend an Adaptive Recon plan.';
+        return 'Review findings and export a deterministic report.';
+    }
+
+    get openFindings(): number {
+        const counts = this.pineai.findingCounts();
+        return (counts.open || 0) + (counts.acknowledged || 0);
+    }
+
+    get partialServices(): string[] {
+        return Object.keys(this.pineai.panelErrors);
     }
 
     async refresh(): Promise<void> {
         this.refreshing = true;
         this.errorMessage = '';
         try {
-            await Promise.all([
-                this.pineai.refreshHealth(),
-                this.pineai.refreshSettings(),
-                this.pineai.refreshReconStatus(),
-                this.pineai.refreshScans(),
-                this.pineai.refreshEngagements()
-            ]);
+            await this.pineai.initialize();
         } catch (error) {
-            const failure = this.pineai.error(error);
-            this.errorMessage = `${failure.code}: ${failure.message}`;
+            this.errorMessage = this.pineai.errorText(error);
         } finally {
             this.refreshing = false;
         }
