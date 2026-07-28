@@ -52,11 +52,12 @@ remove accidental CRLF-only changes before implementation commits.
 
 ## Current state
 
-- Phase: v0.6.1 release hardening
+- Phase: v0.6.1 pre-release published; physical smoke test pending
 - Direction checkpoint commit: `201b291`
 - Baseline & Drift pull request: `#16`, merged into `main` as `255a8db`
-- v0.6.1 release-hardening pull request: `#24`
-- Latest implementation and main-integration commit verified by CI: `c34a8cf`
+- v0.6.1 release-hardening pull request: `#24`, merged into `main` as
+  `192a97b`
+- Release tag: `v0.6.1`, pointing to `192a97b`
 - Backend: deterministic resolver, assessment storage, comparability, eight
   finding rules, lifecycle, optional AI explanation boundary, and reports
   implemented
@@ -85,11 +86,18 @@ remove accidental CRLF-only changes before implementation commits.
 - Package ownership, modes, paths, symlinks, required contents, embedded
   version, extracted Python compilation, and checksum round trip: passed
 - Secret-pattern scan: no committed OpenAI-style API key found
-- GitHub Actions on pull request `#24`: passed for both the push and pull
-  request events:
-  - `30351527983`
-  - `30351530748`
-- Published release-asset checksum: pending tag and pre-release creation
+- GitHub Actions on the final pull-request head: passed for both the push and
+  pull-request events:
+  - `30351733005`
+  - `30351736174`
+- GitHub Actions on merged `main`: passed (`30351894717`)
+- GitHub Actions on tag `v0.6.1`: passed (`30352064847`)
+- Published pre-release:
+  `https://github.com/Eetuheino03/PineAI/releases/tag/v0.6.1`
+- Published package SHA-256:
+  `940a0811e68314fd374039603473af4962132a86b8384734ab08327887bd3341`
+- The package and checksum were downloaded back from the release and passed
+  both checksum verification and `scripts/verify-package.sh`
 
 Physical Mark VII smoke testing is intentionally pending. No device files,
 settings, radios, or stored assessment data were changed during v0.6.1
@@ -97,10 +105,10 @@ release hardening.
 
 ## Release handoff
 
-Publish the verified `PineAI-0.6.1.tar.gz` artifact and its matching
-SHA-256 sidecar as a GitHub pre-release. Keep it marked as a pre-release until
-the exact asset passes the physical Mark VII smoke test. The release notes
-must distinguish automated package verification from hardware validation.
+The verified `PineAI-0.6.1.tar.gz` artifact and its matching SHA-256 sidecar
+are published as a GitHub pre-release. Keep that exact release marked as a
+pre-release until the exact asset passes the physical Mark VII smoke test.
+Do not rebuild or replace the assets during hardware validation.
 
 ## Next task
 
