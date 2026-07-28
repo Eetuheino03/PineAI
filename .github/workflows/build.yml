@@ -56,8 +56,8 @@ jobs:
           test -f PineAI-0.6.0.tar.gz
           test "$(tar -tzf PineAI-0.6.0.tar.gz | sed -n '1p')" = "PineAI/"
           tar -tzf PineAI-0.6.0.tar.gz PineAI/PineAI.umd.js > /dev/null
-          test "$(tar -tvzf PineAI-0.6.0.tar.gz PineAI/module.py | awk '{print $1, $2}')" = "-rwxr-xr-x root/root"
-          test "$(tar -tvzf PineAI-0.6.0.tar.gz PineAI/module.json | awk '{print $1, $2}')" = "-rw-r--r-- root/root"
+          test "$(tar --numeric-owner -tvzf PineAI-0.6.0.tar.gz PineAI/module.py | awk '{print $1, $2}')" = "-rwxr-xr-x 0/0"
+          test "$(tar --numeric-owner -tvzf PineAI-0.6.0.tar.gz PineAI/module.json | awk '{print $1, $2}')" = "-rw-r--r-- 0/0"
           sha256sum PineAI-0.6.0.tar.gz > PineAI-0.6.0.tar.gz.sha256
       - uses: actions/upload-artifact@v4
         with:
