@@ -4,9 +4,16 @@ PineAI is an offline-first wireless assurance module for the WiFi Pineapple
 Mark VII. It turns saved Hak5 Recon observations into immutable baselines,
 deterministic changes, evidence-backed findings, and exportable reports.
 
+![PineAI Banner](docs/asset.png)
+
 PineAI is not an attack module. Version `0.6.1` continues and hardens the
 **Baseline & Drift** direction introduced in `0.6.0`, which replaced the
 earlier reconnaissance-copilot workflow:
+
+
+
+PineAI is not an attack module. Version `0.6.0` replaces the earlier
+reconnaissance-copilot workflow with **Baseline & Drift**:
 
 1. load a saved Recon scan through the authenticated Hak5 session;
 2. resolve access points and SSIDs into stable local assets;
