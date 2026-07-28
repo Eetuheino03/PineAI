@@ -103,11 +103,29 @@ AI and network failure leave the complete deterministic workflow operational.
 
 The resolver returns one of:
 
-- `comparable`: absence-based drift and lifecycle resolution are allowed. Requires matching `location_id` and `measurement_point_id`, valid declared channels coverage (1.0), and passing duration, detection, and quality thresholds.
-- `partially_comparable`: observed changes are reported with a confidence penalty, but absence-based findings are suppressed. Triggered when measurement context or declared channels are unknown (`null`), or when quality scores are below thresholds.
-- `not_comparable`: a diagnostic diff is returned, but finding lifecycle is not changed. Triggered by explicit location/measurement point mismatches, band mismatches, or empty scan results.
+- `comparable`: absence-based drift and lifecycle resolution are allowed.
+  Requires matching `location_id` and `measurement_point_id`, no explicit
+  scan/radio/interface profile mismatch, complete declared-channel coverage,
+  and passing duration, detection, and quality thresholds.
+- `partially_comparable`: observed changes are reported with a confidence
+  penalty, but absence-based findings are suppressed. Triggered when required
+  location/point context or declared channels are unknown, an explicit radio
+  profile differs, or a quality threshold is not met.
+- `not_comparable`: a diagnostic diff is returned, but finding lifecycle is
+  not changed. Triggered by explicit location, measurement-point,
+  `scan_profile_id`, or `interface` mismatch; a band mismatch; or an empty
+  current scan.
 
-The decision considers absolute measurement context (`location_id` and `measurement_point_id`), declared and observed channel coverage, scan duration, baseline AP detection ratio, and overall comparison quality score. Reason codes remain machine-readable.
+`radio_profile_id` mismatch is deliberately less strict than a scan-profile
+or interface mismatch: the observation remains useful, but the result cannot
+assert that a baseline AP is absent. Unknown scan, radio, or interface
+profiles also limit the result to `partially_comparable`, because the
+measurement method has not been proven equivalent.
+
+The decision considers absolute measurement context (`location_id` and
+`measurement_point_id`), scan/radio/interface profile compatibility, declared
+and observed channel coverage, scan duration, baseline AP detection ratio,
+and overall comparison quality score. Reason codes remain machine-readable.
 
 ## Finding rules and confidence
 
@@ -163,7 +181,7 @@ GET /api/recon/scans
 GET /api/recon/scans/:scan_id
 ```
 
-PineAI `0.6.0` does not call `POST /api/recon/start`, stop scans, or operate a
+PineAI `0.6.1` does not call `POST /api/recon/start`, stop scans, or operate a
 radio. The backend receives Recon JSON from Angular and does not store the
 Pineapple root password.
 
@@ -173,7 +191,9 @@ The public module contract is documented in
 
 ## Roadmap
 
-- **0.6.0 Baseline & Drift:** one environment per assessment, versioned
+- **0.6.x Baseline & Drift:** introduced in `0.6.0`, with the current
+  comparability-hardening patch in `0.6.1`; one environment per assessment,
+  versioned
   baselines, deterministic changes and findings, lifecycle, reports, optional
   AI explanations, complete Angular workflow.
 - **0.7.0 Wireless Assurance:** continuous observation, multiple locations,

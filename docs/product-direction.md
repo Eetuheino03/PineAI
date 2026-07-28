@@ -62,7 +62,10 @@ public product.
 
 ## Roadmap
 
-### v0.6.0 - Baseline & Drift
+### v0.6.x - Baseline & Drift
+
+Introduced in `v0.6.0`; the current comparability-hardening patch is
+`v0.6.1`.
 
 - read saved scans through the authenticated Hak5 Recon REST API;
 - resolve assets and scan metadata;

@@ -1,3 +1,4 @@
+import copy
 import json
 import sys
 import unittest
@@ -9,6 +10,7 @@ ASSETS = ROOT / "projects" / "PineAI" / "src" / "assets"
 SCHEMA_PATH = ROOT / "docs" / "schemas" / "baseline-drift-v1.schema.json"
 sys.path.insert(0, str(ASSETS))
 
+from pineai_backend import __version__  # noqa: E402
 from pineai_backend.assurance_service import AssuranceService  # noqa: E402
 
 
@@ -21,6 +23,18 @@ def prefix_constants(value):
 
 
 class ContractSchemaTests(unittest.TestCase):
+    def test_release_versions_are_identical_without_optional_dependencies(self):
+        module_metadata = json.loads(
+            (
+                ROOT / "projects" / "PineAI" / "src" / "module.json"
+            ).read_text(encoding="utf-8")
+        )
+        schema_version = load_schema()["$defs"]["assuranceCapabilities"][
+            "properties"
+        ]["backend_version"]["const"]
+        self.assertEqual(module_metadata["version"], __version__)
+        self.assertEqual(schema_version, __version__)
+
     def test_schema_is_valid_json_with_resolvable_local_definitions(self):
         schema = load_schema()
         self.assertEqual(
@@ -113,6 +127,16 @@ class ContractSchemaTests(unittest.TestCase):
             definitions["reportResponse"]["properties"]["mime_type"]["enum"],
             ["application/json", "text/html"],
         )
+        self.assertEqual(
+            metadata["measurement_context"]["$ref"],
+            "#/$defs/measurementContextInput",
+        )
+        self.assertFalse(
+            definitions["measurementContextInput"]["additionalProperties"]
+        )
+        self.assertEqual(
+            len(definitions["scanMetadataInput"]["allOf"]), 7
+        )
 
     def test_removed_attack_contracts_are_not_published(self):
         schema_directory = SCHEMA_PATH.parent
@@ -141,6 +165,9 @@ class ContractSchemaTests(unittest.TestCase):
             "coverage": ["2.4"],
             "location_id": "loc-1",
             "measurement_point_id": "point-1",
+            "scan_profile_id": "full-sweep-v1",
+            "radio_profile_id": "mk7-radio-a",
+            "interface": "wlan1mon",
             "declared_channels": [1, 6, 11],
         }
         secret = b"a" * 32
@@ -156,7 +183,31 @@ class ContractSchemaTests(unittest.TestCase):
 
         validate_def(snapshot, "resolvedSnapshot")
         comparison_res = compare_snapshots(snapshot, snapshot)
+        validate_def(AssuranceService().capabilities(), "assuranceCapabilities")
+        validate_def(comparison_res, "comparison")
         validate_def(comparison_res["comparability"], "comparability")
+
+        missing_v11_field = copy.deepcopy(comparison_res)
+        missing_v11_field["comparability"].pop("interface_match")
+        with self.assertRaises(jsonschema.ValidationError):
+            validate_def(missing_v11_field, "comparison")
+
+        legacy_comparison = copy.deepcopy(comparison_res)
+        legacy_comparison["schema_version"] = "1.0"
+        for field in (
+            "scan_profile_match",
+            "radio_profile_match",
+            "interface_match",
+        ):
+            legacy_comparison["comparability"].pop(field)
+        validate_def(legacy_comparison, "comparison")
+
+        mixed_metadata = {
+            "measurement_context": {"location_id": "loc-1"},
+            "location_id": "loc-1",
+        }
+        with self.assertRaises(jsonschema.ValidationError):
+            validate_def(mixed_metadata, "scanMetadataInput")
 
 
 if __name__ == "__main__":

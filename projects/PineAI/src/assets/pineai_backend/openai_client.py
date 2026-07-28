@@ -7,6 +7,8 @@ from email.message import Message
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib import error, request
 
+from . import __version__
+
 
 RESPONSES_URL = "https://api.openai.com/v1/responses"
 
@@ -184,7 +186,7 @@ class OpenAIClient:
             headers={
                 "Authorization": "Bearer {0}".format(self.api_key),
                 "Content-Type": "application/json",
-                "User-Agent": "PineAI/0.6.0",
+                "User-Agent": "PineAI/{0}".format(__version__),
             },
             method="POST",
         )

@@ -41,15 +41,11 @@ build_module() {
         fi
         echo "[*] Using prebuilt Angular bundles"
     else
-        ng build --prod > /dev/null 2>&1
-        RET=$?
-
-        if [[ $RET -ne 0 ]]; then
-            echo "[!] Angular Build Failed: Run 'ng build --prod' to figure out why."
+        if ! "$PWD/node_modules/.bin/ng" build --prod > /dev/null 2>&1; then
+            echo "[!] Angular Build Failed: Run './node_modules/.bin/ng build --prod' to inspect the error."
             exit 1
-        else
-            echo "[*] Angular Build Succeeded"
         fi
+        echo "[*] Angular Build Succeeded"
     fi
 
     # Step 2: Copy the required files to the build output

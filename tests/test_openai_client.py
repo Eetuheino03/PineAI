@@ -17,6 +17,7 @@ ASSETS = (
 )
 sys.path.insert(0, str(ASSETS))
 
+from pineai_backend import __version__  # noqa: E402
 from pineai_backend.openai_client import OpenAIClient, OpenAIClientError  # noqa: E402
 
 
@@ -61,6 +62,7 @@ class OpenAIClientTests(unittest.TestCase):
         def opener(api_request, timeout):
             captured["body"] = json.loads(api_request.data.decode("utf-8"))
             captured["authorization"] = api_request.headers["Authorization"]
+            captured["user_agent"] = api_request.headers["User-agent"]
             return FakeResponse(
                 response_body(
                     [{"type": "output_text", "text": json.dumps(valid_analysis())}]
@@ -82,6 +84,7 @@ class OpenAIClientTests(unittest.TestCase):
         )
         self.assertNotIn("tools", body)
         self.assertEqual(captured["authorization"], "Bearer secret")
+        self.assertEqual(captured["user_agent"], "PineAI/{0}".format(__version__))
         self.assertIn("authoritative", body["input"][0]["content"])
 
     def test_refusal(self):

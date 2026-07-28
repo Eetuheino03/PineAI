@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "projects" / "PineAI" / "src" / "assets"
 sys.path.insert(0, str(ASSETS))
 
+from pineai_backend import __version__  # noqa: E402
 from pineai_backend.assurance_service import AssuranceService  # noqa: E402
 from pineai_backend.assessment_store import AssessmentStore  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
@@ -30,11 +31,19 @@ def metadata(identifier):
         "coverage": ["2.4"],
         "location_id": "loc-1",
         "measurement_point_id": "point-1",
+        "scan_profile_id": "full-sweep-v1",
+        "radio_profile_id": "mk7-radio-a",
+        "interface": "wlan1mon",
         "declared_channels": [1, 6, 11],
     }
 
 
 class AssuranceServiceTests(unittest.TestCase):
+    def test_capabilities_version_matches_package_version(self):
+        capabilities = AssuranceService().capabilities()
+        self.assertEqual(capabilities["backend_version"], __version__)
+        self.assertEqual(__version__, "0.6.1")
+
     def active_service(self, directory):
         store = AssessmentStore(directory)
         service = AssuranceService(config_dir=directory, store=store)

@@ -110,7 +110,9 @@ export interface ComparabilityEvaluation {
     quality_factors?: QualityFactors | null;
     location_match?: boolean | null;
     measurement_point_match?: boolean | null;
+    scan_profile_match?: boolean | null;
     radio_profile_match?: boolean | null;
+    interface_match?: boolean | null;
     channel_coverage_ratio?: number | null;
     eligible_baseline_ap_count?: number;
     reobserved_baseline_ap_count?: number;

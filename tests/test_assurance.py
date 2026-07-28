@@ -27,6 +27,7 @@ def load_fixture():
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
+class AssuranceTests(unittest.TestCase):
     def setUp(self):
         self.secret = b"a" * 32
         self.metadata = {
@@ -36,6 +37,9 @@ def load_fixture():
             "coverage": ["2.4"],
             "location_id": "loc-1",
             "measurement_point_id": "point-1",
+            "scan_profile_id": "full-sweep-v1",
+            "radio_profile_id": "mk7-radio-a",
+            "interface": "wlan1mon",
             "declared_channels": [1, 6, 11],
         }
 
@@ -73,10 +77,11 @@ def load_fixture():
 
     def test_comparability_states(self):
         baseline = self.resolve()
-        self.assertEqual(
-            evaluate_comparability(baseline, self.resolve())["status"],
-            "comparable",
-        )
+        exact = evaluate_comparability(baseline, self.resolve())
+        self.assertEqual(exact["status"], "comparable")
+        self.assertTrue(exact["scan_profile_match"])
+        self.assertTrue(exact["radio_profile_match"])
+        self.assertTrue(exact["interface_match"])
         unknown = self.resolve(metadata={"scan_id": "x", "coverage": ["2.4"]})
         self.assertEqual(
             evaluate_comparability(baseline, unknown)["status"],
@@ -117,6 +122,142 @@ def load_fixture():
         self.assertEqual(res2["status"], "not_comparable")
         self.assertIn("measurement_point_mismatch", res2["reasons"])
 
+    def test_profile_and_interface_mismatch_policy_is_conservative(self):
+        baseline_metadata = dict(
+            self.metadata,
+            scan_profile_id="full-sweep-v1",
+            radio_profile_id="mk7-radio-a",
+            interface="wlan1mon",
+        )
+        baseline = self.resolve(metadata=baseline_metadata)
+
+        scan_profile_scan = self.resolve(
+            metadata=dict(
+                baseline_metadata,
+                scan_id="scan-profile-mismatch",
+                scan_profile_id="focused-sweep-v2",
+            )
+        )
+        scan_profile_result = evaluate_comparability(
+            baseline, scan_profile_scan
+        )
+        self.assertEqual(scan_profile_result["status"], "not_comparable")
+        self.assertFalse(scan_profile_result["scan_profile_match"])
+        self.assertIn(
+            "scan_profile_mismatch", scan_profile_result["reasons"]
+        )
+
+        interface_scan = self.resolve(
+            metadata=dict(
+                baseline_metadata,
+                scan_id="interface-mismatch",
+                interface="wlan2mon",
+            )
+        )
+        interface_result = evaluate_comparability(baseline, interface_scan)
+        self.assertEqual(interface_result["status"], "not_comparable")
+        self.assertFalse(interface_result["interface_match"])
+        self.assertIn("interface_mismatch", interface_result["reasons"])
+
+        radio_scan = self.resolve(
+            metadata=dict(
+                baseline_metadata,
+                scan_id="radio-profile-mismatch",
+                radio_profile_id="mk7-radio-b",
+            )
+        )
+        radio_result = evaluate_comparability(baseline, radio_scan)
+        self.assertEqual(radio_result["status"], "partially_comparable")
+        self.assertFalse(radio_result["radio_profile_match"])
+        self.assertFalse(radio_result["absence_findings_allowed"])
+        self.assertTrue(radio_result["positive_findings_allowed"])
+        self.assertIn("radio_profile_mismatch", radio_result["reasons"])
+
+    def test_unknown_profiles_force_partial_comparison(self):
+        baseline = self.resolve()
+        reason_by_field = {
+            "scan_profile_id": "scan_profile_unknown",
+            "radio_profile_id": "radio_profile_unknown",
+            "interface": "interface_unknown",
+        }
+        for field, reason in reason_by_field.items():
+            current_metadata = dict(self.metadata, scan_id="missing-" + field)
+            current_metadata.pop(field)
+            result = evaluate_comparability(
+                baseline, self.resolve(metadata=current_metadata)
+            )
+            self.assertEqual(result["status"], "partially_comparable", field)
+            self.assertFalse(result["absence_findings_allowed"], field)
+            self.assertIn(reason, result["reasons"], field)
+
+            baseline_metadata = dict(self.metadata, scan_id="baseline-missing-" + field)
+            baseline_metadata.pop(field)
+            both_missing = evaluate_comparability(
+                self.resolve(metadata=baseline_metadata),
+                self.resolve(metadata=baseline_metadata),
+            )
+            self.assertEqual(
+                both_missing["status"], "partially_comparable", field
+            )
+            self.assertIn(reason, both_missing["reasons"], field)
+
+    def test_radio_profile_mismatch_keeps_positive_changes_but_suppresses_absence(self):
+        baseline = self.resolve()
+        changed_scan = load_fixture()
+        changed_scan["APResults"].pop()
+        changed_scan["APResults"][0]["channel"] = 11
+        current = self.resolve(
+            changed_scan,
+            dict(
+                self.metadata,
+                scan_id="radio-profile-partial",
+                radio_profile_id="mk7-radio-b",
+            ),
+        )
+        diff = compare_snapshots(baseline, current)
+        findings = evaluate_finding_rules(
+            "assessment_test", baseline, current, diff, self.secret
+        )
+        rules = {finding["rule_id"] for finding in findings}
+        self.assertEqual(
+            diff["comparability"]["status"], "partially_comparable"
+        )
+        self.assertIn("channel_changed", rules)
+        self.assertNotIn("access_point_missing", rules)
+
+    def test_measurement_context_forms_and_declared_bands_are_unambiguous(self):
+        conflicting = dict(
+            self.metadata,
+            measurement_context={
+                "location_id": "loc-1",
+                "measurement_point_id": "point-1",
+            },
+        )
+        with self.assertRaises(BackendError) as raised:
+            self.resolve(metadata=conflicting)
+        self.assertEqual(raised.exception.code, "invalid_scan_metadata")
+
+        nested_metadata = {
+            "scan_id": "nested-context",
+            "scan_time": 180,
+            "measurement_context": {
+                "location_id": "loc-1",
+                "measurement_point_id": "point-1",
+                "scan_profile_id": "full-sweep-v1",
+                "radio_profile_id": "mk7-radio-a",
+                "interface": "wlan1mon",
+                "declared_channels": [1, 6, 11],
+                "declared_bands": ["2.4"],
+            },
+        }
+        snapshot = self.resolve(metadata=nested_metadata)
+        self.assertEqual(
+            snapshot["comparability_profile"]["declared_coverage"], ["2.4"]
+        )
+        self.assertEqual(
+            snapshot["comparability_profile"]["effective_coverage"], ["2.4"]
+        )
+
     def test_undeclared_channels_forces_partially_comparable(self):
         baseline = self.resolve()
         no_channels_meta = {
@@ -125,6 +266,9 @@ def load_fixture():
             "coverage": ["2.4"],
             "location_id": "loc-1",
             "measurement_point_id": "point-1",
+            "scan_profile_id": "full-sweep-v1",
+            "radio_profile_id": "mk7-radio-a",
+            "interface": "wlan1mon",
         }
         no_channels_scan = self.resolve(metadata=no_channels_meta)
         result = evaluate_comparability(baseline, no_channels_scan)

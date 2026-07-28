@@ -15,7 +15,7 @@ AI is optional and never controls this sequence.
 - **Overview** — runtime health, active assessment and baseline, latest
   comparison, open finding counts, and the next deterministic workflow step.
 - **Recon** — saved Hak5 Recon scans, metadata, load state, and resolver
-  preview. There are no start or stop controls in `0.6.0`.
+  preview. There are no start or stop controls in `0.6.1`.
 - **Assessments** — create, edit, archive, and select one wireless environment.
 - **Baselines** — create immutable versions, inspect them, and explicitly
   activate one with revision checking.
@@ -92,7 +92,15 @@ The frontend supplies explicit scan metadata when known:
   "scan_time": 300,
   "coverage": ["2.4"],
   "source": "hak5_recon",
-  "label": "Office sweep"
+  "label": "Office sweep",
+  "measurement_context": {
+    "location_id": "plant-a",
+    "measurement_point_id": "north-wall",
+    "scan_profile_id": "full-sweep-v1",
+    "radio_profile_id": "mk7-radio-a",
+    "interface": "wlan1mon",
+    "declared_channels": [1, 6, 11]
+  }
 }
 ```
 
@@ -247,10 +255,10 @@ never required for the offline workflow.
 
 ## Physical Mark VII smoke test
 
-After installing the `0.6.0` archive:
+After installing the `0.6.1` archive:
 
 1. Confirm the module loads with AI unconfigured.
-2. Confirm backend and schema version `0.6.0` / `1.0`.
+2. Confirm backend version `0.6.1` and assurance schema version `1.1`.
 3. List and load a saved Recon scan.
 4. Resolve it and create an assessment baseline.
 5. Confirm the baseline requires a separate activation.
@@ -259,3 +267,7 @@ After installing the `0.6.0` archive:
 8. Export JSON and HTML and verify both checksums.
 9. Confirm all deterministic operations still work with no network access.
 10. Verify assessment directories are `0700` and files are `0600`.
+
+This physical smoke test is pending for `v0.6.1`. Until it is completed, the
+GitHub release remains a pre-release and must not be described as
+hardware-verified.
