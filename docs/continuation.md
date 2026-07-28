@@ -50,8 +50,10 @@ remove accidental CRLF-only changes before implementation commits.
 
 ## Current state
 
-- Phase: 5 - local implementation and package validation complete
+- Phase: 6 - implementation merged and release handoff ready
 - Direction checkpoint commit: `201b291`
+- Pull request: `#16`, merged into `main`
+- Merge commit: `255a8db`
 - Backend: deterministic resolver, assessment storage, comparability, eight
   finding rules, lifecycle, optional AI explanation boundary, and reports
   implemented
@@ -61,6 +63,8 @@ remove accidental CRLF-only changes before implementation commits.
   examples implemented
 - Package: `PineAI-0.6.0.tar.gz` built in WSL with root ownership, expected
   modes, and SHA-256 sidecar
+- CI artifact SHA-256:
+  `caa6f636cb625e5417b7bb55b6f5db61aa4533585bba3ad8de708e71cd77df63`
 
 ## Latest completed verification
 
@@ -74,11 +78,22 @@ remove accidental CRLF-only changes before implementation commits.
   engagement-store, profiler, source-map, minified duplicate, bytecode, or
   cache files
 - Secret-pattern scan: no committed OpenAI-style API key found
+- GitHub Actions: both branch and pull-request runs passed on Python 3.8 and
+  Node 16
+- Physical Mark VII smoke test: pending because the device hostname and
+  default management address were not reachable from the development machine;
+  no device files or settings were changed
+
+## Release handoff
+
+Publish the verified CI artifact and checksum as `v0.6.0` from this `main`
+state. Do not rebuild the release archive locally.
 
 ## Next task
 
-Commit the implementation, push `feature/baseline-drift-v0.6`, wait for the
-Python 3.8 / Node 16 GitHub Actions job, review the exact CI-built package,
-merge to `main`, tag `v0.6.0`, publish the release assets, and then record the
-physical Mark VII smoke-test result. The device smoke test is the only
-hardware-dependent verification still outstanding.
+When the Mark VII is connected again, install that exact release package
+after backing up the existing module and `/root/.PineAI`, then verify module
+initialization, offline health, saved Recon listing, baseline creation and
+activation, comparison, findings, and offline JSON/HTML report export. Record
+the result here. The device smoke test is the only hardware-dependent
+verification still outstanding.
