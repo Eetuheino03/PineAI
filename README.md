@@ -6,6 +6,7 @@ deterministic changes, evidence-backed findings, and exportable reports.
 
 ![PineAI Banner](docs/asset.png)
 
+
 PineAI is not an attack module. Version `0.6.0` replaces the earlier
 reconnaissance-copilot workflow with **Baseline & Drift**:
 
