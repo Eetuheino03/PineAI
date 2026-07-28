@@ -15,6 +15,9 @@ import { FindingsComponent } from './components/findings.component';
 import { ReportsComponent } from './components/reports.component';
 import { ActivityComponent } from './components/activity.component';
 import { SettingsComponent } from './components/settings.component';
+import { GuidedAssessmentComponent } from './components/guided-assessment.component';
+import { EvidenceViewerComponent } from './components/evidence-viewer.component';
+import { MeasurementProfilesComponent } from './components/measurement-profiles.component';
 
 const routes: Routes = [
     {path: '', component: PineAIComponent}
@@ -31,7 +34,10 @@ const routes: Routes = [
         FindingsComponent,
         ReportsComponent,
         ActivityComponent,
-        SettingsComponent
+        SettingsComponent,
+        GuidedAssessmentComponent,
+        EvidenceViewerComponent,
+        MeasurementProfilesComponent
     ],
     imports: [
         CommonModule,

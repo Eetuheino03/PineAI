@@ -1,0 +1,1406 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Eetuheino03/PineAI/customer-audit-v1.schema.json",
+  "title": "PineAI Customer Audit Foundation contracts",
+  "description": "Public v0.6.2 manifest for the Customer Audit Foundation. Legacy Baseline & Drift actions retain their contracts in baseline-drift-v1.schema.json; new customer-audit actions are defined locally.",
+  "type": "object",
+  "anyOf": [
+    { "$ref": "#/definitions/platformCapabilitiesResponse" },
+    { "$ref": "#/definitions/measurementProfileListResponse" },
+    { "$ref": "#/definitions/measurementProfileMutationResponse" },
+    { "$ref": "#/definitions/consensusPreviewResponse" },
+    { "$ref": "#/definitions/customerBaselineMutationResponse" },
+    { "$ref": "#/definitions/inventoryPreviewResponse" },
+    { "$ref": "#/definitions/assuranceProfileMutationResponse" },
+    { "$ref": "#/definitions/assuranceProfileListResponse" },
+    { "$ref": "#/definitions/assuranceProfileGetResponse" },
+    { "$ref": "#/definitions/inventoryExportResponse" },
+    { "$ref": "#/definitions/observedChangeListResponse" },
+    { "$ref": "#/definitions/evidenceBundleResponse" },
+    { "$ref": "#/definitions/reportPrepareResponse" },
+    { "$ref": "#/definitions/customerReportResponse" }
+  ],
+  "x-baseline-contract": "baseline-drift-v1.schema.json",
+  "x-module-actions": {
+    "health": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/health"
+    },
+    "get_settings": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/get_settings"
+    },
+    "update_settings": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/update_settings"
+    },
+    "set_openai_api_key": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/set_openai_api_key"
+    },
+    "delete_openai_api_key": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/delete_openai_api_key"
+    },
+    "assurance_capabilities": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/assurance_capabilities"
+    },
+    "platform_capabilities": {
+      "request": "#/definitions/emptyRequest",
+      "response": "#/definitions/platformCapabilitiesResponse"
+    },
+    "list_measurement_profiles": {
+      "request": "#/definitions/listMeasurementProfilesRequest",
+      "response": "#/definitions/measurementProfileListResponse"
+    },
+    "create_measurement_profile": {
+      "request": "#/definitions/createMeasurementProfileRequest",
+      "response": "#/definitions/measurementProfileMutationResponse"
+    },
+    "update_measurement_profile": {
+      "request": "#/definitions/updateMeasurementProfileRequest",
+      "response": "#/definitions/measurementProfileMutationResponse"
+    },
+    "archive_measurement_profile": {
+      "request": "#/definitions/archiveMeasurementProfileRequest",
+      "response": "#/definitions/measurementProfileMutationResponse"
+    },
+    "create_assessment": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/create_assessment"
+    },
+    "get_assessment": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/get_assessment"
+    },
+    "list_assessments": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/list_assessments"
+    },
+    "update_assessment": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/update_assessment"
+    },
+    "archive_assessment": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/archive_assessment"
+    },
+    "resolve_recon": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/resolve_recon"
+    },
+    "create_baseline_version": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/create_baseline_version"
+    },
+    "preview_consensus_baseline": {
+      "request": "#/definitions/previewConsensusBaselineRequest",
+      "response": "#/definitions/consensusPreviewResponse"
+    },
+    "create_consensus_baseline_version": {
+      "request": "#/definitions/createConsensusBaselineRequest",
+      "response": "#/definitions/customerBaselineMutationResponse"
+    },
+    "list_baseline_versions": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/list_baseline_versions"
+    },
+    "get_baseline_version": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/get_baseline_version"
+    },
+    "activate_baseline_version": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/activate_baseline_version"
+    },
+    "preview_inventory_csv": {
+      "request": "#/definitions/previewInventoryCsvRequest",
+      "response": "#/definitions/inventoryPreviewResponse"
+    },
+    "create_assurance_profile_version": {
+      "request": "#/definitions/createAssuranceProfileRequest",
+      "response": "#/definitions/assuranceProfileMutationResponse"
+    },
+    "list_assurance_profile_versions": {
+      "request": "#/definitions/assessmentReferenceRequest",
+      "response": "#/definitions/assuranceProfileListResponse"
+    },
+    "get_assurance_profile_version": {
+      "request": "#/definitions/getAssuranceProfileRequest",
+      "response": "#/definitions/assuranceProfileGetResponse"
+    },
+    "activate_assurance_profile_version": {
+      "request": "#/definitions/activateAssuranceProfileRequest",
+      "response": "#/definitions/assuranceProfileMutationResponse"
+    },
+    "export_inventory_csv": {
+      "request": "#/definitions/exportInventoryCsvRequest",
+      "response": "#/definitions/inventoryExportResponse"
+    },
+    "compare_recon": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/compare_recon"
+    },
+    "analyze_recon": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/analyze_recon"
+    },
+    "list_findings": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/list_findings"
+    },
+    "update_finding": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/update_finding"
+    },
+    "list_observed_changes": {
+      "request": "#/definitions/listObservedChangesRequest",
+      "response": "#/definitions/observedChangeListResponse"
+    },
+    "get_evidence_bundle": {
+      "request": "#/definitions/getEvidenceBundleRequest",
+      "response": "#/definitions/evidenceBundleResponse"
+    },
+    "prepare_ai_analysis": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/prepare_ai_analysis"
+    },
+    "generate_ai_analysis": {
+      "contract": "baseline-drift-v1.schema.json#/x-module-actions/generate_ai_analysis"
+    },
+    "prepare_report": {
+      "request": "#/definitions/prepareReportRequest",
+      "response": "#/definitions/reportPrepareResponse"
+    },
+    "generate_report": {
+      "request": "#/definitions/generateCustomerReportRequest",
+      "response": "#/definitions/customerReportResponse"
+    }
+  },
+  "x-deterministic-contract": {
+    "certainty_levels": ["confirmed", "probable", "limited"],
+    "policy_registry_version": "fixed_v1",
+    "policy_deviation_rule_ids": [
+      "asset_not_in_authoritative_inventory",
+      "required_asset_missing",
+      "ssid_not_allowed",
+      "encryption_code_not_allowed",
+      "wps_not_allowed",
+      "channel_not_allowed",
+      "vendor_not_allowed"
+    ],
+    "security_finding_rule_ids": [
+      "unauthorized_bssid_advertising_protected_ssid",
+      "protected_ssid_encryption_violation",
+      "wps_enabled_where_forbidden"
+    ],
+    "report_scopes": [
+      "comparison",
+      "assessment_current",
+      "assessment_history"
+    ],
+    "privacy_profiles": ["local_full", "share_safe"],
+    "observed_changes_have_severity": false,
+    "ai_authoritative": false,
+    "recon_control": false
+  },
+  "x-privacy-invariants": {
+    "local_full": {
+      "contains_sensitive_local_identifiers": true,
+      "direct_mac_bssid": "local_only"
+    },
+    "share_safe": {
+      "contains_sensitive_local_identifiers": false,
+      "direct_mac_bssid": "redacted",
+      "local_notes": "redacted",
+      "ssid": "included_only_when_share_ssids_is_true"
+    }
+  },
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "measurementProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description",
+        "location_id",
+        "measurement_point_id",
+        "scan_profile_id",
+        "radio_profile_id",
+        "interface",
+        "declared_bands",
+        "declared_channels",
+        "scan_time",
+        "is_default",
+        "five_ghz_operator_confirmed"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "location_id": { "$ref": "#/definitions/identifier" },
+        "measurement_point_id": { "$ref": "#/definitions/identifier" },
+        "scan_profile_id": { "$ref": "#/definitions/identifier" },
+        "radio_profile_id": { "$ref": "#/definitions/identifier" },
+        "interface": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "declared_bands": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 2,
+          "items": { "enum": ["2.4", "5"] }
+        },
+        "declared_channels": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 196,
+          "items": { "type": "integer", "minimum": 1, "maximum": 196 }
+        },
+        "scan_time": { "type": "integer", "minimum": 30, "maximum": 3600 },
+        "is_default": { "type": "boolean" },
+        "five_ghz_operator_confirmed": { "type": "boolean" }
+      }
+    },
+    "consensusPresence": {
+      "type": "object",
+      "required": [
+        "classification",
+        "observed_count",
+        "required_count",
+        "total_scans"
+      ],
+      "properties": {
+        "classification": { "enum": ["core", "recurring", "singleton"] },
+        "observed_count": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "required_count": { "type": "integer", "minimum": 2, "maximum": 4 },
+        "total_scans": { "type": "integer", "minimum": 2, "maximum": 5 }
+      }
+    },
+    "consensusBaseline": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "model_type",
+        "baseline_model_id",
+        "baseline_model_digest",
+        "sample_count",
+        "source_snapshots",
+        "measurement_context",
+        "observation_window",
+        "assets"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "model_type": { "const": "consensus_baseline" },
+        "baseline_model_id": {
+          "type": "string",
+          "pattern": "^bmodel_[0-9a-f]{16}$"
+        },
+        "baseline_model_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sample_count": { "type": "integer", "minimum": 2, "maximum": 5 },
+        "max_source_age_hours": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "source_snapshots": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 5,
+          "items": { "type": "object" }
+        },
+        "measurement_context": { "type": "object" },
+        "observation_window": { "type": "object" },
+        "assets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["asset_id", "presence", "attributes", "evidence_ids"],
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "pattern": "^ap_[0-9a-f]{12}$"
+              },
+              "presence": { "$ref": "#/definitions/consensusPresence" },
+              "attributes": { "type": "object" },
+              "evidence_ids": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^evidence_[0-9a-f]{12}$"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "inventoryAsset": {
+      "type": "object",
+      "required": [
+        "site",
+        "ssid",
+        "bssid",
+        "vendor",
+        "role",
+        "approved"
+      ],
+      "properties": {
+        "site": { "type": "string", "maxLength": 200 },
+        "ssid": { "type": "string", "maxLength": 128 },
+        "bssid": {
+          "type": "string",
+          "pattern": "^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$"
+        },
+        "vendor": { "type": "string", "maxLength": 200 },
+        "role": { "type": "string", "maxLength": 100 },
+        "approved": { "type": "boolean" },
+        "required_presence": { "type": "boolean" },
+        "allowed_encryption_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer" }
+        },
+        "wps_allowed": { "type": "boolean" },
+        "allowed_channels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 196 }
+        },
+        "allowed_vendors": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "maxLength": 200 }
+        },
+        "notes": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "assuranceProfile": {
+      "type": "object",
+      "required": ["schema_version", "inventory", "policy"],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "inventory": {
+          "type": "object",
+          "required": ["coverage_mode", "assets"],
+          "properties": {
+            "coverage_mode": { "enum": ["partial", "authoritative"] },
+            "assets": {
+              "type": "array",
+              "maxItems": 2000,
+              "items": { "$ref": "#/definitions/inventoryAsset" }
+            }
+          }
+        },
+        "policy": {
+          "type": "object",
+          "required": ["registry_version", "rules"],
+          "properties": {
+            "registry_version": { "const": "fixed_v1" },
+            "rules": { "type": "object" }
+          }
+        }
+      }
+    },
+    "certainty": {
+      "enum": ["confirmed", "probable", "limited"]
+    },
+    "observedChange": {
+      "type": "object",
+      "required": [
+        "change_id",
+        "change_type",
+        "certainty",
+        "subject_id",
+        "evidence_ids",
+        "before_after"
+      ],
+      "not": {
+        "anyOf": [
+          { "required": ["severity"] },
+          { "required": ["status"] }
+        ]
+      },
+      "properties": {
+        "change_id": {
+          "type": "string",
+          "pattern": "^change_[0-9a-f]{12}$"
+        },
+        "change_type": { "type": "string" },
+        "certainty": { "$ref": "#/definitions/certainty" },
+        "subject_id": { "$ref": "#/definitions/identifier" },
+        "evidence_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "before_after": { "type": "object" }
+      }
+    },
+    "lifecycleIssue": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "severity",
+        "certainty",
+        "subject_id",
+        "evidence_ids"
+      ],
+      "properties": {
+        "rule_id": { "type": "string" },
+        "severity": { "enum": ["critical", "high", "medium", "low", "info"] },
+        "certainty": { "$ref": "#/definitions/certainty" },
+        "subject_id": { "$ref": "#/definitions/identifier" },
+        "evidence_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "reportScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "comparison_id"],
+          "properties": {
+            "type": { "const": "comparison" },
+            "comparison_id": {
+              "type": "string",
+              "pattern": "^comparison_[0-9a-f]{16}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "enum": ["assessment_current", "assessment_history"] }
+          }
+        }
+      ]
+    },
+    "emptyRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    "genericObject": {
+      "type": "object"
+    },
+    "schemaVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16
+    },
+    "timestamp": {
+      "type": ["string", "null"],
+      "maxLength": 64
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "assessmentId": {
+      "type": "string",
+      "pattern": "^assessment_[0-9a-f-]+$"
+    },
+    "measurementProfileId": {
+      "type": "string",
+      "pattern": "^mprofile_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "measurementProfileVersionId": {
+      "type": "string",
+      "pattern": "^mprofile_r[0-9]{4}$"
+    },
+    "baselineVersionId": {
+      "type": "string",
+      "pattern": "^baseline_v[0-9]{4}$"
+    },
+    "assuranceProfileVersionId": {
+      "type": "string",
+      "pattern": "^assurance_v[0-9]{4}$"
+    },
+    "comparisonId": {
+      "type": "string",
+      "pattern": "^comparison_[0-9a-f]{16}$"
+    },
+    "itemId": {
+      "type": "string",
+      "pattern": "^(?:change|deviation|finding)_[0-9a-f]{12}$"
+    },
+    "privacyProfile": {
+      "enum": ["local_full", "share_safe"]
+    },
+    "reportScopeType": {
+      "enum": ["comparison", "assessment_current", "assessment_history"]
+    },
+    "policyDeviationRuleId": {
+      "enum": [
+        "asset_not_in_authoritative_inventory",
+        "required_asset_missing",
+        "ssid_not_allowed",
+        "encryption_code_not_allowed",
+        "wps_not_allowed",
+        "channel_not_allowed",
+        "vendor_not_allowed"
+      ]
+    },
+    "securityFindingRuleId": {
+      "enum": [
+        "unauthorized_bssid_advertising_protected_ssid",
+        "protected_ssid_encryption_violation",
+        "wps_enabled_where_forbidden"
+      ]
+    },
+    "policyRuleConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "const": true }
+      }
+    },
+    "measurementProfilePatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "location_id": { "$ref": "#/definitions/identifier" },
+        "measurement_point_id": { "$ref": "#/definitions/identifier" },
+        "scan_profile_id": { "$ref": "#/definitions/identifier" },
+        "radio_profile_id": { "$ref": "#/definitions/identifier" },
+        "interface": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "declared_bands": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["2.4", "5"] }
+        },
+        "declared_channels": {
+          "type": "array",
+          "maxItems": 196,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 196 }
+        },
+        "scan_time": { "type": "integer", "minimum": 30, "maximum": 3600 },
+        "is_default": { "type": "boolean" },
+        "five_ghz_operator_confirmed": { "type": "boolean" }
+      }
+    },
+    "measurementProfileVersionRecord": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "measurement_profile_id",
+        "version_id",
+        "revision",
+        "created_at",
+        "profile",
+        "digest"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "measurement_profile_id": {
+          "$ref": "#/definitions/measurementProfileId"
+        },
+        "version_id": {
+          "$ref": "#/definitions/measurementProfileVersionId"
+        },
+        "revision": { "$ref": "#/definitions/revision" },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "profile": { "$ref": "#/definitions/measurementProfile" },
+        "digest": { "$ref": "#/definitions/digest" }
+      }
+    },
+    "measurementProfileRecord": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "measurement_profile_id",
+        "revision",
+        "active_version_id",
+        "status",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "measurement_profile_id": {
+          "$ref": "#/definitions/measurementProfileId"
+        },
+        "revision": { "$ref": "#/definitions/revision" },
+        "active_version_id": {
+          "$ref": "#/definitions/measurementProfileVersionId"
+        },
+        "status": { "enum": ["active", "archived"] },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "updated_at": { "$ref": "#/definitions/timestamp" },
+        "active_version": {
+          "$ref": "#/definitions/measurementProfileVersionRecord"
+        }
+      }
+    },
+    "listMeasurementProfilesRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include_archived": { "type": "boolean", "default": false }
+      }
+    },
+    "createMeasurementProfileRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile"],
+      "properties": {
+        "profile": { "$ref": "#/definitions/measurementProfile" }
+      }
+    },
+    "updateMeasurementProfileRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "measurement_profile_id",
+        "expected_revision",
+        "changes"
+      ],
+      "properties": {
+        "measurement_profile_id": {
+          "$ref": "#/definitions/measurementProfileId"
+        },
+        "expected_revision": { "$ref": "#/definitions/revision" },
+        "changes": { "$ref": "#/definitions/measurementProfilePatch" }
+      }
+    },
+    "archiveMeasurementProfileRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["measurement_profile_id", "expected_revision"],
+      "properties": {
+        "measurement_profile_id": {
+          "$ref": "#/definitions/measurementProfileId"
+        },
+        "expected_revision": { "$ref": "#/definitions/revision" }
+      }
+    },
+    "measurementProfileListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "profiles"],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "profiles": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/definitions/measurementProfileRecord" }
+        }
+      }
+    },
+    "measurementProfileMutationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "measurement_profile"],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "measurement_profile": {
+          "$ref": "#/definitions/measurementProfileRecord"
+        }
+      }
+    },
+    "platformCapabilitiesResponse": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "status",
+        "blocking_codes",
+        "warnings",
+        "identity",
+        "storage",
+        "runtime",
+        "device",
+        "interfaces",
+        "bands",
+        "recon_control",
+        "saved_recon_only",
+        "backend_version"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "status": { "enum": ["ready", "degraded", "blocked"] },
+        "blocking_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "warnings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "identity": { "$ref": "#/definitions/genericObject" },
+        "storage": { "$ref": "#/definitions/genericObject" },
+        "runtime": {
+          "type": "object",
+          "required": [
+            "python_version",
+            "python_3_8_compatible",
+            "platform"
+          ],
+          "properties": {
+            "python_version": { "type": "string" },
+            "python_3_8_compatible": { "type": "boolean" },
+            "platform": { "type": "string" }
+          }
+        },
+        "device": { "$ref": "#/definitions/genericObject" },
+        "interfaces": { "$ref": "#/definitions/genericObject" },
+        "bands": {
+          "type": "object",
+          "required": ["2.4", "5", "6"],
+          "properties": {
+            "2.4": { "const": "profile_declared" },
+            "5": { "const": "operator_confirmation_required" },
+            "6": { "const": "unsupported_on_mark_vii" }
+          }
+        },
+        "recon_control": { "const": false },
+        "saved_recon_only": { "const": true },
+        "backend_version": { "type": "string" }
+      }
+    },
+    "consensusObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scan", "scan_metadata"],
+      "properties": {
+        "scan": { "$ref": "#/definitions/genericObject" },
+        "scan_metadata": { "$ref": "#/definitions/genericObject" }
+      }
+    },
+    "consensusObservations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 5,
+      "items": { "$ref": "#/definitions/consensusObservation" }
+    },
+    "maxSourceAgeHours": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 168,
+      "default": 24
+    },
+    "previewConsensusBaselineRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observations"],
+      "properties": {
+        "observations": { "$ref": "#/definitions/consensusObservations" },
+        "max_source_age_hours": {
+          "$ref": "#/definitions/maxSourceAgeHours"
+        }
+      }
+    },
+    "createConsensusBaselineRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_id",
+        "expected_revision",
+        "observations"
+      ],
+      "properties": {
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "expected_revision": { "$ref": "#/definitions/revision" },
+        "observations": { "$ref": "#/definitions/consensusObservations" },
+        "label": { "type": "string", "maxLength": 128 },
+        "max_source_age_hours": {
+          "$ref": "#/definitions/maxSourceAgeHours"
+        }
+      }
+    },
+    "consensusSourceSnapshot": {
+      "type": "object",
+      "required": [
+        "snapshot_id",
+        "snapshot_digest",
+        "observed_at",
+        "summary"
+      ],
+      "properties": {
+        "snapshot_id": {
+          "type": "string",
+          "pattern": "^snapshot_[0-9a-f]{16}$"
+        },
+        "snapshot_digest": { "$ref": "#/definitions/digest" },
+        "observed_at": { "$ref": "#/definitions/timestamp" },
+        "summary": { "$ref": "#/definitions/genericObject" }
+      }
+    },
+    "consensusPreviewResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "mode",
+        "baseline_model",
+        "source_snapshots",
+        "limitations"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.2" },
+        "mode": { "const": "preview" },
+        "baseline_model": {
+          "$ref": "#/definitions/consensusBaseline"
+        },
+        "source_snapshots": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/definitions/consensusSourceSnapshot"
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "customerBaselineRecord": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "assessment_id",
+        "baseline_version_id",
+        "baseline_type",
+        "version",
+        "created_at",
+        "is_active"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/definitions/schemaVersion" },
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "baseline_version_id": {
+          "$ref": "#/definitions/baselineVersionId"
+        },
+        "baseline_type": { "enum": ["single_scan", "consensus"] },
+        "version": { "type": "integer", "minimum": 1 },
+        "label": { "type": "string", "maxLength": 128 },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "is_active": { "type": "boolean" },
+        "baseline_model_id": {
+          "type": "string",
+          "pattern": "^bmodel_[0-9a-f]{16}$"
+        },
+        "baseline_model_digest": { "$ref": "#/definitions/digest" },
+        "sample_count": { "type": "integer", "minimum": 2, "maximum": 5 }
+      }
+    },
+    "customerBaselineMutationResponse": {
+      "type": "object",
+      "required": ["assessment", "baseline", "event"],
+      "properties": {
+        "assessment": { "$ref": "#/definitions/genericObject" },
+        "baseline": {
+          "$ref": "#/definitions/customerBaselineRecord"
+        },
+        "event": { "$ref": "#/definitions/genericObject" }
+      }
+    },
+    "inventoryCsvDelimiter": {
+      "enum": ["comma", "semicolon", "tab", ",", ";", "\t"]
+    },
+    "previewInventoryCsvRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content"],
+      "properties": {
+        "content": { "type": "string", "maxLength": 1048576 },
+        "delimiter": { "$ref": "#/definitions/inventoryCsvDelimiter" }
+      }
+    },
+    "inventoryPreviewError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row", "code", "message"],
+      "properties": {
+        "row": { "type": "integer", "minimum": 2 },
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    "inventoryPreviewResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "valid",
+        "source_sha256",
+        "normalized_digest",
+        "row_count",
+        "rows",
+        "errors",
+        "warnings"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "valid": { "type": "boolean" },
+        "source_sha256": { "$ref": "#/definitions/digest" },
+        "normalized_digest": { "$ref": "#/definitions/digest" },
+        "row_count": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "rows": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": { "$ref": "#/definitions/inventoryAsset" }
+        },
+        "errors": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/inventoryPreviewError" }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/genericObject" }
+        }
+      }
+    },
+    "assessmentReferenceRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id"],
+      "properties": {
+        "assessment_id": { "$ref": "#/definitions/assessmentId" }
+      }
+    },
+    "createAssuranceProfileRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id", "expected_revision"],
+      "properties": {
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "expected_revision": { "$ref": "#/definitions/revision" },
+        "label": { "type": "string", "maxLength": 128 },
+        "inventory_preview": {
+          "$ref": "#/definitions/inventoryPreviewResponse"
+        },
+        "profile": { "$ref": "#/definitions/assuranceProfile" },
+        "coverage_mode": { "enum": ["partial", "authoritative"] }
+      },
+      "oneOf": [
+        {
+          "required": ["inventory_preview"],
+          "not": { "required": ["profile"] }
+        },
+        {
+          "required": ["profile"],
+          "not": { "required": ["inventory_preview"] }
+        }
+      ]
+    },
+    "getAssuranceProfileRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id", "assurance_profile_version_id"],
+      "properties": {
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "assurance_profile_version_id": {
+          "$ref": "#/definitions/assuranceProfileVersionId"
+        }
+      }
+    },
+    "activateAssuranceProfileRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_id",
+        "expected_revision",
+        "assurance_profile_version_id"
+      ],
+      "properties": {
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "expected_revision": { "$ref": "#/definitions/revision" },
+        "assurance_profile_version_id": {
+          "$ref": "#/definitions/assuranceProfileVersionId"
+        },
+        "authoritative_confirmation": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "assuranceProfileRecord": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "assessment_id",
+        "assurance_profile_version_id",
+        "version",
+        "label",
+        "created_at",
+        "digest",
+        "profile",
+        "is_active"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "assurance_profile_version_id": {
+          "$ref": "#/definitions/assuranceProfileVersionId"
+        },
+        "version": { "type": "integer", "minimum": 1 },
+        "label": { "type": "string", "maxLength": 128 },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "digest": { "$ref": "#/definitions/digest" },
+        "profile": { "$ref": "#/definitions/assuranceProfile" },
+        "is_active": { "type": "boolean" }
+      }
+    },
+    "assuranceProfileMutationResponse": {
+      "type": "object",
+      "required": ["assessment", "assurance_profile", "event"],
+      "properties": {
+        "assessment": { "$ref": "#/definitions/genericObject" },
+        "assurance_profile": {
+          "$ref": "#/definitions/assuranceProfileRecord"
+        },
+        "event": { "$ref": "#/definitions/genericObject" }
+      }
+    },
+    "assuranceProfileListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "active_assurance_profile_version",
+        "assurance_profiles"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "active_assurance_profile_version": {
+          "oneOf": [
+            { "$ref": "#/definitions/assuranceProfileVersionId" },
+            { "type": "null" }
+          ]
+        },
+        "assurance_profiles": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/definitions/assuranceProfileRecord"
+          }
+        }
+      }
+    },
+    "assuranceProfileGetResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "assurance_profile"],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "assurance_profile": {
+          "$ref": "#/definitions/assuranceProfileRecord"
+        }
+      }
+    },
+    "exportInventoryCsvRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id", "assurance_profile_version_id"],
+      "properties": {
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "assurance_profile_version_id": {
+          "$ref": "#/definitions/assuranceProfileVersionId"
+        },
+        "delimiter": { "$ref": "#/definitions/inventoryCsvDelimiter" }
+      }
+    },
+    "inventoryExportResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "filename",
+        "mime_type",
+        "sha256",
+        "content"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "filename": {
+          "type": "string",
+          "pattern": "^PineAI-inventory-assurance_v[0-9]{4}\\.csv$"
+        },
+        "mime_type": { "const": "text/csv" },
+        "sha256": { "$ref": "#/definitions/digest" },
+        "content": { "type": "string" }
+      }
+    },
+    "listObservedChangesRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id"],
+      "properties": {
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "comparison_id": { "$ref": "#/definitions/comparisonId" }
+      }
+    },
+    "observedChangeWithComparison": {
+      "allOf": [
+        { "$ref": "#/definitions/observedChange" },
+        {
+          "type": "object",
+          "required": ["comparison_id"],
+          "properties": {
+            "comparison_id": { "$ref": "#/definitions/comparisonId" }
+          }
+        }
+      ]
+    },
+    "observedChangeListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "comparison_id",
+        "observed_changes",
+        "legacy_limited"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "comparison_id": {
+          "oneOf": [
+            { "$ref": "#/definitions/comparisonId" },
+            { "type": "null" }
+          ]
+        },
+        "observed_changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/observedChangeWithComparison"
+          }
+        },
+        "legacy_limited": { "type": "boolean" }
+      }
+    },
+    "getEvidenceBundleRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id", "comparison_id", "item_id"],
+      "properties": {
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "comparison_id": { "$ref": "#/definitions/comparisonId" },
+        "item_id": { "$ref": "#/definitions/itemId" }
+      }
+    },
+    "evidenceBundleResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "comparison_id",
+        "item_type",
+        "item",
+        "before_after",
+        "evidence",
+        "recorded_at",
+        "baseline_reference",
+        "pinned_versions",
+        "comparability",
+        "quality_factors",
+        "policy",
+        "limitations"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.0" },
+        "comparison_id": { "$ref": "#/definitions/comparisonId" },
+        "item_type": {
+          "enum": [
+            "observed_change",
+            "policy_deviation",
+            "security_finding"
+          ]
+        },
+        "item": { "$ref": "#/definitions/genericObject" },
+        "before_after": {
+          "type": "object",
+          "required": ["before", "after"],
+          "properties": {
+            "before": {},
+            "after": {}
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/genericObject" }
+        },
+        "recorded_at": { "$ref": "#/definitions/timestamp" },
+        "baseline_reference": {
+          "type": ["object", "null"]
+        },
+        "pinned_versions": {
+          "type": ["object", "null"]
+        },
+        "comparability": {
+          "type": ["object", "null"]
+        },
+        "quality_factors": {
+          "type": ["object", "array"]
+        },
+        "policy": {
+          "type": ["object", "null"]
+        },
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "reportScopeInput": {
+      "oneOf": [
+        { "$ref": "#/definitions/reportScope" },
+        { "$ref": "#/definitions/reportScopeType" }
+      ]
+    },
+    "prepareReportRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id", "scope"],
+      "properties": {
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "scope": { "$ref": "#/definitions/reportScopeInput" },
+        "privacy_profile": {
+          "$ref": "#/definitions/privacyProfile"
+        },
+        "comparison_id": { "$ref": "#/definitions/comparisonId" }
+      }
+    },
+    "reportManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "scope_digest",
+        "section_sha256",
+        "report_sha256"
+      ],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "scope_digest": { "$ref": "#/definitions/digest" },
+        "section_sha256": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/digest" }
+        },
+        "report_sha256": { "$ref": "#/definitions/digest" }
+      }
+    },
+    "reportPrepareResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "scope",
+        "privacy_profile",
+        "manifest",
+        "warnings",
+        "scope_digest"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.1" },
+        "scope": { "$ref": "#/definitions/reportScope" },
+        "privacy_profile": {
+          "$ref": "#/definitions/privacyProfile"
+        },
+        "manifest": { "$ref": "#/definitions/reportManifest" },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "scope_digest": { "$ref": "#/definitions/digest" }
+      }
+    },
+    "generateCustomerReportRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id", "format", "scope"],
+      "properties": {
+        "assessment_id": { "$ref": "#/definitions/assessmentId" },
+        "comparison_id": { "$ref": "#/definitions/comparisonId" },
+        "format": { "enum": ["json", "html"] },
+        "ai_analysis": {
+          "type": ["object", "null"]
+        },
+        "scope": { "$ref": "#/definitions/reportScopeInput" },
+        "privacy_profile": {
+          "$ref": "#/definitions/privacyProfile"
+        },
+        "scope_digest": {
+          "oneOf": [
+            { "$ref": "#/definitions/digest" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "reportDownloadDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "path", "body"],
+      "properties": {
+        "method": { "const": "POST" },
+        "path": { "const": "/api/download" },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["filename"],
+          "properties": {
+            "filename": { "type": "string" }
+          }
+        }
+      }
+    },
+    "reportExportDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filename", "expires_at", "download"],
+      "properties": {
+        "filename": { "type": "string" },
+        "expires_at": { "$ref": "#/definitions/timestamp" },
+        "download": {
+          "$ref": "#/definitions/reportDownloadDescriptor"
+        }
+      }
+    },
+    "customerReportResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "format",
+        "scope",
+        "privacy_profile",
+        "filename",
+        "mime_type",
+        "sha256",
+        "scope_digest",
+        "report_sha256",
+        "export"
+      ],
+      "properties": {
+        "schema_version": { "const": "1.1" },
+        "format": { "enum": ["json", "html"] },
+        "scope": { "$ref": "#/definitions/reportScopeType" },
+        "privacy_profile": {
+          "$ref": "#/definitions/privacyProfile"
+        },
+        "filename": {
+          "type": "string",
+          "pattern": "^PineAI-[A-Za-z0-9._-]+\\.(?:json|html)$"
+        },
+        "mime_type": {
+          "enum": ["application/json", "text/html"]
+        },
+        "sha256": { "$ref": "#/definitions/digest" },
+        "scope_digest": { "$ref": "#/definitions/digest" },
+        "report_sha256": { "$ref": "#/definitions/digest" },
+        "export": {
+          "$ref": "#/definitions/reportExportDescriptor"
+        }
+      }
+    }
+  }
+}

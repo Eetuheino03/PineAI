@@ -15,8 +15,13 @@ if str(ASSETS_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(ASSETS_DIRECTORY))
 
 from pineai_backend.ai_analysis import AssuranceAIService  # noqa: E402
-from pineai_backend.assessment_store import AssessmentStore  # noqa: E402
+from pineai_backend.customer_store import CustomerAuditStore  # noqa: E402
 from pineai_backend.assurance_service import AssuranceService  # noqa: E402
+from pineai_backend.backup import (  # noqa: E402
+    create_backup,
+    restore_backup_staging,
+    verify_backup,
+)
 from pineai_backend.config import (  # noqa: E402
     ConfigError,
     load_settings,
@@ -158,6 +163,18 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--format", choices=("json", "html"), required=True)
     report.add_argument("--ai-analysis")
     report.add_argument("--output")
+
+    backup = commands.add_parser("backup")
+    backup_commands = backup.add_subparsers(
+        dest="backup_command", required=True
+    )
+    backup_create = backup_commands.add_parser("create")
+    backup_create.add_argument("--output", required=True)
+    backup_verify = backup_commands.add_parser("verify")
+    backup_verify.add_argument("--input", required=True)
+    backup_restore = backup_commands.add_parser("restore-staging")
+    backup_restore.add_argument("--input", required=True)
+    backup_restore.add_argument("--target", required=True)
     return parser
 
 
@@ -188,13 +205,25 @@ def main(
     config_dir = arguments.config_dir
     if config_dir:
         os.environ["PINEAI_CONFIG_DIR"] = config_dir
-    store = AssessmentStore(config_dir)
-    service = AssuranceService(
-        config_dir=config_dir,
-        store=store,
-        ai_service=AssuranceAIService(config_dir),
-    )
     try:
+        if arguments.command == "backup":
+            if arguments.backup_command == "create":
+                result = create_backup(config_dir, arguments.output)
+            elif arguments.backup_command == "verify":
+                result = verify_backup(arguments.input)
+            else:
+                result = restore_backup_staging(
+                    arguments.input, arguments.target
+                )
+            _print_json(result, stdout)
+            return 0
+
+        store = CustomerAuditStore(config_dir)
+        service = AssuranceService(
+            config_dir=config_dir,
+            store=store,
+            ai_service=AssuranceAIService(config_dir),
+        )
         if arguments.command == "status":
             _print_json(public_status(config_dir), stdout)
         elif arguments.command == "configure":
@@ -212,7 +241,9 @@ def main(
         elif arguments.command == "assessment":
             action = arguments.assessment_command
             if action == "create":
-                result = store.create(_read_json(arguments.input))
+                result = service.create_assessment(
+                    _read_json(arguments.input)
+                )
             elif action == "get":
                 result = service.assessment_detail(
                     arguments.assessment_id,

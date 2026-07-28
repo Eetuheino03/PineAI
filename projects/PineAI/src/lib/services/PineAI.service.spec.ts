@@ -216,4 +216,117 @@ describe('PineAIService Baseline & Drift', () => {
             'PineAI-report.html'
         );
     });
+
+    it('copies a versioned measurement profile into session context', () => {
+        const profile: any = {
+            measurement_profile_id: 'profile_1',
+            revision: 3,
+            digest: 'digest_1',
+            name: 'Office',
+            context: {
+                location_id: 'office',
+                measurement_point_id: 'desk',
+                declared_channels: [1, 6, 11]
+            }
+        };
+
+        service.applyMeasurementProfile(profile);
+        profile.context.declared_channels.push(36);
+
+        expect(service.measurementContext.declared_channels).toEqual([1, 6, 11]);
+        expect(service.measurementContext.measurement_profile_id).toBe('profile_1');
+        expect(service.workflow.snapshot.measurement_profile_revision).toBe(3);
+    });
+
+    it('previews consensus using two to five in-memory observations', async () => {
+        service.activeAssessment = {
+            assessment_id: 'assessment_1',
+            name: 'Office',
+            revision: 2
+        };
+        service.workflow.setAssessment(service.activeAssessment);
+        service.workflow.rememberRawScan(
+            {scan_id: 1, date: '2026-07-28T10:00:00Z'},
+            {APResults: [{BSSID: '00:11:22:33:44:55'}]}
+        );
+        service.workflow.rememberRawScan(
+            {scan_id: 2, date: '2026-07-28T10:05:00Z'},
+            {APResults: [{BSSID: '00:11:22:33:44:55'}]}
+        );
+        api.moduleRequest.and.returnValue(Promise.resolve({
+            preview_digest: 'preview_1',
+            source_scan_count: 2
+        }));
+
+        await service.previewConsensusBaseline();
+
+        const request = api.moduleRequest.calls.mostRecent().args[0];
+        expect(request.action).toBe('preview_consensus_baseline');
+        expect(request.observations.length).toBe(2);
+        expect(request.max_source_age_hours).toBe(24);
+        expect(service.consensusPreview.source_scan_count).toBe(2);
+    });
+
+    it('binds report generation to the prepared privacy scope digest', async () => {
+        service.activeAssessment = {
+            assessment_id: 'assessment_1',
+            name: 'Office',
+            revision: 4
+        };
+        service.comparison = {comparison_id: 'comparison_1'};
+        api.moduleRequest.and.callFake((payload: any) => {
+            if (payload.action === 'prepare_report') {
+                return Promise.resolve({
+                    scope_digest: 'scope_1',
+                    manifest: {finding_count: 2}
+                });
+            }
+            if (payload.action === 'generate_report') {
+                return Promise.resolve({
+                    filename: 'report.json',
+                    sha256: 'hash'
+                });
+            }
+            return Promise.reject(new Error(`Unexpected ${payload.action}`));
+        });
+        const scope: any = {
+            type: 'comparison',
+            comparison_id: 'comparison_1'
+        };
+
+        await service.prepareReportScope(scope, 'share_safe');
+        await service.generateReport('json', false, scope, 'share_safe');
+
+        expect(api.moduleRequest.calls.mostRecent().args[0])
+            .toEqual(jasmine.objectContaining({
+                action: 'generate_report',
+                scope,
+                privacy_profile: 'share_safe',
+                scope_digest: 'scope_1',
+                format: 'json'
+            }));
+    });
+
+    it('caches canonical evidence bundles by comparison and finding', async () => {
+        service.activeAssessment = {
+            assessment_id: 'assessment_1',
+            name: 'Office',
+            revision: 4
+        };
+        api.moduleRequest.and.returnValue(Promise.resolve({
+            finding_id: 'finding_1',
+            comparison_id: 'comparison_1',
+            pairs: []
+        }));
+
+        await service.loadEvidenceBundle('finding_1', 'comparison_1');
+        await service.loadEvidenceBundle('finding_1', 'comparison_1');
+
+        expect(api.moduleRequest.calls.count()).toBe(1);
+        expect(api.moduleRequest.calls.mostRecent().args[0])
+            .toEqual(jasmine.objectContaining({
+                action: 'get_evidence_bundle',
+                item_id: 'finding_1'
+            }));
+    });
 });

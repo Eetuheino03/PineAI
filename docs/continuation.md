@@ -1,7 +1,7 @@
 # PineAI implementation continuation
 
-This file is the hand-off checkpoint for the Baseline & Drift rewrite. Update
-it whenever a phase is completed or work stops.
+This file is the hand-off checkpoint for Customer Audit Foundation. Update it
+whenever a phase is completed or work stops.
 
 ## Starting point
 
@@ -102,6 +102,35 @@ remove accidental CRLF-only changes before implementation commits.
 Physical Mark VII smoke testing is intentionally pending. No device files,
 settings, radios, or stored assessment data were changed during v0.6.1
 release hardening.
+
+## v0.6.2 implementation checkpoint
+
+- Starting commit: `b3ef98e7629dc077ab5842d4cc10d5375ffc6f6f`
+- Development branch: `feature/customer-audit-foundation-v0.6.2`
+- Target: `v0.6.2` pre-release
+- Product position: Portable offline wireless change auditing for WiFi
+  Pineapple
+- Writer contracts: assessment `1.1`; snapshot/comparison `1.2`; consensus,
+  measurement profile, AssuranceProfile, occurrence, and report contracts are
+  independently versioned
+- Physical Mark VII access is explicitly out of scope for implementation and
+  release automation. Stable promotion waits for a later smoke test of the
+  exact published asset.
+
+Implementation checkpoints:
+
+1. Direction, schemas, identity continuity, transaction recovery, and
+   canonical resolver hardening.
+2. Two-to-five scan strict-80 consensus baseline.
+3. Immutable AssuranceProfile plus the three-level result model.
+4. Point-in-time occurrences, evidence bundles, and scoped customer reports.
+5. Versioned measurement profiles, capability banner, and Guided/Expert UI.
+6. Root/SSH backup, lazy read adapters, documentation, packaging, CI, and
+   pre-release.
+
+The v0.6.1 single-scan baselines and comparisons stay readable. Legacy
+findings are shown as read-only history and are not retrospectively
+reclassified without the inventory and policy that existed at the time.
 
 ## Release handoff
 

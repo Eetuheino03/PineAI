@@ -1,0 +1,611 @@
+<section class="view guided-view">
+    <header class="view-header">
+        <div>
+            <div class="eyebrow">Guided mode</div>
+            <h2>Run a repeatable wireless assessment</h2>
+            <p>
+                Seven explicit checkpoints. PineAI never activates a baseline,
+                changes findings or generates a report without your action.
+            </p>
+        </div>
+        <span class="badge" [ngClass]="state.mode">
+            {{ baselineMode ? 'Baseline setup' : 'Drift comparison' }}
+        </span>
+    </header>
+
+    <mat-vertical-stepper
+        [linear]="false"
+        [selectedIndex]="selectedIndex"
+        (selectionChange)="selectStepIndex($event.selectedIndex)">
+
+        <mat-step
+            label="1. Assessment"
+            [completed]="canProceed('assessment')"
+            [state]="stepState('assessment')">
+            <div class="guided-step stack">
+                <p>Select the location or environment that owns all subsequent state.</p>
+                <div *ngIf="errors.assessment" class="error-banner" role="alert">
+                    {{ errors.assessment }}
+                </div>
+                <div *ngIf="messages.assessment" class="success-banner">
+                    {{ messages.assessment }}
+                </div>
+                <mat-form-field appearance="outline" class="full-width">
+                    <mat-label>Saved assessment</mat-label>
+                    <mat-select [(ngModel)]="selectedAssessmentId">
+                        <mat-option
+                            *ngFor="let assessment of pineai.assessments"
+                            [value]="assessment.assessment_id">
+                            {{ assessment.name }} · {{ assessment.location || 'No location' }}
+                        </mat-option>
+                    </mat-select>
+                </mat-form-field>
+                <div class="actions">
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="selectAssessment()"
+                        [disabled]="!!state.busy_action || !selectedAssessmentId">
+                        Use selected assessment
+                    </button>
+                </div>
+                <mat-divider></mat-divider>
+                <strong>Or create a new assessment</strong>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Name</mat-label>
+                        <input matInput [(ngModel)]="assessmentName" maxlength="100">
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Location</mat-label>
+                        <input matInput [(ngModel)]="assessmentLocation" maxlength="200">
+                    </mat-form-field>
+                </div>
+                <div class="actions">
+                    <button
+                        mat-stroked-button
+                        (click)="createAssessment()"
+                        [disabled]="!!state.busy_action || !assessmentName.trim()">
+                        Create only
+                    </button>
+                    <button
+                        mat-button
+                        (click)="go('measurement_profile')"
+                        [disabled]="!canProceed('assessment')">
+                        Continue
+                    </button>
+                </div>
+            </div>
+        </mat-step>
+
+        <mat-step
+            label="2. Measurement profile & capabilities"
+            [completed]="canProceed('measurement_profile')">
+            <div class="guided-step stack">
+                <p>
+                    Apply a versioned measurement preset. Values are copied into
+                    this run; later preset edits cannot rewrite old evidence.
+                </p>
+                <div *ngIf="errors.measurement_profile" class="error-banner" role="alert">
+                    {{ errors.measurement_profile }}
+                </div>
+                <div *ngIf="messages.measurement_profile" class="success-banner">
+                    {{ messages.measurement_profile }}
+                </div>
+                <div
+                    *ngIf="pineai.panelErrors.measurement_profiles"
+                    class="warning-banner">
+                    Presets are unavailable:
+                    {{ pineai.panelErrors.measurement_profiles.code }} —
+                    {{ pineai.panelErrors.measurement_profiles.message }}.
+                    Expert mode still supports an ad hoc measurement context.
+                </div>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Measurement profile</mat-label>
+                        <mat-select
+                            [(ngModel)]="selectedProfileId"
+                            (selectionChange)="selectMeasurementProfile($event.value)">
+                            <mat-option
+                                *ngFor="let profile of pineai.measurementProfiles"
+                                [value]="pineai.measurementProfileId(profile)">
+                                {{ profile.name }} · revision {{ profile.revision }}
+                            </mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <button mat-stroked-button (click)="refreshProfiles()">
+                        Refresh capabilities
+                    </button>
+                </div>
+                <div *ngIf="activeProfile" class="notice">
+                    <strong>{{ activeProfile.name }}</strong>
+                    <div>
+                        Location {{ activeProfile.context?.location_id || '—' }} ·
+                        point {{ activeProfile.context?.measurement_point_id || '—' }} ·
+                        channels {{ activeProfile.context?.declared_channels?.join(', ') || 'undeclared' }}
+                    </div>
+                </div>
+                <div class="actions">
+                    <button mat-button (click)="go('assessment')">Back</button>
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="go('recon_scans')"
+                        [disabled]="!canProceed('measurement_profile')">
+                        Confirm profile
+                    </button>
+                </div>
+            </div>
+        </mat-step>
+
+        <mat-step
+            label="3. Select saved Recon scans"
+            [completed]="canProceed('recon_scans')">
+            <div class="guided-step stack">
+                <p *ngIf="baselineMode">
+                    Select 2–5 saved observations. All are held only in session
+                    memory and must share the selected measurement profile.
+                </p>
+                <p *ngIf="!baselineMode">
+                    Select exactly one saved observation to compare with the
+                    active baseline.
+                </p>
+                <div *ngIf="errors.recon_scans" class="error-banner" role="alert">
+                    {{ errors.recon_scans }}
+                </div>
+                <div *ngIf="messages.recon_scans" class="success-banner">
+                    {{ messages.recon_scans }}
+                </div>
+                <div class="row">
+                    <span class="badge">{{ selectedScans }} selected</span>
+                    <span class="muted">Maximum five raw scans in browser memory.</span>
+                    <span class="spacer"></span>
+                    <button mat-stroked-button (click)="refreshScans()">Refresh</button>
+                </div>
+                <div *ngIf="!pineai.scans.length" class="empty-state">
+                    No saved Recon scans are currently available.
+                </div>
+                <mat-selection-list *ngIf="pineai.scans.length">
+                    <mat-list-option
+                        *ngFor="let scan of pineai.scans"
+                        [selected]="scanSelected(scan)"
+                        [disabled]="scanSelectionDisabled(scan)"
+                        (selectedChange)="toggleScan(scan, $event)">
+                        <span class="mono">Scan {{ scan.scan_id }}</span>
+                        <span class="muted"> · {{ scan.date || 'timestamp unavailable' }}</span>
+                    </mat-list-option>
+                </mat-selection-list>
+                <div class="actions">
+                    <button mat-button (click)="go('measurement_profile')">Back</button>
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="go('baseline_comparison')"
+                        [disabled]="!canProceed('recon_scans')">
+                        Confirm scan selection
+                    </button>
+                </div>
+            </div>
+        </mat-step>
+
+        <mat-step
+            label="4. Baseline or comparison"
+            [completed]="canProceed('baseline_comparison')">
+            <div class="guided-step stack">
+                <div *ngIf="errors.baseline_comparison" class="error-banner" role="alert">
+                    {{ errors.baseline_comparison }}
+                </div>
+                <div *ngIf="messages.baseline_comparison" class="success-banner">
+                    {{ messages.baseline_comparison }}
+                </div>
+
+                <ng-container *ngIf="baselineMode">
+                    <p>
+                        The backend resolves consensus deterministically with
+                        policy <span class="mono">{{ pineai.consensusPolicyId() }}</span>.
+                    </p>
+                    <div class="row">
+                        <mat-form-field appearance="outline">
+                            <mat-label>Baseline label</mat-label>
+                            <input matInput [(ngModel)]="baselineLabel" maxlength="128">
+                        </mat-form-field>
+                        <mat-form-field appearance="outline">
+                            <mat-label>Maximum source age (hours)</mat-label>
+                            <input
+                                matInput
+                                type="number"
+                                min="1"
+                                max="8760"
+                                [(ngModel)]="maxSourceAgeHours">
+                        </mat-form-field>
+                    </div>
+                    <div class="actions">
+                        <button
+                            mat-stroked-button
+                            (click)="previewBaseline()"
+                            [disabled]="!!state.busy_action || selectedScans < 2">
+                            Preview consensus
+                        </button>
+                        <button
+                            mat-flat-button
+                            color="accent"
+                            (click)="createBaseline()"
+                            [disabled]="!!state.busy_action || !pineai.consensusPreview">
+                            Create immutable version
+                        </button>
+                    </div>
+                    <mat-card *ngIf="pineai.consensusPreview">
+                        <mat-card-title>Deterministic consensus preview</mat-card-title>
+                        <mat-card-content>
+                            <div class="grid">
+                                <div>
+                                    <div class="metric">
+                                        {{ pineai.consensusPreview.baseline_model?.sample_count ||
+                                           pineai.consensusPreview.source_scan_count ||
+                                           selectedScans }}
+                                    </div>
+                                    <div class="metric-label">Source scans</div>
+                                </div>
+                                <div>
+                                    <div class="metric">
+                                        {{ pineai.consensusPreview.baseline_model?.summary?.core_asset_count || 0 }}
+                                    </div>
+                                    <div class="metric-label">Core APs</div>
+                                </div>
+                                <div>
+                                    <div class="metric">
+                                        {{ pineai.consensusPreview.baseline_model?.summary?.recurring_asset_count || 0 }}
+                                    </div>
+                                    <div class="metric-label">Recurring APs</div>
+                                </div>
+                            </div>
+                            <pre class="json-preview">{{ pineai.consensusPreview | json }}</pre>
+                        </mat-card-content>
+                    </mat-card>
+                    <div *ngIf="pineai.baselines.length" class="stack">
+                        <strong>Explicit activation</strong>
+                        <div
+                            class="row bordered-row"
+                            *ngFor="let baseline of pineai.baselines">
+                            <span class="mono break-all">
+                                {{ pineai.baselineId(baseline) }}
+                            </span>
+                            <span class="spacer"></span>
+                            <span
+                                *ngIf="pineai.activeBaselineId() === pineai.baselineId(baseline)"
+                                class="badge complete">
+                                Active
+                            </span>
+                            <button
+                                *ngIf="pineai.activeBaselineId() !== pineai.baselineId(baseline)"
+                                mat-stroked-button
+                                (click)="activateBaseline(baseline)">
+                                Activate
+                            </button>
+                        </div>
+                    </div>
+                </ng-container>
+
+                <ng-container *ngIf="!baselineMode">
+                    <p>
+                        Resolve and preview the selected scan. Preview is read-only
+                        and does not update the finding lifecycle.
+                    </p>
+                    <div class="actions">
+                        <button
+                            mat-flat-button
+                            color="accent"
+                            (click)="previewComparison()"
+                            [disabled]="!!state.busy_action || selectedScans !== 1">
+                            Resolve & preview comparison
+                        </button>
+                    </div>
+                    <div *ngIf="pineai.comparison" class="notice">
+                        Comparability:
+                        <strong>{{ pineai.comparabilityLabel(pineai.comparison) }}</strong>
+                        <span
+                            *ngIf="pineai.comparability(pineai.comparison)?.comparison_quality_score !== null">
+                            · quality
+                            {{ (pineai.comparability(pineai.comparison)?.comparison_quality_score || 0) * 100 | number:'1.0-0' }}%
+                        </span>
+                    </div>
+                </ng-container>
+
+                <div class="actions">
+                    <button mat-button (click)="go('recon_scans')">Back</button>
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="go('inventory_policy')"
+                        [disabled]="baselineMode || !canProceed('baseline_comparison')">
+                        Review inventory & policy
+                    </button>
+                </div>
+            </div>
+        </mat-step>
+
+        <mat-step
+            label="5. Inventory & policy"
+            [completed]="canProceed('inventory_policy')">
+            <div class="guided-step stack">
+                <p>
+                    Optional expected-asset inventory and deterministic policy.
+                    CSV is previewed before an immutable profile version is created.
+                </p>
+                <div *ngIf="errors.inventory_policy" class="error-banner" role="alert">
+                    {{ errors.inventory_policy }}
+                </div>
+                <div *ngIf="messages.inventory_policy" class="success-banner">
+                    {{ messages.inventory_policy }}
+                </div>
+                <input
+                    #inventoryFile
+                    type="file"
+                    accept=".csv,text/csv"
+                    (change)="readInventoryFile($event)">
+                <mat-form-field appearance="outline" class="full-width">
+                    <mat-label>Inventory CSV</mat-label>
+                    <textarea
+                        matInput
+                        rows="6"
+                        maxlength="524288"
+                        [(ngModel)]="inventoryCsv"
+                        placeholder="site,ssid,bssid,vendor,role,approved"></textarea>
+                </mat-form-field>
+                <div class="actions">
+                    <button
+                        mat-stroked-button
+                        (click)="previewInventory()"
+                        [disabled]="!!state.busy_action || !inventoryCsv.trim()">
+                        Preview CSV
+                    </button>
+                </div>
+                <mat-card *ngIf="pineai.inventoryPreview">
+                    <mat-card-title>Inventory preview</mat-card-title>
+                    <mat-card-content>
+                        <div class="row">
+                            <span class="badge complete">
+                                {{ pineai.inventoryPreview.valid_count ||
+                                   pineai.inventoryPreview.row_count ||
+                                   pineai.inventoryPreview.rows?.length || 0 }} valid
+                            </span>
+                            <span
+                                class="badge"
+                                [class.high]="pineai.inventoryPreview.errors?.length">
+                                {{ pineai.inventoryPreview.invalid_count ||
+                                   pineai.inventoryPreview.errors?.length || 0 }} invalid
+                            </span>
+                        </div>
+                        <div
+                            *ngFor="let error of pineai.inventoryPreview.errors"
+                            class="error-banner">
+                            Row {{ error.row || '—' }}: {{ error.code }} — {{ error.message }}
+                        </div>
+                        <mat-form-field appearance="outline" class="full-width">
+                            <mat-label>Profile label</mat-label>
+                            <input matInput [(ngModel)]="assuranceLabel" maxlength="128">
+                        </mat-form-field>
+                        <mat-form-field appearance="outline" class="full-width">
+                            <mat-label>Inventory coverage policy</mat-label>
+                            <mat-select [(ngModel)]="coverageMode">
+                                <mat-option value="partial">
+                                    Partial — undeclared assets are not automatically unauthorized
+                                </mat-option>
+                                <mat-option value="authoritative">
+                                    Authoritative — inventory is the approved estate
+                                </mat-option>
+                            </mat-select>
+                            <mat-hint>
+                                Per-asset encryption, WPS, channel and vendor policy comes from CSV columns.
+                            </mat-hint>
+                        </mat-form-field>
+                        <div
+                            *ngIf="coverageMode === 'authoritative'"
+                            class="warning-banner">
+                            Activation requires a separate authoritative confirmation
+                            because unlisted BSSIDs become deviations.
+                        </div>
+                        <button
+                            mat-flat-button
+                            color="accent"
+                            (click)="createAssuranceProfile()"
+                            [disabled]="pineai.inventoryPreview.errors?.length">
+                            Create profile version
+                        </button>
+                    </mat-card-content>
+                </mat-card>
+
+                <div *ngIf="pineai.assuranceProfileVersions.length" class="stack">
+                    <strong>Profile versions</strong>
+                    <div
+                        class="row bordered-row"
+                        *ngFor="let profile of pineai.assuranceProfileVersions">
+                        <span>{{ profile.name || pineai.assuranceProfileId(profile) }}</span>
+                        <span class="mono">revision {{ profile.revision }}</span>
+                        <span class="spacer"></span>
+                        <span
+                            *ngIf="pineai.assuranceProfileId(profile) ===
+                                pineai.assuranceProfileId(pineai.assuranceProfile)"
+                            class="badge complete">
+                            Active
+                        </span>
+                        <button
+                            *ngIf="pineai.assuranceProfileId(profile) !==
+                                pineai.assuranceProfileId(pineai.assuranceProfile)"
+                            mat-stroked-button
+                            (click)="activateAssuranceProfile(profile)">
+                            Activate
+                        </button>
+                    </div>
+                </div>
+                <div class="notice">
+                    Active profile:
+                    <strong>
+                        {{ activeAssuranceProfile
+                            ? (activeAssuranceProfile.name ||
+                               pineai.assuranceProfileId(activeAssuranceProfile))
+                            : 'None — core drift rules only' }}
+                    </strong>
+                </div>
+                <div class="actions">
+                    <button mat-button (click)="go('baseline_comparison')">Back</button>
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="confirmInventoryPolicy()">
+                        Confirm this policy state
+                    </button>
+                    <button
+                        mat-button
+                        (click)="go('analysis_evidence')"
+                        [disabled]="!canProceed('inventory_policy')">
+                        Continue
+                    </button>
+                </div>
+            </div>
+        </mat-step>
+
+        <mat-step
+            label="6. Analyze & evidence"
+            [completed]="canProceed('analysis_evidence')">
+            <div class="guided-step stack">
+                <p>
+                    Saving is the explicit boundary that updates deterministic
+                    finding lifecycle and audit evidence.
+                </p>
+                <div *ngIf="errors.analysis_evidence" class="error-banner" role="alert">
+                    {{ errors.analysis_evidence }}
+                </div>
+                <div *ngIf="messages.analysis_evidence" class="success-banner">
+                    {{ messages.analysis_evidence }}
+                </div>
+                <div class="grid">
+                    <mat-card>
+                        <mat-card-content>
+                            <div class="metric">{{ taxonomyCount('observed_changes') }}</div>
+                            <div class="metric-label">Observed changes</div>
+                        </mat-card-content>
+                    </mat-card>
+                    <mat-card>
+                        <mat-card-content>
+                            <div class="metric">{{ taxonomyCount('deviations') }}</div>
+                            <div class="metric-label">Policy deviations</div>
+                        </mat-card-content>
+                    </mat-card>
+                    <mat-card>
+                        <mat-card-content>
+                            <div class="metric">{{ taxonomyCount('security_findings') }}</div>
+                            <div class="metric-label">Security findings</div>
+                        </mat-card-content>
+                    </mat-card>
+                </div>
+                <div class="actions">
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="saveAnalysis()"
+                        [disabled]="!!state.busy_action || !pineai.comparison ||
+                            !pineai.assessmentMutable()">
+                        Save analysis
+                    </button>
+                </div>
+                <lib-pineai-evidence-viewer
+                    *ngFor="let finding of pineai.findings | slice:0:5"
+                    [finding]="finding">
+                </lib-pineai-evidence-viewer>
+                <div class="actions">
+                    <button mat-button (click)="go('inventory_policy')">Back</button>
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="go('report')"
+                        [disabled]="!canProceed('analysis_evidence')">
+                        Prepare report
+                    </button>
+                </div>
+            </div>
+        </mat-step>
+
+        <mat-step label="7. Report" [completed]="canProceed('report')">
+            <div class="guided-step stack">
+                <p>
+                    Review scope and privacy before generation. The digest binds
+                    the generated file to this exact manifest.
+                </p>
+                <div *ngIf="errors.report" class="error-banner" role="alert">
+                    {{ errors.report }}
+                </div>
+                <div *ngIf="messages.report" class="success-banner">
+                    {{ messages.report }}
+                </div>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Scope</mat-label>
+                        <mat-select
+                            [(ngModel)]="reportScopeType"
+                            (selectionChange)="pineai.reportScopePreview = null;
+                                pineai.workflow.setReportScopeDigest('')">
+                            <mat-option value="comparison">Current comparison</mat-option>
+                            <mat-option value="assessment_current">Current assessment state</mat-option>
+                            <mat-option value="assessment_history">Full assessment history</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Privacy profile</mat-label>
+                        <mat-select
+                            [(ngModel)]="privacyProfile"
+                            (selectionChange)="pineai.reportScopePreview = null;
+                                pineai.workflow.setReportScopeDigest('')">
+                            <mat-option value="local_full">Local full evidence</mat-option>
+                            <mat-option value="share_safe">Share-safe export</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Format</mat-label>
+                        <mat-select [(ngModel)]="reportFormat">
+                            <mat-option value="html">Standalone HTML</mat-option>
+                            <mat-option value="json">JSON</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                </div>
+                <div class="actions">
+                    <button
+                        mat-stroked-button
+                        (click)="prepareReport()"
+                        [disabled]="!!state.busy_action">
+                        Prepare scope & privacy
+                    </button>
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="generateReport()"
+                        [disabled]="!!state.busy_action || !pineai.reportScopePreview">
+                        Generate exact scope
+                    </button>
+                    <button
+                        mat-stroked-button
+                        (click)="downloadReport()"
+                        [disabled]="!pineai.report">
+                        <mat-icon>download</mat-icon>
+                        Download
+                    </button>
+                </div>
+                <mat-card *ngIf="pineai.reportScopePreview">
+                    <mat-card-title>Authoritative scope manifest</mat-card-title>
+                    <mat-card-content>
+                        <div class="mono break-all">
+                            Digest {{ pineai.reportScopePreview.scope_digest }}
+                        </div>
+                        <pre class="json-preview">
+{{ pineai.reportScopePreview.manifest | json }}</pre>
+                    </mat-card-content>
+                </mat-card>
+                <div *ngIf="pineai.report" class="success-banner">
+                    {{ pineai.report.filename }} · SHA-256
+                    <span class="mono break-all">{{ pineai.report.sha256 }}</span>
+                </div>
+                <button mat-button (click)="go('analysis_evidence')">Back</button>
+            </div>
+        </mat-step>
+    </mat-vertical-stepper>
+</section>

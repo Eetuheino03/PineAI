@@ -60,6 +60,11 @@ class ModuleAdapterTests(unittest.TestCase):
             "set_openai_api_key",
             "delete_openai_api_key",
             "assurance_capabilities",
+            "platform_capabilities",
+            "list_measurement_profiles",
+            "create_measurement_profile",
+            "update_measurement_profile",
+            "archive_measurement_profile",
             "create_assessment",
             "get_assessment",
             "list_assessments",
@@ -67,22 +72,34 @@ class ModuleAdapterTests(unittest.TestCase):
             "archive_assessment",
             "resolve_recon",
             "create_baseline_version",
+            "preview_consensus_baseline",
+            "create_consensus_baseline_version",
             "list_baseline_versions",
+            "get_baseline_version",
             "activate_baseline_version",
+            "preview_inventory_csv",
+            "create_assurance_profile_version",
+            "list_assurance_profile_versions",
+            "get_assurance_profile_version",
+            "activate_assurance_profile_version",
+            "export_inventory_csv",
             "compare_recon",
             "analyze_recon",
             "list_findings",
             "update_finding",
+            "list_observed_changes",
+            "get_evidence_bundle",
             "prepare_ai_analysis",
             "generate_ai_analysis",
+            "prepare_report",
             "generate_report",
         }
         self.assertEqual(set(loaded.module.actions), expected)
         with tempfile.TemporaryDirectory() as directory:
             with mock.patch.dict(os.environ, {"PINEAI_CONFIG_DIR": directory}):
                 response = loaded.health(FakeRequest())
-        self.assertEqual(response["version"], "0.6.1")
-        self.assertEqual(response["product_mode"], "baseline_and_drift")
+        self.assertEqual(response["version"], "0.6.2")
+        self.assertEqual(response["product_mode"], "customer_audit_foundation")
         self.assertTrue(response["offline_complete"])
         self.assertFalse(response["recon_control"])
         self.assertFalse(response["api_key_configured"])
@@ -215,12 +232,13 @@ class ModuleAdapterTests(unittest.TestCase):
                     analysis["comparison"]["comparability_status"],
                     "comparable",
                 )
-                self.assertTrue(analysis["findings"])
+                self.assertTrue(analysis["observed_changes"])
+                self.assertEqual(analysis["findings"], [])
 
                 finding_request = FakeRequest()
                 finding_request.assessment_id = assessment["assessment_id"]
                 findings = loaded.list_findings(finding_request)["findings"]
-                self.assertEqual(findings[0]["status"], "open")
+                self.assertEqual(findings, [])
 
                 report_request = FakeRequest()
                 report_request.assessment_id = assessment["assessment_id"]
@@ -252,7 +270,7 @@ class ModuleAdapterTests(unittest.TestCase):
             sys.modules.pop(name, None)
         try:
             loaded = self.load_module()
-            self.assertEqual(loaded.__version__, "0.6.1")
+            self.assertEqual(loaded.__version__, "0.6.2")
             self.assertTrue(service_modules.isdisjoint(sys.modules))
         finally:
             for name in list(sys.modules):

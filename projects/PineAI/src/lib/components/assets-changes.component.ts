@@ -54,6 +54,18 @@ export class AssetsChangesComponent {
             ? value.candidate_findings : [];
     }
 
+    get taxonomy(): any {
+        return this.pineai.resultTaxonomy(this.comparison);
+    }
+
+    itemTitle(value: any): string {
+        return value
+            ? value.title || value.rule_id || value.change_type ||
+              value.type || value.subject_id || value.target_id ||
+              'Structured result'
+            : 'Structured result';
+    }
+
     id(value: any): string {
         return value
             ? value.ap_id || value.network_id || value.asset_id || value.target_id || ''

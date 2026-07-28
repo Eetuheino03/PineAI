@@ -1,21 +1,23 @@
 # PineAI
 
-PineAI is an offline-first wireless assurance module for the WiFi Pineapple
-Mark VII. It turns saved Hak5 Recon observations into immutable baselines,
-deterministic changes, evidence-backed findings, and exportable reports.
+PineAI Baseline & Drift is a portable, offline wireless change-auditing
+module for the WiFi Pineapple Mark VII. It answers what a site looked like in
+an approved state, what changed, how trustworthy the comparison is, and which
+evidence proves each result.
 
 ![PineAI Banner](docs/asset.png)
 
-PineAI is not an attack module. Version `0.6.1` continues and hardens the
-**Baseline & Drift** direction introduced in `0.6.0`, which replaced the
-earlier reconnaissance-copilot workflow:
+PineAI is not an attack module. Version `0.6.2` is the Customer Audit
+Foundation:
 
 1. load a saved Recon scan through the authenticated Hak5 session;
 2. resolve access points and SSIDs into stable local assets;
-3. create and explicitly activate an immutable baseline;
-4. compare a later scan and decide whether it is comparable;
-5. evaluate eight deterministic finding rules;
-6. manage finding lifecycle and export JSON or standalone HTML.
+3. build and explicitly activate a 2–5 scan consensus baseline;
+4. activate a versioned customer inventory and fixed policy;
+5. compare a later scan and explain measurement comparability;
+6. separate observed changes, policy deviations, and security findings;
+7. inspect point-in-time before/after evidence;
+8. export comparison, current-state, or full-history JSON/HTML reports.
 
 The complete workflow works without an API key or internet connection. An
 optional AI provider may explain existing findings or draft clearly labelled
@@ -46,14 +48,14 @@ Create an installable archive with:
 
 ```bash
 ./build.sh package
-bash scripts/verify-package.sh PineAI-0.6.1.tar.gz
+bash scripts/verify-package.sh PineAI-0.6.2.tar.gz
 ```
 
-The resulting `PineAI-0.6.1.tar.gz` archive can be uploaded through the WiFi
+The resulting `PineAI-0.6.2.tar.gz` archive can be uploaded through the WiFi
 Pineapple management interface. During development, copy the built
 `dist/PineAI/` directory to `/pineapple/modules/PineAI/`.
 
-The `v0.6.1` release is published as a pre-release until its smoke test is
+The `v0.6.2` release is published as a pre-release until its smoke test is
 completed on a physical Mark VII. Automated tests, package integrity, and
 offline behavior are verified independently; no physical-device verification
 is claimed yet.
@@ -75,12 +77,13 @@ The recommended sequence is:
 
 ```text
 create assessment
-    -> resolve saved Recon scan
-    -> create baseline version
-    -> explicitly activate baseline
-    -> compare a later scan
-    -> save analysis and finding lifecycle changes
-    -> export JSON or HTML report
+    -> select a versioned measurement profile
+    -> resolve 2-5 saved Recon scans
+    -> preview, create, and explicitly activate consensus baseline
+    -> import/edit and activate inventory plus fixed policy
+    -> compare and save a later observation
+    -> inspect immutable evidence
+    -> prepare and export a scoped JSON or HTML report
 ```
 
 See [the frontend guide](docs/frontend.md) for the operator workflow and
@@ -102,9 +105,11 @@ The local engine alone decides:
 - finding lifecycle state;
 - all factual and machine-readable report content.
 
-The first rules cover new and missing access points, a known SSID appearing
-from a new BSSID, SSID and encryption-code changes, WPS becoming enabled,
-channel changes, and divergent encryption codes within one SSID.
+Observed changes never receive a severity or lifecycle. Policy deviations are
+created only from the explicitly activated fixed policy, and security findings
+require both observed evidence and active inventory/policy context. Result
+certainty is categorical (`confirmed`, `probable`, or `limited`) rather than
+an uncalibrated percentage.
 
 Hak5 encryption values are treated as opaque numeric codes. PineAI reports a
 change but does not call it an upgrade or downgrade without a verified
@@ -129,10 +134,28 @@ logged, or committed.
 ## Storage
 
 Assessments are stored below `/root/.PineAI/assessments/`. Directories use
-mode `0700`; assessment, baseline, snapshot, comparison, finding, and audit
-files use mode `0600`. Generated reports are returned in memory for download
-and are not persisted by PineAI. Baseline versions are immutable and
-activation always requires an explicit, revision-checked request.
+mode `0700`; assessment, baseline, snapshot, comparison, occurrence, profile,
+report, finding, and audit files use mode `0600`. Multi-file mutations use a
+recoverable transaction journal. Baseline and AssuranceProfile versions are
+immutable and activation always requires an explicit, revision-checked
+request.
+
+The pseudonymization key defines stable asset, evidence, and finding identity.
+If identity-bound data exists and the key is missing or invalid, PineAI blocks
+new analysis instead of silently generating a different identity.
+
+Root/SSH operators can create, verify, and safely unpack continuity backups:
+
+```text
+pineai backup create --output /root/pineai-backup.tar.gz
+pineai backup verify --input /root/pineai-backup.tar.gz
+pineai backup restore-staging --input /root/pineai-backup.tar.gz \
+  --target /root/pineai-restore-staging
+```
+
+Backups contain assessments, profiles, configuration, and the
+pseudonymization key. They never contain `openai.key`, are not encrypted, and
+must be handled as sensitive material.
 
 Legacy engagement data is neither migrated nor read by `0.6.1`. It is left
 untouched so an operator can recover or remove it separately.
@@ -156,11 +179,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md),
 ## Safety and scope
 
 Use PineAI only with wireless environments you own or are authorized to
-assess. The module is read-only toward the radio in `0.6.1`: it analyzes saved
+assess. The module is read-only toward the radio in `0.6.2`: it analyzes saved
 Recon results and cannot execute validation steps, shell commands, deauth,
 evil-twin, association, capture, or scan-start actions.
 
-The physical Mark VII smoke test for `v0.6.1` is pending. This limitation is
+The physical Mark VII smoke test for `v0.6.2` is pending. This limitation is
 also recorded in the release notes and implementation handoff.
 
 ## License

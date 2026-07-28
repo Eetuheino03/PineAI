@@ -1,4 +1,3 @@
-import copy
 import json
 import sys
 import tempfile
@@ -12,7 +11,6 @@ sys.path.insert(0, str(ASSETS))
 
 from pineai_backend import __version__  # noqa: E402
 from pineai_backend.assurance_service import AssuranceService  # noqa: E402
-from pineai_backend.assessment_store import AssessmentStore  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
 
 
@@ -40,14 +38,15 @@ def metadata(identifier):
 
 class AssuranceServiceTests(unittest.TestCase):
     def test_capabilities_version_matches_package_version(self):
-        capabilities = AssuranceService().capabilities()
+        with tempfile.TemporaryDirectory() as directory:
+            capabilities = AssuranceService(config_dir=directory).capabilities()
         self.assertEqual(capabilities["backend_version"], __version__)
-        self.assertEqual(__version__, "0.6.1")
+        self.assertEqual(__version__, "0.6.2")
 
     def active_service(self, directory):
-        store = AssessmentStore(directory)
-        service = AssuranceService(config_dir=directory, store=store)
-        assessment = store.create(
+        service = AssuranceService(config_dir=directory)
+        store = service.store
+        assessment = service.create_assessment(
             {"name": "Office", "location": "Helsinki", "notes": "local"}
         )
         created = service.create_baseline_version(
@@ -83,11 +82,12 @@ class AssuranceServiceTests(unittest.TestCase):
             self.assertEqual(
                 preview["diff"]["comparability"]["status"], "comparable"
             )
-            self.assertEqual(len(preview["candidate_findings"]), 1)
+            self.assertEqual(len(preview["observed_changes"]), 1)
             self.assertEqual(
-                preview["candidate_findings"][0]["rule_id"],
+                preview["observed_changes"][0]["change_type"],
                 "known_ssid_new_bssid",
             )
+            self.assertNotIn("severity", preview["observed_changes"][0])
 
             persisted = service.analyze_recon(
                 assessment["assessment_id"],
@@ -95,9 +95,8 @@ class AssuranceServiceTests(unittest.TestCase):
                 changed,
                 metadata("changed"),
             )
-            self.assertEqual(persisted["lifecycle"]["opened"], [
-                persisted["findings"][0]["finding_id"]
-            ])
+            self.assertEqual(persisted["lifecycle"]["opened"], [])
+            self.assertEqual(persisted["findings"], [])
             comparison_id = persisted["comparison"]["comparison_id"]
 
             ai = service.generate_ai_analysis(
@@ -125,7 +124,7 @@ class AssuranceServiceTests(unittest.TestCase):
             detail = service.assessment_detail(assessment["assessment_id"])
             self.assertEqual(len(detail["baseline_versions"]), 1)
             self.assertEqual(len(detail["comparisons"]), 1)
-            self.assertEqual(detail["finding_summary"]["open"], 1)
+            self.assertEqual(detail["finding_summary"]["open"], 0)
 
     def test_compare_is_read_only_and_revision_conflicts_are_detected(self):
         with tempfile.TemporaryDirectory() as directory:

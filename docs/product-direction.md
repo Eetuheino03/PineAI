@@ -1,5 +1,18 @@
 # PineAI product direction
 
+## Customer problem and position
+
+PineAI answers one audit question:
+
+> What did a site's wireless environment look like when it was approved,
+> what changed, how trustworthy is the comparison, and which evidence proves
+> the change?
+
+The product position is:
+
+**PineAI Baseline & Drift — Portable offline wireless change auditing for
+WiFi Pineapple.**
+
 ## Purpose
 
 PineAI is the analysis and assurance layer that is missing from the WiFi
@@ -45,6 +58,18 @@ commands.
 | Attack path | Validation step |
 | Interest score | Finding severity and confidence |
 
+Customer-facing v0.6.2 output is deliberately divided into:
+
+- **observed changes**, which state only what the measurements show and have
+  neither severity nor lifecycle;
+- **policy deviations**, which are violations of an explicitly activated
+  fixed policy and have deterministic severity and lifecycle;
+- **security findings**, which require both measurement evidence and active
+  inventory/policy context and have deterministic severity and lifecycle.
+
+Certainty is categorical (`confirmed`, `probable`, or `limited`). PineAI does
+not present uncalibrated confidence percentages as customer assurance.
+
 The previous Attack-Path Advisor branding and workflow are removed from the
 public product.
 
@@ -62,34 +87,36 @@ public product.
 
 ## Roadmap
 
-### v0.6.x - Baseline & Drift
+### v0.6.2 - Customer Audit Foundation
 
-Introduced in `v0.6.0`; the current comparability-hardening patch is
-`v0.6.1`.
+- strict 2–5 scan consensus baselines;
+- versioned measurement profiles;
+- immutable approved inventory and fixed policy profiles;
+- observed change, policy deviation, and security finding separation;
+- point-in-time occurrences and before/after evidence;
+- comparison, current-state, and full-history customer reports;
+- Guided and Expert user interfaces;
+- root/SSH continuity backups.
 
-- read saved scans through the authenticated Hak5 Recon REST API;
-- resolve assets and scan metadata;
-- create, version, and explicitly activate immutable baselines;
-- calculate AP and SSID drift;
-- evaluate the first eight deterministic finding rules;
-- manage finding lifecycle;
-- export deterministic JSON and standalone HTML reports;
-- optionally add labelled AI explanations and report prose;
-- provide a complete responsive Angular UI.
+### v0.7.0 - Repeatable Field Audits
 
-### v0.7.0 - Wireless Assurance
+- recurring operator workflows and audit scheduling;
+- multiple repeatable measurement points;
+- comparison timelines and deliberate suppressions;
+- field-tested quality calibration.
 
-- continuous observation of new saved scans;
-- multiple locations and baseline timelines;
-- deterministic rogue and clone suspicion scoring;
-- persistent suppressions and false-positive memory;
-- notifications for material changes.
+### v0.8.0 - Sensor and Data Source Expansion
 
-### v0.8.0 - AI Analyst
+- additional passive sensors and evidence types;
+- enriched but source-attributed asset metadata;
+- broader wireless environment coverage without changing the deterministic
+  authority boundary.
+
+### v0.9.0 - AI Analyst
 
 - structured questions over findings and evidence;
-- evidence-gap suggestions;
-- provider abstraction for local and OpenAI-backed models;
+- evidence-gap explanations;
+- provider abstraction for local and hosted models;
 - broader daily and cross-assessment summaries.
 
 ## Ecosystem role

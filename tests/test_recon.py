@@ -49,7 +49,9 @@ class ReconNormalizerTests(unittest.TestCase):
     def test_missing_optional_values_use_safe_defaults(self):
         normalized = validate_and_normalize_scan(
             {
-                "APResults": [{"ssid": "Minimal", "bssid": "invalid"}],
+                "APResults": [
+                    {"ssid": "Minimal", "bssid": "02:00:00:00:00:01"}
+                ],
                 "OutOfRangeClientResults": [],
                 "UnassociatedClientResults": [],
             },

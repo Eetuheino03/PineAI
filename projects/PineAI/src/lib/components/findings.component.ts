@@ -70,10 +70,10 @@ export class FindingsComponent {
         }
     }
 
-    confidence(value: any): string {
-        if (typeof value !== 'number') {
-            return String(value === undefined || value === null ? '—' : value);
-        }
-        return value <= 1 ? `${Math.round(value * 100)}%` : `${Math.round(value)}%`;
+    certainty(finding: Finding): string {
+        const value: any = finding || {};
+        return value.certainty ||
+            value.details && value.details.certainty ||
+            'legacy read-only history';
     }
 }

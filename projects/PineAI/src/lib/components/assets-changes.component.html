@@ -63,8 +63,8 @@
             </mat-card>
             <mat-card>
                 <mat-card-content>
-                    <div class="metric">{{ candidateFindings.length }}</div>
-                    <div class="metric-label">Candidate findings</div>
+                    <div class="metric">{{ taxonomy.security_findings.length }}</div>
+                    <div class="metric-label">Security findings</div>
                 </mat-card-content>
             </mat-card>
         </div>
@@ -133,6 +133,71 @@
             </mat-card-content>
         </mat-card>
 
+        <div *ngIf="comparison" class="taxonomy-grid">
+            <mat-card class="taxonomy-panel change">
+                <mat-card-title>Observed changes</mat-card-title>
+                <mat-card-subtitle>
+                    Factual differences without a policy or risk conclusion.
+                </mat-card-subtitle>
+                <mat-card-content>
+                    <div *ngIf="!taxonomy.observed_changes.length" class="muted">
+                        None returned.
+                    </div>
+                    <div
+                        class="bordered-row"
+                        *ngFor="let item of taxonomy.observed_changes">
+                        <strong>{{ itemTitle(item) }}</strong>
+                        <div class="mono muted">
+                            {{ item.subject_id || item.target_id || item.change_id || '—' }}
+                        </div>
+                    </div>
+                </mat-card-content>
+            </mat-card>
+            <mat-card class="taxonomy-panel deviation">
+                <mat-card-title>Deviations</mat-card-title>
+                <mat-card-subtitle>
+                    Deterministic differences from active inventory or policy.
+                </mat-card-subtitle>
+                <mat-card-content>
+                    <div *ngIf="!taxonomy.deviations.length" class="muted">
+                        None returned.
+                    </div>
+                    <div
+                        class="bordered-row"
+                        *ngFor="let item of taxonomy.deviations">
+                        <strong>{{ itemTitle(item) }}</strong>
+                        <div class="mono muted">
+                            {{ item.subject_id || item.target_id || item.deviation_id || '—' }}
+                        </div>
+                    </div>
+                </mat-card-content>
+            </mat-card>
+            <mat-card class="taxonomy-panel security">
+                <mat-card-title>Security findings</mat-card-title>
+                <mat-card-subtitle>
+                    Rule-backed findings with authoritative severity and categorical certainty.
+                </mat-card-subtitle>
+                <mat-card-content>
+                    <div *ngIf="!taxonomy.security_findings.length" class="muted">
+                        None returned.
+                    </div>
+                    <div
+                        class="bordered-row"
+                        *ngFor="let item of taxonomy.security_findings">
+                        <strong>{{ itemTitle(item) }}</strong>
+                        <div class="chip-list">
+                            <span class="badge" [ngClass]="item.severity">
+                                {{ item.severity || 'unrated' }}
+                            </span>
+                            <span class="badge">
+                                Certainty {{ item.certainty || 'limited' }}
+                            </span>
+                        </div>
+                    </div>
+                </mat-card-content>
+            </mat-card>
+        </div>
+
         <mat-card>
             <mat-card-title>Resolved access points</mat-card-title>
             <mat-card-subtitle>Observed identifiers are displayed as untrusted data.</mat-card-subtitle>
@@ -176,7 +241,7 @@
         <mat-card *ngIf="candidateFindings.length">
             <mat-card-title>Candidate findings</mat-card-title>
             <mat-card-subtitle>
-                Severity and confidence are authoritative backend values, never AI output.
+                Severity and categorical certainty are authoritative backend values, never AI output.
             </mat-card-subtitle>
             <mat-card-content class="stack">
                 <div *ngFor="let finding of candidateFindings">
@@ -184,7 +249,12 @@
                         <strong>{{ finding.title || finding.rule_id }}</strong>
                         <div class="chip-list">
                             <span class="badge" [ngClass]="finding.severity">{{ finding.severity }}</span>
-                            <span class="badge">{{ finding.confidence }}</span>
+                            <span class="badge">
+                                Certainty
+                                {{ finding.certainty ||
+                                   finding.details?.certainty ||
+                                   'legacy read-only history' }}
+                            </span>
                         </div>
                     </div>
                     <div class="muted">{{ finding.summary || finding.description }}</div>

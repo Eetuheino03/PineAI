@@ -1,5 +1,6 @@
 import { Component } from '@angular/core';
 import { PineAIService } from '../services/PineAI.service';
+import {ReportScope} from '../models';
 
 @Component({
     selector: 'lib-pineai-reports',
@@ -15,9 +16,20 @@ export class ReportsComponent {
     errorMessage = '';
     successMessage = '';
     previewVisible = false;
+    reportScopeType:
+        'comparison' | 'assessment_current' | 'assessment_history' =
+        'comparison';
+    selectedComparisonId = '';
+    privacyProfile: 'local_full' | 'share_safe' = 'local_full';
 
     constructor(public pineai: PineAIService) {
         this.language = pineai.settings ? pineai.settings.language : 'en';
+        try {
+            this.selectedComparisonId = pineai.hasComparison()
+                ? pineai.comparisonId() : '';
+        } catch (_error) {
+            this.selectedComparisonId = '';
+        }
     }
 
     selected(findingId: string): boolean {
@@ -62,9 +74,65 @@ export class ReportsComponent {
         }, 'AI request completed. Deterministic results were not modified.');
     }
 
+    comparisons(): any[] {
+        return this.pineai.availableComparisons();
+    }
+
+    comparisonId(value: any): string {
+        return value
+            ? value.comparison_id || value.analysis_id ||
+              value.snapshot_id || ''
+            : '';
+    }
+
+    reportScope(): ReportScope {
+        const scope: ReportScope = {
+            type: this.reportScopeType,
+            finding_mode: this.reportScopeType === 'comparison'
+                ? 'comparison'
+                : this.reportScopeType === 'assessment_current'
+                    ? 'active' : 'all',
+            statuses: this.reportScopeType === 'assessment_history'
+                ? [] : ['open', 'acknowledged', 'resolved'],
+            severities: [],
+            rule_ids: [],
+            subject_ids: [],
+            include_evidence: true,
+            include_inventory_policy: true,
+            include_ai: this.includeAi
+        };
+        if (this.reportScopeType === 'comparison') {
+            scope.comparison_id = this.selectedComparisonId ||
+                (this.pineai.hasComparison()
+                    ? this.pineai.comparisonId() : '');
+        }
+        return scope;
+    }
+
+    resetReportPreview(): void {
+        this.pineai.reportScopePreview = null;
+        this.pineai.report = null;
+        this.pineai.workflow.setReportScopeDigest('');
+        this.successMessage = '';
+    }
+
+    async prepareReport(): Promise<void> {
+        await this.run(async () => {
+            await this.pineai.prepareReportScope(
+                this.reportScope(),
+                this.privacyProfile
+            );
+        }, 'Authoritative report scope and privacy manifest prepared.');
+    }
+
     async generateReport(): Promise<void> {
         await this.run(async () => {
-            await this.pineai.generateReport(this.format, this.includeAi);
+            await this.pineai.generateReport(
+                this.format,
+                this.includeAi,
+                this.reportScope(),
+                this.privacyProfile
+            );
         }, `${this.format.toUpperCase()} report generated.`);
     }
 

@@ -1,0 +1,159 @@
+<mat-card>
+    <div class="card-title-row">
+        <div>
+            <mat-card-title>Measurement profiles</mat-card-title>
+            <mat-card-subtitle>
+                Versioned presets make baseline observations repeatable.
+            </mat-card-subtitle>
+        </div>
+        <div class="row">
+            <mat-checkbox [(ngModel)]="includeArchived" (change)="refresh()">
+                Archived
+            </mat-checkbox>
+            <button mat-stroked-button (click)="newProfile()">New</button>
+        </div>
+    </div>
+    <mat-card-content class="stack">
+        <div *ngIf="errorMessage" class="error-banner" role="alert">
+            {{ errorMessage }}
+        </div>
+        <div *ngIf="successMessage" class="success-banner">
+            {{ successMessage }}
+        </div>
+        <div
+            *ngIf="pineai.panelErrors.measurement_profiles"
+            class="warning-banner">
+            Backend profile storage is unavailable:
+            {{ pineai.panelErrors.measurement_profiles.code }} —
+            {{ pineai.panelErrors.measurement_profiles.message }}
+        </div>
+        <div class="grid two">
+            <div>
+                <strong>Saved presets</strong>
+                <div *ngIf="!pineai.measurementProfiles.length" class="empty-state">
+                    No measurement profile presets.
+                </div>
+                <mat-list *ngIf="pineai.measurementProfiles.length">
+                    <mat-list-item
+                        *ngFor="let profile of pineai.measurementProfiles">
+                        <mat-icon mat-list-icon>tune</mat-icon>
+                        <div mat-line>{{ profile.name }}</div>
+                        <div mat-line>
+                            Revision {{ profile.revision }} ·
+                            {{ profile.context?.declared_channels?.length || 0 }} channels
+                        </div>
+                        <button mat-button (click)="apply(profile)">Use</button>
+                        <button mat-button (click)="edit(profile)">Edit</button>
+                        <button
+                            mat-icon-button
+                            color="warn"
+                            (click)="archive(profile)"
+                            [disabled]="busy || profile.status === 'archived'"
+                            [attr.aria-label]="'Archive ' + profile.name">
+                            <mat-icon>archive</mat-icon>
+                        </button>
+                    </mat-list-item>
+                </mat-list>
+            </div>
+
+            <form [formGroup]="form" class="stack">
+                <strong>
+                    {{ selected ? 'Edit profile revision ' + selected.revision :
+                       'Create profile' }}
+                </strong>
+                <mat-form-field appearance="outline">
+                    <mat-label>Name</mat-label>
+                    <input matInput formControlName="name" maxlength="100">
+                    <mat-error *ngIf="form.get('name').hasError('required')">
+                        Name is required.
+                    </mat-error>
+                </mat-form-field>
+                <mat-form-field appearance="outline">
+                    <mat-label>Description</mat-label>
+                    <textarea
+                        matInput
+                        formControlName="description"
+                        rows="2"
+                        maxlength="500"></textarea>
+                </mat-form-field>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Location ID</mat-label>
+                        <input matInput formControlName="location_id" maxlength="100">
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Measurement point ID</mat-label>
+                        <input
+                            matInput
+                            formControlName="measurement_point_id"
+                            maxlength="100">
+                    </mat-form-field>
+                </div>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Scan profile ID</mat-label>
+                        <input matInput formControlName="scan_profile_id" maxlength="100">
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Radio profile ID</mat-label>
+                        <input matInput formControlName="radio_profile_id" maxlength="100">
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Interface</mat-label>
+                        <input matInput formControlName="interface" maxlength="64">
+                    </mat-form-field>
+                </div>
+                <mat-form-field appearance="outline">
+                    <mat-label>Declared channels</mat-label>
+                    <input
+                        matInput
+                        [(ngModel)]="channelsText"
+                        [ngModelOptions]="{standalone: true}"
+                        placeholder="1, 6, 11, 36, 40">
+                    <mat-hint>Unique channels from 1 to 196.</mat-hint>
+                </mat-form-field>
+                <div class="row">
+                    <mat-checkbox formControlName="band_2_4">
+                        2.4 GHz covered
+                    </mat-checkbox>
+                    <mat-checkbox formControlName="band_5">
+                        5 GHz covered
+                    </mat-checkbox>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Scan time (seconds)</mat-label>
+                        <input
+                            matInput
+                            type="number"
+                            min="30"
+                            max="3600"
+                            formControlName="scan_time">
+                    </mat-form-field>
+                </div>
+                <mat-checkbox
+                    *ngIf="form.value.band_5"
+                    formControlName="five_ghz_operator_confirmed">
+                    I confirmed this Pineapple has the required 5 GHz-capable radio
+                </mat-checkbox>
+                <mat-checkbox formControlName="is_default">
+                    Preferred guided-mode profile
+                </mat-checkbox>
+                <div class="actions">
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        type="button"
+                        (click)="save()"
+                        [disabled]="busy">
+                        {{ selected ? 'Create new revision' : 'Create profile' }}
+                    </button>
+                    <button
+                        mat-button
+                        type="button"
+                        (click)="newProfile()">
+                        Clear
+                    </button>
+                </div>
+            </form>
+        </div>
+    </mat-card-content>
+</mat-card>

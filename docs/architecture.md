@@ -1,203 +1,293 @@
-# Architecture
+# PineAI v0.6.2 Customer Audit Foundation architecture
 
-PineAI separates platform integration, deterministic analysis, persistence,
-optional AI prose, and operator decisions into explicit trust boundaries.
+PineAI is a portable, offline-first wireless change-audit layer for the WiFi
+Pineapple Mark VII. It analyzes saved Hak5 Recon observations. It is not an
+attack assistant, and it never starts, stops, or reconfigures a radio.
+
+## Authority boundary
+
+The deterministic backend is authoritative for:
+
+- Recon validation and normalization;
+- stable AP, network, snapshot, evidence, occurrence, and issue identities;
+- measurement-profile provenance and comparison quality;
+- consensus-baseline membership and attributes;
+- before/after changes;
+- inventory and fixed-policy evaluation;
+- result type, severity, categorical certainty, and lifecycle;
+- report scope, facts, limitations, and integrity digests.
+
+The optional AI layer may explain or summarize facts already selected by the
+deterministic backend. It cannot create an issue, change a result type,
+severity, certainty, status, evidence reference, comparison-quality decision,
+or report fact.
+
+The entire customer-audit workflow remains available without an API key or
+network connection.
+
+## Data flow
 
 ```text
-Authenticated Hak5 Angular session
+Saved Hak5 Recon scans (read-only REST)
         |
-        | GET saved Recon scan
         v
-In-memory validation and normalization
-        |
-        +--> stable local asset, network, snapshot, and evidence IDs
+Versioned MeasurementProfile
         |
         v
-Immutable active baseline + current snapshot
+Asset & Change Resolver
+  - validates Recon aliases and limits
+  - normalizes APs, networks and metadata
+  - creates stable HMAC identities and evidence IDs
         |
-        +--> deterministic comparability decision
-        +--> deterministic AP and SSID diff
-        +--> eight deterministic finding rules
-        +--> revisioned finding lifecycle
-        |
-        +--------------------------+
-        |                          |
-        v                          v
-JSON / standalone HTML       Privacy-filtered structured facts
-authoritative report                |
-                                    v
-                              Optional AI provider
-                                    |
-                                    v
-                              labelled explanation only
+        +-----------------------------+
+        |                             |
+        v                             v
+2-5 scan consensus preview     Current resolved snapshot
+        |                             |
+        v                             |
+Operator creates and activates        |
+an immutable baseline version         |
+        |                             |
+        +-------------+---------------+
+                      |
+                      v
+Deterministic comparison
+  - comparable / partially_comparable / not_comparable
+  - observed changes
+  - optional AssuranceProfile evaluation
+                      |
+                      v
+Operator saves analysis
+  - immutable occurrence and evidence bundle
+  - lifecycle updates for policy deviations/security findings
+                      |
+                      v
+Prepared report scope -> scope digest -> JSON/HTML export
 ```
 
-## Authority boundaries
+Raw Hak5 Recon JSON is held only in memory. PineAI persists normalized
+snapshots and the evidence required to reproduce its conclusions.
 
-The deterministic engine is authoritative for:
+## Measurement profiles and provenance
 
-- normalized observations and stable IDs;
-- scan comparability and its reason codes;
-- AP and SSID differences;
-- rule matching and evidence references;
-- severity, confidence, and confidence factors;
-- finding lifecycle;
-- machine-readable and factual report content.
+A MeasurementProfile describes how and where observations are collected:
 
-AI output is non-authoritative. It may explain an existing finding, provide
-alternative explanations, suggest safe manual validation, summarize
-deterministic changes, or draft technical prose. It may not create or remove a
-finding, change a rule result, assign severity or confidence, update lifecycle
-state, operate the radio, or return executable commands.
+- location and measurement-point identifiers;
+- scan- and radio-profile identifiers;
+- interface;
+- declared bands and channels;
+- expected scan duration;
+- explicit confirmation when 5 GHz coverage is claimed.
 
-Every AI response uses a strict versioned schema. Returned assessment,
-comparison, finding, and evidence references are checked against the local
-request before the prose is accepted.
+Profiles are versioned. A resolved snapshot pins the profile version and
+digest used at collection time. Consensus inputs must use matching measurement
+provenance. A later comparison exposes mismatches as deterministic
+comparability reasons instead of silently treating unlike observations as
+equivalent.
 
-## Data flow and persistence
+## Consensus baseline
 
-Raw Hak5 Recon JSON exists only for the duration of the request. The resolver
-validates it, normalizes documented aliases, and derives:
+The primary v0.6.2 baseline is constructed from two to five non-empty resolved
+scans. Input order and AP order do not affect the model digest.
 
-- a normalized snapshot;
-- access-point assets and SSID networks;
-- per-observation evidence IDs;
-- a canonical snapshot digest;
-- a comparability profile.
+The fixed `strict_80_v1` policy classifies each AP as:
 
-An assessment represents one wireless environment or location. Its baseline
-versions are immutable; a separate revision-checked operation activates one
-version. Saved analysis contains normalized snapshots, comparison facts,
-evidence, findings, and lifecycle events, never the raw Recon response.
+- `core` when present in at least `ceil(0.8 * scan_count)` observations;
+- `recurring` when present at least twice but below the core threshold;
+- `singleton` when present once.
 
-State is stored below `/root/.PineAI/assessments/`:
+Only a core AP supports an absence inference. Recurring and singleton assets
+remain known baseline members, so their later return is not classified as a
+new AP.
 
-- directories: `0700`;
-- persisted JSON and JSONL files: `0600`;
-- writes: atomic replace;
-- concurrency: `expected_revision`;
-- history: append-only audit events.
+The default source-age window is 24 hours. The operator may select a value
+between 1 and 168 hours, or deliberately use an unbounded source window. An
+unbounded window is preserved as a report limitation.
 
-Generated JSON and HTML reports are returned in memory for an explicit
-operator download; PineAI does not persist report artifacts on the device.
+The consensus preview is read-only. Creating a version persists an immutable
+baseline model, but does not activate it. Activation is a separate,
+revision-checked operator action.
 
-Legacy `/root/.PineAI/engagements/` data is ignored and left untouched.
+The older single-scan baseline contract remains available for compatibility
+with v0.6.0/v0.6.1 records. Guided Customer Audit uses consensus baselines.
 
-## Identity and privacy
+## Comparability and categorical certainty
 
-The device has a private 256-bit HMAC key in
-`/root/.PineAI/pseudonymization.key`. Stable asset, network, finding, and
-evidence IDs are derived with HMAC-SHA256.
+Comparison status is one of:
 
-Real BSSIDs and SSIDs may be stored locally because they are required for
-repeatable assurance. They are separated from the optional AI payload:
+- `comparable` — matching provenance and sufficient coverage permit positive
+  changes and absence inferences;
+- `partially_comparable` — observed changes may be reported, but missing-asset
+  conclusions are disabled;
+- `not_comparable` — a diagnostic diff may be shown, but no issue lifecycle is
+  changed.
 
-- MAC addresses and BSSIDs are always removed;
-- SSIDs are pseudonymized unless `share_ssids=true`;
-- raw scans, scan IDs, secrets, local notes, and audit free text are removed;
-- wireless strings remain untrusted data and never become instructions.
+Examples of hard mismatches include a known location, measurement point,
+scan-profile, interface, or MeasurementProfile-provenance mismatch. Missing
+provenance and incomplete coverage reduce comparison quality instead of being
+hidden.
 
-AI and network failure leave the complete deterministic workflow operational.
+Customer-facing certainty is categorical:
 
-## Comparability
+- `confirmed` — directly observed in comparable data;
+- `probable` — an allowed absence inference or a positive observation from
+  partially comparable data;
+- `limited` — diagnostic evidence from non-comparable or legacy data.
 
-The resolver returns one of:
+There is no customer-facing percentage score. Older stored records may contain
+deprecated numeric fields; they are retained only as read-only legacy
+metadata.
 
-- `comparable`: absence-based drift and lifecycle resolution are allowed.
-  Requires matching `location_id` and `measurement_point_id`, no explicit
-  scan/radio/interface profile mismatch, complete declared-channel coverage,
-  and passing duration, detection, and quality thresholds.
-- `partially_comparable`: observed changes are reported with a confidence
-  penalty, but absence-based findings are suppressed. Triggered when required
-  location/point context or declared channels are unknown, an explicit radio
-  profile differs, or a quality threshold is not met.
-- `not_comparable`: a diagnostic diff is returned, but finding lifecycle is
-  not changed. Triggered by explicit location, measurement-point,
-  `scan_profile_id`, or `interface` mismatch; a band mismatch; or an empty
-  current scan.
+## AssuranceProfile
 
-`radio_profile_id` mismatch is deliberately less strict than a scan-profile
-or interface mismatch: the observation remains useful, but the result cannot
-assert that a baseline AP is absent. Unknown scan, radio, or interface
-profiles also limit the result to `partially_comparable`, because the
-measurement method has not been proven equivalent.
+An AssuranceProfile is an immutable, assessment-local version of approved
+inventory plus the fixed policy registry. It may be created from a validated
+CSV preview or a normalized profile object. Creating a profile does not
+activate it.
 
-The decision considers absolute measurement context (`location_id` and
-`measurement_point_id`), scan/radio/interface profile compatibility, declared
-and observed channel coverage, scan duration, baseline AP detection ratio,
-and overall comparison quality score. Reason codes remain machine-readable.
+Inventory coverage is:
 
-## Finding rules and confidence
+- `partial` — unlisted observed assets are not automatically unauthorized;
+- `authoritative` — the inventory is treated as the approved estate.
 
-The first registry contains exactly:
+Activating an authoritative profile requires an additional explicit
+confirmation. The active profile version and digest are pinned into each new
+analysis occurrence.
 
-1. `new_access_point`
-2. `known_ssid_new_bssid`
-3. `access_point_missing`
-4. `ssid_changed`
-5. `encryption_changed`
-6. `wps_enabled`
-7. `channel_changed`
-8. `security_profile_divergence`
+Without an active AssuranceProfile, PineAI still reports measured drift as
+observed changes. It does not promote ordinary drift to a customer security
+finding.
 
-When a new BSSID advertises a baseline SSID, only
-`known_ssid_new_bssid` is emitted; the generic `new_access_point` duplicate is
-suppressed.
+## Result taxonomy
 
-Each rule declares an authoritative severity and base confidence. Final
-confidence is the bounded sum of:
+The active product has three separate result types:
+
+| Result type | Meaning | Severity | Lifecycle |
+| --- | --- | --- | --- |
+| `observed_change` | A measured before/after fact | No | No |
+| `policy_deviation` | A violation of the explicitly active fixed policy | Yes | Yes |
+| `security_finding` | A policy- and inventory-backed security condition | Yes | Yes |
+
+Policy deviations include authoritative-inventory, required-presence, SSID,
+opaque encryption-code, WPS, channel, and vendor rules. The first release does
+not infer that one Hak5 numeric encryption code is stronger than another.
+
+Security findings are restricted to the fixed registry:
+
+- an unauthorized BSSID advertising a protected SSID;
+- a protected SSID using a disallowed encryption code;
+- WPS enabled where the active policy forbids it.
+
+Issue lifecycle states are `open`, `acknowledged`, `false_positive`, and
+`resolved`. A comparable clean observation may resolve an active issue. A
+later recurrence reopens the same stable issue identity. Operator
+false-positive decisions are preserved and later occurrences are recorded
+without silently reversing that decision.
+
+## Immutable evidence and legacy history
+
+Saving an analysis creates an immutable occurrence set containing:
+
+- observed changes;
+- inventory reconciliation;
+- policy deviations and security findings;
+- before/after evidence references;
+- comparison-quality factors;
+- pinned baseline, MeasurementProfile, and AssuranceProfile versions;
+- limitations.
+
+`get_evidence_bundle` resolves one selected item to its exact point-in-time
+evidence. Reports do not reconstruct facts that were never stored.
+
+v0.6.0/v0.6.1 assessments, baselines, comparisons, and findings remain
+readable. Legacy findings are labelled `legacy_read_only`; Customer Audit does
+not reclassify or mutate them retrospectively.
+
+## Report boundary
+
+Every report uses one explicit scope:
+
+- `comparison` — one immutable comparison and its point-in-time occurrence;
+- `assessment_current` — the assessment's current active customer-audit
+  state;
+- `assessment_history` — stored comparisons, occurrences, and lifecycle
+  history.
+
+The operator first calls `prepare_report`. The backend returns an authoritative
+manifest, warnings, and a `scope_digest`. `generate_report` recomputes the
+selected facts and rejects a stale digest.
+
+JSON and standalone script-free HTML are rendered from the same canonical fact
+model. The public module action stores a private short-lived export under the
+assessment's `exports/` directory and returns an exact `POST /api/download`
+descriptor. The frontend sends that descriptor unchanged. It never injects
+report HTML into the module page.
+
+`local_full` retains local audit identifiers. `share_safe` removes or
+pseudonymizes local identifiers; SSIDs remain hidden unless sharing was
+explicitly enabled. Optional AI prose is clearly labelled non-authoritative.
+
+## Persistence and transactions
+
+Runtime state is rooted at `/root/.PineAI/`:
 
 ```text
-base confidence
-- comparability penalty
-+ evidence bonus (capped)
+/root/.PineAI/
+├── config.json
+├── pseudonymization.key
+├── openai.key                         # optional; never in continuity backup
+├── measurement_profiles/
+│   └── mprofile_<uuid>/
+│       ├── profile.json
+│       └── versions/
+└── assessments/
+    └── assessment_<uuid>/
+        ├── assessment.json
+        ├── events.jsonl
+        ├── snapshots/
+        ├── baselines/
+        ├── baseline_models/
+        ├── assurance_profiles/
+        ├── comparisons/
+        ├── findings/
+        ├── occurrences/
+        └── exports/
 ```
 
-Hak5 encryption values remain opaque numeric codes in this release.
+Private directories are `0700`; JSON, JSONL, key, configuration, occurrence,
+and export files are `0600`. Mutations use `expected_revision` optimistic
+concurrency and append-only audit events. Multi-file writes use recoverable
+private transaction journals; transient locks and journals are not report or
+backup evidence.
 
-## Finding lifecycle
+The old `/root/.PineAI/engagements/` tree is left untouched and is not read by
+Customer Audit.
 
-Finding identity is stable across scans and is based on assessment, rule, and
-subject. Supported states are:
+## Identity continuity and backup
+
+Stable IDs depend on `/root/.PineAI/pseudonymization.key`. Once assessment data
+exists, a missing or invalid identity key is a hard failure; PineAI never
+silently generates a replacement identity.
+
+The continuity-backup CLI includes assessments, measurement profiles,
+`config.json`, and the pseudonymization key. It excludes `openai.key`,
+transient locks, and transaction journals. Restore always targets a new or
+empty staging directory and never overwrites live state.
+
+See [install-mark-vii.md](install-mark-vii.md) for the exact SSH commands.
+
+## Radio and network boundaries
+
+PineAI v0.6.2 reads only:
 
 ```text
-open -> acknowledged -> resolved
-  |            |
-  +-----> false_positive
-```
-
-A comparable clean scan automatically resolves matching `open` or
-`acknowledged` findings. If the condition returns, the same finding ID is
-reopened. A `false_positive` state is an operator decision; new occurrences
-are recorded but do not silently override it.
-
-## Platform boundary
-
-The Angular frontend reads saved scans through the authenticated Hak5 REST
-session:
-
-```text
+GET /api/recon/status
 GET /api/recon/scans
 GET /api/recon/scans/:scan_id
 ```
 
-PineAI `0.6.1` does not call `POST /api/recon/start`, stop scans, or operate a
-radio. The backend receives Recon JSON from Angular and does not store the
-Pineapple root password.
+`GET /api/recon/status` is informational. PineAI does not call Recon start or
+stop endpoints and does not alter PineAP or radio settings.
 
-The public module contract is documented in
-[backend-api.md](backend-api.md) and
-[baseline-drift-v1.schema.json](schemas/baseline-drift-v1.schema.json).
-
-## Roadmap
-
-- **0.6.x Baseline & Drift:** introduced in `0.6.0`, with the current
-  comparability-hardening patch in `0.6.1`; one environment per assessment,
-  versioned
-  baselines, deterministic changes and findings, lifecycle, reports, optional
-  AI explanations, complete Angular workflow.
-- **0.7.0 Wireless Assurance:** continuous observation, multiple locations,
-  timelines, deterministic rogue/clone scoring, suppressions, and
-  notifications.
-- **0.8.0 AI Analyst:** structured Q&A, evidence-gap suggestions, and local or
-  OpenAI-backed provider abstraction.
+Only optional AI explanation requires an outbound provider connection. All
+authoritative analysis, lifecycle, evidence, and reporting remain local.
