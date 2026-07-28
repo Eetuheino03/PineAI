@@ -11,8 +11,22 @@ export class ReconComponent {
     busy = false;
     loadingScanId: number | string = null;
     errorMessage = '';
+    declaredChannelsText = '';
 
     constructor(public pineai: PineAIService) {}
+
+    onDeclaredChannelsChange(val: string): void {
+        this.declaredChannelsText = val;
+        if (!val || !val.trim()) {
+            this.pineai.measurementContext.declared_channels = [];
+            return;
+        }
+        const nums = val
+            .split(/[\s,]+/)
+            .map((item) => parseInt(item.trim(), 10))
+            .filter((item) => !isNaN(item) && item >= 1 && item <= 200);
+        this.pineai.measurementContext.declared_channels = nums;
+    }
 
     async refresh(): Promise<void> {
         this.busy = true;
@@ -54,3 +68,4 @@ export class ReconComponent {
         }
     }
 }
+

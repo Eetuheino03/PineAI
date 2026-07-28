@@ -73,6 +73,46 @@
         </mat-card-content>
     </mat-card>
 
+    <mat-card *ngIf="pineai.selectedScan">
+        <mat-card-title>Measurement Context (P1 Comparability)</mat-card-title>
+        <mat-card-subtitle>
+            Set absolute measurement context for comparability enforcement between scans.
+        </mat-card-subtitle>
+        <mat-card-content class="stack">
+            <div class="row">
+                <mat-form-field appearance="outline">
+                    <mat-label>Location ID</mat-label>
+                    <input matInput [(ngModel)]="pineai.measurementContext.location_id" placeholder="e.g. pori-office">
+                </mat-form-field>
+                <mat-form-field appearance="outline">
+                    <mat-label>Measurement Point ID</mat-label>
+                    <input matInput [(ngModel)]="pineai.measurementContext.measurement_point_id" placeholder="e.g. main-entrance-01">
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <mat-form-field appearance="outline">
+                    <mat-label>Scan Profile ID</mat-label>
+                    <input matInput [(ngModel)]="pineai.measurementContext.scan_profile_id" placeholder="e.g. full_5min">
+                </mat-form-field>
+                <mat-form-field appearance="outline">
+                    <mat-label>Radio Profile ID</mat-label>
+                    <input matInput [(ngModel)]="pineai.measurementContext.radio_profile_id" placeholder="e.g. alfa_awus036ach">
+                </mat-form-field>
+                <mat-form-field appearance="outline">
+                    <mat-label>Radio Interface</mat-label>
+                    <input matInput [(ngModel)]="pineai.measurementContext.interface" placeholder="e.g. wlan0mon">
+                </mat-form-field>
+            </div>
+            <div class="row">
+                <mat-form-field appearance="outline" class="full-width">
+                    <mat-label>Declared Channels (scanned)</mat-label>
+                    <input matInput [(ngModel)]="declaredChannelsText" (ngModelChange)="onDeclaredChannelsChange($event)" placeholder="e.g. 1, 6, 11, 36, 40, 44, 48">
+                    <mat-hint>Comma or space separated channel numbers</mat-hint>
+                </mat-form-field>
+            </div>
+        </mat-card-content>
+    </mat-card>
+
     <mat-card>
         <mat-card-title>Saved scans</mat-card-title>
         <mat-card-content>

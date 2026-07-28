@@ -20,6 +20,7 @@ from .errors import BackendError
 
 
 ASSESSMENT_SCHEMA_VERSION = "1.0"
+SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1")
 ASSESSMENT_ID_PATTERN = re.compile(
     r"^assessment_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
     r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -253,7 +254,7 @@ def _validate_snapshot(value: Any) -> Dict[str, Any]:
             "invalid_snapshot", "snapshot fields do not match schema 1.0"
         )
     _ensure_no_raw_recon(snapshot)
-    if snapshot.get("schema_version") != ASSESSMENT_SCHEMA_VERSION:
+    if snapshot.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
         raise BackendError(
             "invalid_snapshot", "snapshot schema_version is unsupported"
         )
@@ -413,7 +414,7 @@ def _validate_comparison(value: Any) -> Dict[str, Any]:
             "comparison fields do not match schema 1.0",
         )
     _ensure_no_raw_recon(comparison)
-    if comparison.get("schema_version") != ASSESSMENT_SCHEMA_VERSION:
+    if comparison.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
         raise BackendError(
             "invalid_comparison", "comparison schema_version is unsupported"
         )
@@ -1352,13 +1353,14 @@ class AssessmentStore:
                     if finding_id in observed_ids:
                         continue
                     existing["currently_observed"] = False
-                    if status == "comparable" and existing["status"] in (
-                        "open",
-                        "acknowledged",
-                    ):
-                        existing["status"] = "resolved"
-                        existing["status_updated_at"] = now
-                        lifecycle["resolved"].append(finding_id)
+                    if status == "comparable":
+                        if existing["status"] in (
+                            "open",
+                            "acknowledged",
+                        ):
+                            existing["status"] = "resolved"
+                            existing["status_updated_at"] = now
+                            lifecycle["resolved"].append(finding_id)
 
                 stored_findings = sorted(
                     by_id.values(), key=lambda item: item["finding_id"]

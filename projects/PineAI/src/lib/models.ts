@@ -82,3 +82,39 @@ export interface FrontendError {
 export interface PanelErrorMap {
     [panel: string]: FrontendError;
 }
+
+export interface MeasurementContext {
+    location_id?: string | null;
+    measurement_point_id?: string | null;
+    scan_profile_id?: string | null;
+    radio_profile_id?: string | null;
+    interface?: string | null;
+    declared_channels?: number[] | null;
+}
+
+export interface QualityFactors {
+    duration_score?: number | null;
+    channel_coverage_score?: number | null;
+    baseline_detection_score?: number | null;
+    radio_profile_score?: number | null;
+}
+
+export interface ComparabilityEvaluation {
+    status: 'comparable' | 'partially_comparable' | 'not_comparable';
+    positive_findings_allowed: boolean;
+    absence_findings_allowed: boolean;
+    lifecycle_updates_allowed: boolean;
+    reasons: string[];
+    comparison_quality_score?: number | null;
+    quality_model_version?: string | null;
+    quality_factors?: QualityFactors | null;
+    location_match?: boolean | null;
+    measurement_point_match?: boolean | null;
+    radio_profile_match?: boolean | null;
+    channel_coverage_ratio?: number | null;
+    baseline_ap_detection_ratio?: number | null;
+    matched_ap_signal_stability?: number | null;
+    baseline?: any;
+    current?: any;
+}
+

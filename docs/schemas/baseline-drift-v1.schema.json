@@ -93,7 +93,7 @@
   },
   "$defs": {
     "schemaVersion": {
-      "const": "1.0"
+      "enum": ["1.0", "1.1"]
     },
     "timestamp": {
       "type": "string",
@@ -649,6 +649,22 @@
         "label": {
           "type": "string",
           "maxLength": 128
+        },
+        "measurement_context": {
+          "type": "object"
+        },
+        "location_id": { "type": "string", "maxLength": 128 },
+        "measurement_point_id": { "type": "string", "maxLength": 128 },
+        "scan_profile_id": { "type": "string", "maxLength": 128 },
+        "radio_profile_id": { "type": "string", "maxLength": 128 },
+        "interface": { "type": "string", "maxLength": 64 },
+        "declared_channels": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 200 }
+        },
+        "declared_bands": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/band" }
         }
       }
     },
@@ -663,7 +679,8 @@
         "scan_time",
         "coverage",
         "source",
-        "label"
+        "label",
+        "measurement_context"
       ],
       "properties": {
         "scan_id": {
@@ -727,6 +744,47 @@
             {
               "type": "string",
               "maxLength": 128
+            },
+            { "type": "null" }
+          ]
+        },
+        "measurement_context": {
+          "$ref": "#/$defs/measurementContext"
+        }
+      }
+    },
+    "measurementContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "location_id",
+        "measurement_point_id",
+        "scan_profile_id",
+        "radio_profile_id",
+        "interface",
+        "declared_channels",
+        "declared_bands"
+      ],
+      "properties": {
+        "location_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "measurement_point_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "scan_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "radio_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "interface": { "oneOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] },
+        "declared_channels": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1, "maximum": 200 }
+            },
+            { "type": "null" }
+          ]
+        },
+        "declared_bands": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/band" }
             },
             { "type": "null" }
           ]
@@ -1234,14 +1292,35 @@
           "type": "array",
           "uniqueItems": true,
           "items": {
-            "enum": [
-              "current_scan_contains_no_access_points",
-              "current_scan_does_not_cover_baseline_bands",
-              "band_coverage_is_incomplete",
-              "scan_duration_is_unknown",
-              "current_scan_is_materially_shorter"
-            ]
+            "type": "string"
           }
+        },
+        "comparison_quality_score": {
+          "oneOf": [{ "type": "number", "minimum": 0, "maximum": 1 }, { "type": "null" }]
+        },
+        "quality_model_version": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "quality_factors": {
+          "type": "object"
+        },
+        "location_match": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "measurement_point_match": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "radio_profile_match": {
+          "oneOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "channel_coverage_ratio": {
+          "oneOf": [{ "type": "number", "minimum": 0, "maximum": 1 }, { "type": "null" }]
+        },
+        "baseline_ap_detection_ratio": {
+          "oneOf": [{ "type": "number", "minimum": 0, "maximum": 1 }, { "type": "null" }]
+        },
+        "matched_ap_signal_stability": {
+          "oneOf": [{ "type": "number" }, { "type": "null" }]
         },
         "baseline": { "$ref": "#/$defs/comparabilitySide" },
         "current": { "$ref": "#/$defs/comparabilitySide" }

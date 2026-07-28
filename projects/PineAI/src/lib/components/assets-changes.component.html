@@ -72,25 +72,51 @@
         <mat-card *ngIf="comparison">
             <div class="card-title-row">
                 <div>
-                    <mat-card-title>Comparability</mat-card-title>
+                    <mat-card-title>Comparability &amp; Quality Assessment</mat-card-title>
                     <mat-card-subtitle>
-                        Absence rules only run when the backend marks scans comparable.
+                        Absence rules run only when the backend marks scans fully comparable (P1 engine).
                     </mat-card-subtitle>
                 </div>
-                <span
-                    class="badge"
-                    [ngClass]="pineai.comparabilityLabel(comparison)">
-                    {{ pineai.comparabilityLabel(comparison) }}
-                </span>
+                <div class="row">
+                    <span
+                        *ngIf="pineai.comparability(comparison)?.comparison_quality_score !== undefined && pineai.comparability(comparison)?.comparison_quality_score !== null"
+                        class="badge"
+                        [class.complete]="(pineai.comparability(comparison)?.comparison_quality_score || 0) >= 0.75"
+                        [class.medium]="(pineai.comparability(comparison)?.comparison_quality_score || 0) < 0.75">
+                        Quality: {{ ((pineai.comparability(comparison)?.comparison_quality_score || 0) * 100) | number:'1.0-1' }}%
+                    </span>
+                    <span
+                        class="badge"
+                        [ngClass]="pineai.comparabilityLabel(comparison)">
+                        {{ pineai.comparabilityLabel(comparison) }}
+                    </span>
+                </div>
             </div>
-            <mat-card-content>
+            <mat-card-content class="stack" style="margin-top: 12px;">
+                <div *ngIf="pineai.comparability(comparison)?.quality_factors" class="grid three">
+                    <div class="quality-factor">
+                        <div class="metric-label">Duration Score</div>
+                        <div class="metric-small">{{ ((pineai.comparability(comparison)?.quality_factors?.duration_score || 0) * 100) | number:'1.0-0' }}%</div>
+                    </div>
+                    <div class="quality-factor">
+                        <div class="metric-label">Channel Coverage</div>
+                        <div class="metric-small">{{ ((pineai.comparability(comparison)?.quality_factors?.channel_coverage_score || 0) * 100) | number:'1.0-0' }}%</div>
+                    </div>
+                    <div class="quality-factor">
+                        <div class="metric-label">Anchor AP Detection</div>
+                        <div class="metric-small">{{ ((pineai.comparability(comparison)?.quality_factors?.baseline_detection_score || 0) * 100) | number:'1.0-0' }}%</div>
+                    </div>
+                </div>
+
                 <div
                     *ngIf="pineai.comparability(comparison)?.reasons?.length"
                     class="stack">
+                    <div class="eyebrow">Reasons / Syyt</div>
                     <div
                         *ngFor="let reason of pineai.comparability(comparison).reasons"
-                        class="muted">
-                        {{ reason }}
+                        class="warning-banner" style="margin-bottom: 4px; padding: 8px 12px;">
+                        <strong>{{ pineai.reasonLabel(reason, pineai.settings.language || 'fi') }}</strong>
+                        <span class="mono muted" style="font-size: 11px; display: block;">({{ reason }})</span>
                     </div>
                 </div>
                 <div class="row" *ngIf="comparison.comparison_id">

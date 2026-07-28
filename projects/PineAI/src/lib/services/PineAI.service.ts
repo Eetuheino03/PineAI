@@ -6,6 +6,7 @@ import {
     BaselineVersion,
     Finding,
     FrontendError,
+    MeasurementContext,
     PanelErrorMap,
     PineAISettings,
     ReconScan,
@@ -43,6 +44,15 @@ export class PineAIService {
     panelErrors: PanelErrorMap = {};
     initializing = false;
     initialized = false;
+
+    measurementContext: MeasurementContext = {
+        location_id: '',
+        measurement_point_id: '',
+        scan_profile_id: '',
+        radio_profile_id: '',
+        interface: '',
+        declared_channels: []
+    };
 
     constructor(private api: ApiService) {}
 
@@ -230,7 +240,7 @@ export class PineAIService {
         }
     }
 
-    private scanMetadata(): any {
+    scanMetadata(overrideContext?: MeasurementContext): any {
         const source: any = this.selectedScan || {};
         const allowed = [
             'scan_id',
@@ -251,7 +261,63 @@ export class PineAIService {
                     ? source[field].slice() : source[field];
             }
         }
+        const ctx = overrideContext || this.measurementContext;
+        if (ctx) {
+            const mc: any = {};
+            if (ctx.location_id) mc.location_id = ctx.location_id;
+            if (ctx.measurement_point_id) mc.measurement_point_id = ctx.measurement_point_id;
+            if (ctx.scan_profile_id) mc.scan_profile_id = ctx.scan_profile_id;
+            if (ctx.radio_profile_id) mc.radio_profile_id = ctx.radio_profile_id;
+            if (ctx.interface) mc.interface = ctx.interface;
+            if (ctx.declared_channels && ctx.declared_channels.length > 0) {
+                mc.declared_channels = ctx.declared_channels;
+            }
+            if (Object.keys(mc).length > 0) {
+                result.measurement_context = mc;
+            }
+        }
         return result;
+    }
+
+    reasonLabel(reason: string, lang: 'en' | 'fi' = 'fi'): string {
+        const fiMap: {[key: string]: string} = {
+            'legacy_baseline_missing_measurement_context': 'Vertailukohtana vanha baseline (ei mittauskontekstia)',
+            'location_mismatch': 'Sijainti (location_id) ei täsmää baselineen',
+            'measurement_point_mismatch': 'Mittauspiste (measurement_point_id) ei täsmää baselineen',
+            'position_confirmation_different': 'Laite- tai antenniasento poikkeaa baselinesta',
+            'radio_interface_mismatch': 'Radio/rauta-rajapinta ei täsmää baselineen',
+            'scan_profile_mismatch': 'Skannausprofiili poikkeaa baselinesta',
+            'declared_channels_do_not_cover_baseline_channels': 'Määritellyt kanavat eivät kata baselinen kanavia',
+            'current_scan_contains_no_access_points': 'Nykyisessä skannauksessa ei havaittu yhtään tukiasemaa',
+            'current_scan_does_not_cover_baseline_bands': 'Skannaus ei kata baselinen taajuusalueita',
+            'band_coverage_is_incomplete': 'Taajuusalueen kattavuus on puutteellinen',
+            'scan_duration_is_unknown': 'Skannauksen kesto on tuntematon',
+            'current_scan_is_materially_shorter': 'Skannauksen kesto on huomattavasti baselinea lyhyempi',
+            'low_overall_comparison_quality_score': 'Vertailun kokonaislaatu on liian alhainen (< 75%)',
+            'baseline_ap_detection_ratio_too_low': 'Baselinen ankkuri-tukiasemien havaintosuhde liian alhainen (< 70%)',
+            'essential_measurement_context_missing': 'Mittaustietoja tai puuttuvia kanavia ei voida vahvistaa'
+        };
+        const enMap: {[key: string]: string} = {
+            'legacy_baseline_missing_measurement_context': 'Legacy baseline without measurement context',
+            'location_mismatch': 'Location ID does not match baseline',
+            'measurement_point_mismatch': 'Measurement point ID does not match baseline',
+            'position_confirmation_different': 'Position or antenna orientation differs',
+            'radio_interface_mismatch': 'Radio/interface does not match baseline',
+            'scan_profile_mismatch': 'Scan profile differs from baseline',
+            'declared_channels_do_not_cover_baseline_channels': 'Declared channels do not cover candidate channels',
+            'current_scan_contains_no_access_points': 'Current scan contains no access points',
+            'current_scan_does_not_cover_baseline_bands': 'Current scan does not cover baseline frequency bands',
+            'band_coverage_is_incomplete': 'Band coverage is incomplete',
+            'scan_duration_is_unknown': 'Scan duration is unknown',
+            'current_scan_is_materially_shorter': 'Scan duration is materially shorter than baseline',
+            'low_overall_comparison_quality_score': 'Overall comparison quality score is too low (< 75%)',
+            'baseline_ap_detection_ratio_too_low': 'Baseline anchor AP detection ratio is too low (< 70%)',
+            'essential_measurement_context_missing': 'Essential measurement context missing'
+        };
+        if (lang === 'fi') {
+            return fiMap[reason] || reason;
+        }
+        return enMap[reason] || reason;
     }
 
     async resolveSelectedScan(): Promise<any> {

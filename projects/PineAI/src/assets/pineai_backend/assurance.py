@@ -19,7 +19,9 @@ from .recon import (
 )
 
 
-ASSURANCE_SCHEMA_VERSION = "1.0"
+ASSURANCE_SCHEMA_VERSION = "1.1"
+SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1")
+QUALITY_MODEL_VERSION = "1.0"
 MAX_METADATA_TEXT = 256
 ALLOWED_COVERAGE = ("2.4", "5")
 COMPARABILITY_STATES = ("comparable", "partially_comparable", "not_comparable")
@@ -124,8 +126,70 @@ def _integer(value: Any, field: str, minimum: int, maximum: int) -> int:
     return value
 
 
+def normalize_measurement_context(value: Any) -> Dict[str, Any]:
+    """Normalize absolute measurement context for a scan snapshot."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise BackendError("invalid_scan_metadata", "measurement_context must be an object")
+
+    allowed = {
+        "location_id",
+        "measurement_point_id",
+        "scan_profile_id",
+        "radio_profile_id",
+        "interface",
+        "declared_channels",
+        "declared_bands",
+    }
+    if set(value) - allowed:
+        raise BackendError(
+            "invalid_scan_metadata", "measurement_context contains unsupported fields"
+        )
+
+    location_id = _clean_text(value.get("location_id"), 128) or None
+    measurement_point_id = _clean_text(value.get("measurement_point_id"), 128) or None
+    scan_profile_id = _clean_text(value.get("scan_profile_id"), 128) or None
+    radio_profile_id = _clean_text(value.get("radio_profile_id"), 128) or None
+    interface = _clean_text(value.get("interface"), 64) or None
+
+    declared_channels_input = value.get("declared_channels")
+    declared_channels = None
+    if declared_channels_input is not None:
+        if not isinstance(declared_channels_input, list):
+            raise BackendError("invalid_scan_metadata", "declared_channels must be an array")
+        channels_set = set()
+        for ch in declared_channels_input:
+            if not isinstance(ch, int) or isinstance(ch, bool) or ch < 1 or ch > 200:
+                raise BackendError("invalid_scan_metadata", "declared_channels contains an invalid channel number")
+            channels_set.add(ch)
+        declared_channels = sorted(channels_set)
+
+    declared_bands_input = value.get("declared_bands")
+    declared_bands = None
+    if declared_bands_input is not None:
+        if not isinstance(declared_bands_input, list) or len(declared_bands_input) > 2:
+            raise BackendError("invalid_scan_metadata", "declared_bands must contain zero to two bands")
+        bands_set = set()
+        for band in declared_bands_input:
+            if band not in ALLOWED_COVERAGE:
+                raise BackendError("invalid_scan_metadata", "declared_bands contains an unknown band")
+            bands_set.add(band)
+        declared_bands = sorted(bands_set)
+
+    return {
+        "location_id": location_id,
+        "measurement_point_id": measurement_point_id,
+        "scan_profile_id": scan_profile_id,
+        "radio_profile_id": radio_profile_id,
+        "interface": interface,
+        "declared_channels": declared_channels,
+        "declared_bands": declared_bands,
+    }
+
+
 def normalize_scan_metadata(value: Any) -> Dict[str, Any]:
-    """Normalize safe metadata accepted from the Hak5 scan list response."""
+    """Normalize safe metadata accepted from the Hak5 scan list response and user options."""
     if value is None:
         value = {}
     if not isinstance(value, dict):
@@ -142,6 +206,14 @@ def normalize_scan_metadata(value: Any) -> Dict[str, Any]:
         "coverage",
         "source",
         "label",
+        "measurement_context",
+        "location_id",
+        "measurement_point_id",
+        "scan_profile_id",
+        "radio_profile_id",
+        "interface",
+        "declared_channels",
+        "declared_bands",
     }
     if set(value) - allowed:
         raise BackendError(
@@ -150,6 +222,19 @@ def normalize_scan_metadata(value: Any) -> Dict[str, Any]:
 
     scan_id_value = value.get("scan_id", value.get("id"))
     duration_value = value.get("scan_time", value.get("duration"))
+
+    raw_mc = value.get("measurement_context")
+    if raw_mc is None:
+        direct_mc = {
+            k: value[k] for k in (
+                "location_id", "measurement_point_id", "scan_profile_id",
+                "radio_profile_id", "interface", "declared_channels", "declared_bands"
+            ) if k in value
+        }
+        measurement_context = normalize_measurement_context(direct_mc)
+    else:
+        measurement_context = normalize_measurement_context(raw_mc)
+
     result = {
         "scan_id": _clean_text(scan_id_value, 128) or None,
         "date": _clean_text(value.get("date"), 64) or None,
@@ -159,6 +244,7 @@ def normalize_scan_metadata(value: Any) -> Dict[str, Any]:
         "coverage": [],
         "source": _clean_text(value.get("source"), 64) or "hak5_recon",
         "label": _clean_text(value.get("label"), 128) or None,
+        "measurement_context": measurement_context,
     }
     if duration_value is not None:
         result["scan_time"] = _integer(
@@ -194,6 +280,24 @@ def _unique_sorted(values: Iterable[Any]) -> List[Any]:
     return sorted(set(values))
 
 
+def _median(numbers: List[int]) -> Optional[int]:
+    if not numbers:
+        return None
+    sorted_nums = sorted(numbers)
+    length = len(sorted_nums)
+    mid = length // 2
+    if length % 2 == 1:
+        return sorted_nums[mid]
+    return int(round((sorted_nums[mid - 1] + sorted_nums[mid]) / 2.0))
+
+
+def _mad(numbers: List[int], median_val: Optional[int]) -> Optional[int]:
+    if not numbers or median_val is None:
+        return None
+    deviations = [abs(num - median_val) for num in numbers]
+    return _median(deviations)
+
+
 def resolve_assets(
     scan: Any,
     scan_metadata: Any,
@@ -207,8 +311,6 @@ def resolve_assets(
         raise BackendError("invalid_recon", str(failure))
     metadata = normalize_scan_metadata(scan_metadata)
 
-    # input_bytes depends on JSON formatting and is therefore diagnostic rather
-    # than part of the identity of a semantic snapshot.
     identity_seed = {
         "metadata": metadata,
         "access_points": normalized["access_points"],
@@ -222,6 +324,7 @@ def resolve_assets(
     evidence = []
     observed_bands: Set[str] = set()
 
+    valid_signals = []
     for access_point in sorted(
         normalized["access_points"], key=lambda item: item["bssid"]
     ):
@@ -241,6 +344,10 @@ def resolve_assets(
         band = _channel_band(access_point["channel"])
         if band:
             observed_bands.add(band)
+
+        sig = access_point.get("signal")
+        if isinstance(sig, int) and not isinstance(sig, bool) and sig < 0:
+            valid_signals.append(sig)
 
         asset = {
             "asset_id": asset_id,
@@ -319,6 +426,18 @@ def resolve_assets(
     evidence.sort(key=lambda item: item["evidence_id"])
 
     effective_coverage = metadata["coverage"] or sorted(observed_bands)
+    observed_channels = sorted(set(ap["channel"] for ap in access_points))
+    mc = metadata["measurement_context"]
+
+    med_signal = _median(valid_signals)
+    signal_summary = {
+        "valid_observation_count": len(valid_signals),
+        "median_dbm": med_signal,
+        "minimum_dbm": min(valid_signals) if valid_signals else None,
+        "maximum_dbm": max(valid_signals) if valid_signals else None,
+        "median_absolute_deviation_db": _mad(valid_signals, med_signal),
+    }
+
     return {
         "schema_version": ASSURANCE_SCHEMA_VERSION,
         "snapshot_id": snapshot_id,
@@ -330,10 +449,18 @@ def resolve_assets(
         ),
         "scan_metadata": metadata,
         "comparability_profile": {
+            "location_id": mc["location_id"],
+            "measurement_point_id": mc["measurement_point_id"],
+            "scan_profile_id": mc["scan_profile_id"],
+            "radio_profile_id": mc["radio_profile_id"],
+            "interface": mc["interface"],
             "declared_coverage": metadata["coverage"],
             "observed_coverage": sorted(observed_bands),
             "effective_coverage": effective_coverage,
+            "declared_channels_scanned": mc["declared_channels"],
+            "observed_channels": observed_channels,
             "scan_time": metadata["scan_time"],
+            "signal_summary": signal_summary,
         },
         "summary": {
             "access_point_count": len(access_points),
@@ -363,46 +490,185 @@ def _profile(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     return profile
 
 
+def _match_state(val1: Optional[str], val2: Optional[str]) -> Optional[bool]:
+    if val1 is not None and val2 is not None:
+        return val1 == val2
+    return None
+
+
 def evaluate_comparability(
-    baseline: Dict[str, Any], current: Dict[str, Any]
+    baseline: Dict[str, Any], current: Dict[str, Any], position_confirmation: Optional[str] = None
 ) -> Dict[str, Any]:
     """Decide whether state transitions and absence findings are trustworthy."""
     baseline_profile = _profile(baseline)
     current_profile = _profile(current)
     reasons = []
-    status = "comparable"
-    baseline_coverage = set(baseline_profile.get("effective_coverage") or [])
-    current_coverage = set(current_profile.get("effective_coverage") or [])
+    hard_gate_failed = False
+
+    location_match = _match_state(baseline_profile.get("location_id"), current_profile.get("location_id"))
+    measurement_point_match = _match_state(baseline_profile.get("measurement_point_id"), current_profile.get("measurement_point_id"))
+    radio_profile_match = _match_state(baseline_profile.get("radio_profile_id"), current_profile.get("radio_profile_id"))
+
+    if location_match is False:
+        reasons.append("location_mismatch")
+        hard_gate_failed = True
+
+    if measurement_point_match is False:
+        reasons.append("measurement_point_mismatch")
+        hard_gate_failed = True
+
+    if position_confirmation == "different":
+        reasons.append("position_confirmation_different")
+        hard_gate_failed = True
+
     baseline_count = baseline["summary"].get("access_point_count", 0)
     current_count = current["summary"].get("access_point_count", 0)
-
-    if baseline_count and not current_count:
-        status = "not_comparable"
+    if baseline_count > 0 and current_count == 0:
         reasons.append("current_scan_contains_no_access_points")
+        hard_gate_failed = True
+
+    baseline_coverage = set(baseline_profile.get("effective_coverage") or [])
+    current_coverage = set(current_profile.get("effective_coverage") or [])
     if baseline_coverage and current_coverage:
         if not baseline_coverage.issubset(current_coverage):
-            status = "not_comparable"
             reasons.append("current_scan_does_not_cover_baseline_bands")
-    elif status != "not_comparable":
-        status = "partially_comparable"
-        reasons.append("band_coverage_is_incomplete")
+            hard_gate_failed = True
+
+    current_declared_channels = current_profile.get("declared_channels_scanned")
+    eligible_baseline_aps = []
+    for ap in baseline.get("access_points", []):
+        ap_band = ap.get("band") or _channel_band(ap.get("channel", 0))
+        if ap_band and current_coverage and ap_band not in current_coverage:
+            continue
+        if current_declared_channels is not None:
+            if ap.get("channel") not in current_declared_channels:
+                continue
+        eligible_baseline_aps.append(ap)
+
+    eligible_ap_ids = set(ap["asset_id"] for ap in eligible_baseline_aps)
+    current_ap_ids = set(ap["asset_id"] for ap in current.get("access_points", []))
+    reobserved_eligible_aps = eligible_ap_ids & current_ap_ids
+
+    eligible_baseline_ap_count = len(eligible_baseline_aps)
+    reobserved_baseline_ap_count = len(reobserved_eligible_aps)
+
+    if eligible_baseline_ap_count > 0:
+        baseline_ap_detection_ratio = round(reobserved_baseline_ap_count / float(eligible_baseline_ap_count), 4)
+    else:
+        baseline_ap_detection_ratio = 1.0
+
+    baseline_ap_channels = set(ap["channel"] for ap in baseline.get("access_points", []))
+    if current_declared_channels is not None:
+        if baseline_ap_channels:
+            covered_count = len(baseline_ap_channels & set(current_declared_channels))
+            channel_coverage_ratio = round(covered_count / float(len(baseline_ap_channels)), 4)
+        else:
+            channel_coverage_ratio = 1.0
+    elif baseline_coverage and current_coverage and baseline_coverage.issubset(current_coverage):
+        channel_coverage_ratio = 1.0
+    else:
+        channel_coverage_ratio = None
+        reasons.append("channel_coverage_unknown")
 
     baseline_time = baseline_profile.get("scan_time")
     current_time = current_profile.get("scan_time")
-    if baseline_time is None or current_time is None:
-        if status == "comparable":
-            status = "partially_comparable"
+    if baseline_time is not None and current_time is not None:
+        duration_score = round(min(1.0, current_time / float(max(1, baseline_time))), 4)
+        if current_time < max(1, int(baseline_time * 0.75)):
+            reasons.append("current_scan_is_materially_shorter")
+    else:
+        duration_score = None
         reasons.append("scan_duration_is_unknown")
-    elif current_time < max(1, int(baseline_time * 0.75)):
-        if status == "comparable":
-            status = "partially_comparable"
-        reasons.append("current_scan_is_materially_shorter")
+
+    if radio_profile_match is False:
+        radio_profile_score = 0.7
+        reasons.append("radio_profile_mismatch")
+    elif radio_profile_match is None:
+        radio_profile_score = 0.85
+        reasons.append("radio_profile_unknown")
+    else:
+        radio_profile_score = 1.0
+
+    matched_deltas = []
+    baseline_aps_by_id = {ap["asset_id"]: ap for ap in baseline.get("access_points", [])}
+    for ap in current.get("access_points", []):
+        b_ap = baseline_aps_by_id.get(ap["asset_id"])
+        if b_ap and isinstance(ap.get("signal"), int) and isinstance(b_ap.get("signal"), int):
+            if ap["signal"] < 0 and b_ap["signal"] < 0:
+                matched_deltas.append(abs(b_ap["signal"] - ap["signal"]))
+
+    matched_ap_signal_stability = {
+        "matched_ap_count": len(matched_deltas),
+        "median_absolute_delta_db": _median(matched_deltas),
+    }
+    if matched_ap_signal_stability["median_absolute_delta_db"] is not None and matched_ap_signal_stability["median_absolute_delta_db"] > 15:
+        reasons.append("signal_profile_changed_materially")
+
+    if baseline.get("schema_version") == "1.0" or current.get("schema_version") == "1.0" or location_match is None:
+        reasons.append("legacy_baseline_missing_measurement_context")
+
+    quality_factors = {
+        "duration_score": duration_score,
+        "channel_coverage_score": channel_coverage_ratio,
+        "baseline_detection_score": baseline_ap_detection_ratio,
+        "radio_profile_score": radio_profile_score,
+    }
+
+    eff_duration_score = duration_score if duration_score is not None else 0.5
+    eff_channel_score = channel_coverage_ratio if channel_coverage_ratio is not None else 0.5
+    eff_detection_score = baseline_ap_detection_ratio
+    eff_radio_score = radio_profile_score
+
+    if duration_score is not None or channel_coverage_ratio is not None:
+        raw_score = (
+            0.25 * eff_duration_score
+            + 0.35 * eff_channel_score
+            + 0.35 * eff_detection_score
+            + 0.05 * eff_radio_score
+        )
+        comparison_quality_score = round(max(0.0, min(1.0, raw_score)), 2)
+    else:
+        comparison_quality_score = None
+
+    if hard_gate_failed:
+        status = "not_comparable"
+    elif (
+        comparison_quality_score is None
+        or comparison_quality_score < 0.75
+        or baseline_ap_detection_ratio < 0.50
+        or channel_coverage_ratio is None
+        or channel_coverage_ratio < 1.0
+        or duration_score is None
+        or duration_score < 0.75
+    ):
+        status = "partially_comparable"
+        if comparison_quality_score is not None and comparison_quality_score < 0.75:
+            reasons.append("low_comparison_quality_score")
+        if baseline_ap_detection_ratio < 0.50:
+            reasons.append("low_baseline_ap_detection_ratio")
+    else:
+        status = "comparable"
+
+    absence_findings_allowed = (status == "comparable")
+    positive_findings_allowed = (status != "not_comparable")
+    lifecycle_updates_allowed = (status != "not_comparable")
 
     return {
         "status": status,
-        "positive_findings_allowed": status != "not_comparable",
-        "absence_findings_allowed": status == "comparable",
-        "lifecycle_updates_allowed": status != "not_comparable",
+        "positive_findings_allowed": positive_findings_allowed,
+        "absence_findings_allowed": absence_findings_allowed,
+        "lifecycle_updates_allowed": lifecycle_updates_allowed,
+        "comparison_quality_score": comparison_quality_score,
+        "quality_model_version": QUALITY_MODEL_VERSION,
+        "quality_factors": quality_factors,
+        "location_match": location_match,
+        "measurement_point_match": measurement_point_match,
+        "radio_profile_match": radio_profile_match,
+        "channel_coverage_ratio": channel_coverage_ratio,
+        "eligible_baseline_ap_count": eligible_baseline_ap_count,
+        "reobserved_baseline_ap_count": reobserved_baseline_ap_count,
+        "baseline_ap_detection_ratio": baseline_ap_detection_ratio,
+        "matched_ap_signal_stability": matched_ap_signal_stability,
         "reasons": sorted(set(reasons)),
         "baseline": {
             "coverage": sorted(baseline_coverage),
@@ -418,10 +684,10 @@ def evaluate_comparability(
 
 
 def compare_snapshots(
-    baseline: Dict[str, Any], current: Dict[str, Any]
+    baseline: Dict[str, Any], current: Dict[str, Any], position_confirmation: Optional[str] = None
 ) -> Dict[str, Any]:
     """Return deterministic AP and SSID drift between two resolved snapshots."""
-    comparability = evaluate_comparability(baseline, current)
+    comparability = evaluate_comparability(baseline, current, position_confirmation=position_confirmation)
     baseline_aps = {item["asset_id"]: item for item in baseline["access_points"]}
     current_aps = {item["asset_id"]: item for item in current["access_points"]}
     baseline_networks = {
@@ -559,7 +825,7 @@ def evaluate_finding_rules(
     diff: Dict[str, Any],
     pseudonymization_key: bytes,
 ) -> List[Dict[str, Any]]:
-    """Evaluate the first eight rules without making probabilistic decisions."""
+    """Evaluate finding rules deterministically."""
     comparability_status = diff["comparability"]["status"]
     if not diff["comparability"]["positive_findings_allowed"]:
         return []
@@ -600,7 +866,40 @@ def evaluate_finding_rules(
         )
 
     if diff["comparability"]["absence_findings_allowed"]:
+        current_profile = _profile(current)
+        current_declared_channels = current_profile.get("declared_channels_scanned")
+        current_coverage = set(current_profile.get("effective_coverage") or [])
+
+        eligible_baseline_aps = []
+        for ap in baseline.get("access_points", []):
+            ap_band = ap.get("band") or _channel_band(ap.get("channel", 0))
+            if ap_band and current_coverage and ap_band not in current_coverage:
+                continue
+            if current_declared_channels is not None:
+                if ap.get("channel") not in current_declared_channels:
+                    continue
+            eligible_baseline_aps.append(ap)
+
+        total_eligible_count = len(eligible_baseline_aps)
+
         for asset in diff["access_points"]["removed"]:
+            if current_declared_channels is not None and asset["channel"] not in current_declared_channels:
+                continue
+
+            other_eligible = [ap for ap in eligible_baseline_aps if ap["asset_id"] != asset["asset_id"]]
+            total_other = len(other_eligible)
+            reobserved_other = len([ap for ap in other_eligible if ap["asset_id"] in current_aps])
+            anchor_detection_ratio = reobserved_other / float(total_other) if total_other > 0 else 1.0
+
+            if total_eligible_count <= 1:
+                continue
+            elif total_eligible_count == 2:
+                if anchor_detection_ratio < 1.0:
+                    continue
+            else:
+                if anchor_detection_ratio < 0.75:
+                    continue
+
             results.append(
                 _finding(
                     pseudonymization_key,
@@ -614,6 +913,7 @@ def evaluate_finding_rules(
                         "network_id": asset["network_id"],
                         "bssid": asset["bssid"],
                         "ssid": asset["ssid"],
+                        "anchor_detection_ratio": round(anchor_detection_ratio, 2),
                     },
                     comparability_status,
                 )
