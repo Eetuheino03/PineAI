@@ -12,21 +12,19 @@ export class PineAIComponent implements OnInit {
     constructor(public pineai: PineAIService) {}
 
     async ngOnInit(): Promise<void> {
-        try {
-            await this.pineai.initialize();
-        } catch (error) {
-            const failure = this.pineai.error(error);
-            this.startupError = `${failure.code}: ${failure.message}`;
-        }
+        await this.initialize();
     }
 
     async retry(): Promise<void> {
+        await this.initialize();
+    }
+
+    private async initialize(): Promise<void> {
         this.startupError = '';
         try {
             await this.pineai.initialize();
         } catch (error) {
-            const failure = this.pineai.error(error);
-            this.startupError = `${failure.code}: ${failure.message}`;
+            this.startupError = this.pineai.errorText(error);
         }
     }
 }

@@ -1,0 +1,145 @@
+<section class="view">
+    <header class="view-header">
+        <div>
+            <h2>Findings</h2>
+            <p>Rule-based findings with evidence, confidence and an auditable lifecycle.</p>
+        </div>
+        <button
+            mat-stroked-button
+            (click)="refresh()"
+            [disabled]="!pineai.activeAssessment">
+            <mat-icon>refresh</mat-icon>
+            Refresh
+        </button>
+    </header>
+
+    <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+
+    <div *ngIf="!pineai.activeAssessment" class="empty-state">
+        Select an assessment before reviewing findings.
+    </div>
+
+    <div *ngIf="pineai.activeAssessment" class="stack">
+        <div *ngIf="!pineai.assessmentMutable()" class="warning-banner">
+            This assessment is archived. Findings remain readable, but their
+            lifecycle cannot be changed.
+        </div>
+        <mat-card>
+            <mat-card-content>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Status</mat-label>
+                        <mat-select [(ngModel)]="statusFilter">
+                            <mat-option value="active">Open + acknowledged</mat-option>
+                            <mat-option value="all">All</mat-option>
+                            <mat-option value="open">Open</mat-option>
+                            <mat-option value="acknowledged">Acknowledged</mat-option>
+                            <mat-option value="false_positive">False positive</mat-option>
+                            <mat-option value="resolved">Resolved</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Severity</mat-label>
+                        <mat-select [(ngModel)]="severityFilter">
+                            <mat-option value="all">All</mat-option>
+                            <mat-option value="critical">Critical</mat-option>
+                            <mat-option value="high">High</mat-option>
+                            <mat-option value="medium">Medium</mat-option>
+                            <mat-option value="low">Low</mat-option>
+                            <mat-option value="info">Info</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <span class="spacer"></span>
+                    <span class="muted">
+                        Assessment revision {{ pineai.activeAssessment.revision }}
+                    </span>
+                    <strong>{{ visibleFindings.length }} shown</strong>
+                </div>
+            </mat-card-content>
+        </mat-card>
+
+        <div *ngIf="!visibleFindings.length" class="empty-state">
+            <mat-icon>verified</mat-icon>
+            No findings match the selected filters.
+        </div>
+
+        <mat-card *ngFor="let finding of visibleFindings">
+            <div class="card-title-row">
+                <div>
+                    <mat-card-title>{{ finding.title || finding.rule_id || 'Deterministic finding' }}</mat-card-title>
+                    <mat-card-subtitle class="mono">{{ finding.finding_id }}</mat-card-subtitle>
+                </div>
+                <div class="chip-list">
+                    <span class="badge" [ngClass]="finding.severity">{{ finding.severity || 'unknown' }}</span>
+                    <span class="badge" [ngClass]="finding.status">{{ finding.status }}</span>
+                    <span class="badge">Confidence {{ confidence(finding.confidence) }}</span>
+                </div>
+            </div>
+            <mat-card-content class="stack">
+                <p>{{ finding.summary || finding.description }}</p>
+                <div class="row">
+                    <span>Rule</span>
+                    <span class="mono">{{ finding.rule_id || '—' }}</span>
+                    <span>Target</span>
+                    <span class="mono break-all">{{ finding.subject_id || finding.target_id || '—' }}</span>
+                </div>
+                <div *ngIf="finding.evidence_ids?.length">
+                    <strong>Evidence</strong>
+                    <div class="chip-list">
+                        <span
+                            class="badge mono"
+                            *ngFor="let evidenceId of finding.evidence_ids">
+                            {{ evidenceId }}
+                        </span>
+                    </div>
+                </div>
+                <div class="muted">
+                    First {{ finding.first_seen || '—' }} · Last {{ finding.last_seen || '—' }}
+                    <span *ngIf="finding.occurrence_count">
+                        · {{ finding.occurrence_count }} occurrence(s)
+                    </span>
+                </div>
+                <mat-form-field appearance="outline" class="full-width">
+                    <mat-label>Local audit note (optional)</mat-label>
+                    <textarea
+                        matInput
+                        rows="2"
+                        maxlength="1000"
+                        [(ngModel)]="notes[finding.finding_id]"
+                        [disabled]="!pineai.assessmentMutable()">
+                    </textarea>
+                    <mat-hint>Stored only in the append-only assessment event.</mat-hint>
+                </mat-form-field>
+                <div class="actions">
+                    <button
+                        mat-stroked-button
+                        (click)="setStatus(finding, 'open')"
+                        [disabled]="!pineai.assessmentMutable() ||
+                            busyFindingId === finding.finding_id ||
+                            finding.status === 'open' || finding.status === 'resolved'">
+                        Reopen
+                    </button>
+                    <button
+                        mat-stroked-button
+                        (click)="setStatus(finding, 'acknowledged')"
+                        [disabled]="!pineai.assessmentMutable() ||
+                            busyFindingId === finding.finding_id ||
+                            finding.status === 'acknowledged' || finding.status === 'resolved'">
+                        Acknowledge
+                    </button>
+                    <button
+                        mat-stroked-button
+                        (click)="setStatus(finding, 'false_positive')"
+                        [disabled]="!pineai.assessmentMutable() ||
+                            busyFindingId === finding.finding_id ||
+                            finding.status === 'false_positive'">
+                        False positive
+                    </button>
+                </div>
+                <div class="muted">
+                    Resolved is an automatic lifecycle state produced only by a comparable clean scan.
+                </div>
+            </mat-card-content>
+        </mat-card>
+    </div>
+</section>

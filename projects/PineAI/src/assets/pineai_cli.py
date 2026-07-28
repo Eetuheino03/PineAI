@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Administrative and diagnostic CLI for the PineAI backend."""
+"""Administrative CLI for PineAI Baseline & Drift."""
 
 import argparse
 import getpass
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -13,6 +14,9 @@ ASSETS_DIRECTORY = Path(__file__).resolve().parent
 if str(ASSETS_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(ASSETS_DIRECTORY))
 
+from pineai_backend.ai_analysis import AssuranceAIService  # noqa: E402
+from pineai_backend.assessment_store import AssessmentStore  # noqa: E402
+from pineai_backend.assurance_service import AssuranceService  # noqa: E402
 from pineai_backend.config import (  # noqa: E402
     ConfigError,
     load_settings,
@@ -20,321 +24,318 @@ from pineai_backend.config import (  # noqa: E402
     save_api_key,
     save_settings,
 )
-from pineai_backend.adaptive_recon_service import AdaptiveReconService  # noqa: E402
-from pineai_backend.advisor_service import AttackPathAdvisorService  # noqa: E402
-from pineai_backend.engagement_store import EngagementStore  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
-from pineai_backend.service import TargetProfilerService  # noqa: E402
 
 
 def _read_json(path: str) -> Any:
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle)
+        return json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as failure:
-        raise BackendError("invalid_input", "Could not read input JSON: {0}".format(failure))
+        raise BackendError(
+            "invalid_input", "could not read JSON input: {0}".format(failure)
+        )
 
 
-def _print_json(value: Any, stream: Any) -> None:
-    stream.write(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
-    stream.write("\n")
+def _print_json(value: Any, stream: Any = sys.stdout) -> None:
+    stream.write(
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
 
 
-def _options(arguments: argparse.Namespace, include_ai: bool = False) -> Dict[str, Any]:
-    options = {}
-    if getattr(arguments, "language", None):
-        options["language"] = arguments.language
-    if getattr(arguments, "share_ssids", None) is not None:
-        options["share_ssids"] = arguments.share_ssids
-    if include_ai and getattr(arguments, "no_ai", False):
-        options["ai_enabled"] = False
-    return options
+def _metadata(path: Optional[str]) -> Dict[str, Any]:
+    return _read_json(path) if path else {}
+
+
+def _add_assessment_id(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("assessment_id")
+
+
+def _add_revision(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--expected-revision", type=int, required=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pineai")
     parser.add_argument(
-        "--config-dir", help="Override /root/.PineAI for testing or development"
+        "--config-dir", help="override /root/.PineAI for development"
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    configure = commands.add_parser("configure")
-    configure.add_argument("--key-stdin", action="store_true")
-    configure.add_argument("--model")
-    configure.add_argument("--language", choices=("en", "fi"))
-    sharing = configure.add_mutually_exclusive_group()
-    sharing.add_argument("--share-ssids", dest="share_ssids", action="store_true")
-    sharing.add_argument("--hide-ssids", dest="share_ssids", action="store_false")
-    configure.set_defaults(share_ssids=None)
-
     commands.add_parser("status")
-    commands.add_parser("advisor-capabilities")
-    commands.add_parser("adaptive-capabilities")
-
-    engagement = commands.add_parser("engagement")
-    engagement_commands = engagement.add_subparsers(
-        dest="engagement_command", required=True
+    configure = commands.add_parser("configure")
+    configure.add_argument("--language", choices=("en", "fi"))
+    configure.add_argument(
+        "--share-ssids", choices=("true", "false"), default=None
     )
-    engagement_create = engagement_commands.add_parser("create")
-    engagement_create.add_argument("--input", required=True)
-    engagement_get = engagement_commands.add_parser("get")
-    engagement_get.add_argument("--id", required=True)
-    engagement_get.add_argument("--after-sequence", type=int, default=0)
-    engagement_get.add_argument("--limit", type=int, default=100)
-    engagement_list = engagement_commands.add_parser("list")
-    engagement_list.add_argument("--include-archived", action="store_true")
-    engagement_update = engagement_commands.add_parser("update")
-    engagement_update.add_argument("--id", required=True)
-    engagement_update.add_argument("--revision", required=True, type=int)
-    engagement_update.add_argument("--input", required=True)
-    engagement_archive = engagement_commands.add_parser("archive")
-    engagement_archive.add_argument("--id", required=True)
-    engagement_archive.add_argument("--revision", required=True, type=int)
-    engagement_event = engagement_commands.add_parser("event")
-    engagement_event.add_argument("--id", required=True)
-    engagement_event.add_argument("--revision", required=True, type=int)
-    engagement_event.add_argument("--input", required=True)
+    configure.add_argument(
+        "--set-openai-key",
+        action="store_true",
+        help="read an OpenAI API key from hidden input",
+    )
+    commands.add_parser("capabilities")
 
-    for name in ("prepare", "profile"):
+    assessment = commands.add_parser("assessment")
+    assessment_commands = assessment.add_subparsers(
+        dest="assessment_command", required=True
+    )
+    create = assessment_commands.add_parser("create")
+    create.add_argument("--input", required=True)
+    get = assessment_commands.add_parser("get")
+    _add_assessment_id(get)
+    get.add_argument("--after-sequence", type=int, default=0)
+    get.add_argument("--limit", type=int, default=100)
+    listing = assessment_commands.add_parser("list")
+    listing.add_argument("--include-archived", action="store_true")
+    update = assessment_commands.add_parser("update")
+    _add_assessment_id(update)
+    _add_revision(update)
+    update.add_argument("--input", required=True)
+    archive = assessment_commands.add_parser("archive")
+    _add_assessment_id(archive)
+    _add_revision(archive)
+
+    resolve = commands.add_parser("resolve")
+    resolve.add_argument("--input", required=True)
+    resolve.add_argument("--metadata")
+
+    baseline = commands.add_parser("baseline")
+    baseline_commands = baseline.add_subparsers(
+        dest="baseline_command", required=True
+    )
+    baseline_create = baseline_commands.add_parser("create")
+    _add_assessment_id(baseline_create)
+    _add_revision(baseline_create)
+    baseline_create.add_argument("--input", required=True)
+    baseline_create.add_argument("--metadata")
+    baseline_create.add_argument("--label", default="")
+    baseline_list = baseline_commands.add_parser("list")
+    _add_assessment_id(baseline_list)
+    baseline_activate = baseline_commands.add_parser("activate")
+    _add_assessment_id(baseline_activate)
+    _add_revision(baseline_activate)
+    baseline_activate.add_argument("baseline_version")
+
+    for name in ("compare", "analyze"):
         command = commands.add_parser(name)
+        _add_assessment_id(command)
+        if name == "analyze":
+            _add_revision(command)
         command.add_argument("--input", required=True)
-        command.add_argument("--language", choices=("en", "fi"))
-        sharing = command.add_mutually_exclusive_group()
-        sharing.add_argument("--share-ssids", dest="share_ssids", action="store_true")
-        sharing.add_argument("--hide-ssids", dest="share_ssids", action="store_false")
-        command.set_defaults(share_ssids=None)
-        if name == "profile":
-            command.add_argument("--no-ai", action="store_true")
+        command.add_argument("--metadata")
 
-    for name in ("prepare-advice", "advise"):
-        command = commands.add_parser(name)
-        command.add_argument("--engagement-id", required=True)
-        command.add_argument("--input", required=True, help="profile_recon JSON result")
-        command.add_argument("--target-id", required=True, action="append")
-        command.add_argument("--language", choices=("en", "fi"))
-        sharing = command.add_mutually_exclusive_group()
-        sharing.add_argument("--share-ssids", dest="share_ssids", action="store_true")
-        sharing.add_argument("--hide-ssids", dest="share_ssids", action="store_false")
-        command.set_defaults(share_ssids=None)
-        if name == "advise":
-            command.add_argument("--no-ai", action="store_true")
-
-    for name in ("prepare-recon-plan", "recommend-recon-plan"):
-        command = commands.add_parser(name)
-        command.add_argument("--input", required=True)
-        command.add_argument("--language", choices=("en", "fi"))
-        sharing = command.add_mutually_exclusive_group()
-        sharing.add_argument("--share-ssids", dest="share_ssids", action="store_true")
-        sharing.add_argument("--hide-ssids", dest="share_ssids", action="store_false")
-        command.set_defaults(share_ssids=None)
-        if name == "recommend-recon-plan":
-            command.add_argument("--no-ai", action="store_true")
-
-    recon_plan = commands.add_parser("recon-plan")
-    recon_commands = recon_plan.add_subparsers(
-        dest="recon_plan_command", required=True
+    findings = commands.add_parser("findings")
+    finding_commands = findings.add_subparsers(
+        dest="finding_command", required=True
     )
-    recon_get = recon_commands.add_parser("get")
-    recon_get.add_argument("--engagement-id", required=True)
-    recon_get.add_argument("--plan-id", required=True)
-    recon_list = recon_commands.add_parser("list")
-    recon_list.add_argument("--engagement-id", required=True)
-    recon_approve = recon_commands.add_parser("approve")
-    recon_approve.add_argument("--engagement-id", required=True)
-    recon_approve.add_argument("--revision", type=int, required=True)
-    recon_approve.add_argument("--plan-id", required=True)
-    recon_approve.add_argument("--candidate-id", required=True)
-    recon_approve.add_argument("--device-context", required=True)
-    recon_started = recon_commands.add_parser("started")
-    recon_started.add_argument("--engagement-id", required=True)
-    recon_started.add_argument("--revision", type=int, required=True)
-    recon_started.add_argument("--plan-id", required=True)
-    recon_started.add_argument("--input", required=True)
-    recon_finished = recon_commands.add_parser("finished")
-    recon_finished.add_argument("--engagement-id", required=True)
-    recon_finished.add_argument("--revision", type=int, required=True)
-    recon_finished.add_argument("--plan-id", required=True)
-    recon_finished.add_argument(
-        "--outcome", required=True, choices=("completed", "failed", "aborted")
+    finding_list = finding_commands.add_parser("list")
+    _add_assessment_id(finding_list)
+    finding_list.add_argument(
+        "--status",
+        choices=("open", "acknowledged", "false_positive", "resolved"),
     )
-    recon_finished.add_argument("--scan-id", type=int, required=True)
-    recon_finished.add_argument("--profile")
-    recon_finished.add_argument("--error-code")
+    finding_update = finding_commands.add_parser("update")
+    _add_assessment_id(finding_update)
+    _add_revision(finding_update)
+    finding_update.add_argument("finding_id")
+    finding_update.add_argument(
+        "status", choices=("open", "acknowledged", "false_positive")
+    )
+    finding_update.add_argument("--note", default="")
+
+    for name in ("prepare-ai", "generate-ai"):
+        command = commands.add_parser(name)
+        _add_assessment_id(command)
+        command.add_argument("comparison_id")
+        command.add_argument("--finding-ids")
+        command.add_argument("--language", choices=("en", "fi"))
+        command.add_argument(
+            "--share-ssids", choices=("true", "false"), default=None
+        )
+
+    report = commands.add_parser("report")
+    _add_assessment_id(report)
+    report.add_argument("comparison_id")
+    report.add_argument("--format", choices=("json", "html"), required=True)
+    report.add_argument("--ai-analysis")
+    report.add_argument("--output")
     return parser
 
 
+def _ai_options(arguments: argparse.Namespace) -> Dict[str, Any]:
+    options = {}
+    if getattr(arguments, "language", None):
+        options["language"] = arguments.language
+    if getattr(arguments, "share_ssids", None) is not None:
+        options["share_ssids"] = arguments.share_ssids == "true"
+    return options
+
+
+def _finding_ids(path: Optional[str]) -> Optional[Any]:
+    if not path:
+        return None
+    value = _read_json(path)
+    if not isinstance(value, list):
+        raise BackendError("invalid_input", "finding IDs input must be an array")
+    return value
+
+
 def main(
-    argv: Optional[list] = None,
+    argv: Optional[Any] = None,
     stdout: Any = sys.stdout,
     stderr: Any = sys.stderr,
 ) -> int:
     arguments = build_parser().parse_args(argv)
+    config_dir = arguments.config_dir
+    if config_dir:
+        os.environ["PINEAI_CONFIG_DIR"] = config_dir
+    store = AssessmentStore(config_dir)
+    service = AssuranceService(
+        config_dir=config_dir,
+        store=store,
+        ai_service=AssuranceAIService(config_dir),
+    )
     try:
-        if arguments.command == "configure":
-            settings = load_settings(arguments.config_dir)
-            if arguments.model:
-                settings["model"] = arguments.model
+        if arguments.command == "status":
+            _print_json(public_status(config_dir), stdout)
+        elif arguments.command == "configure":
+            settings = load_settings(config_dir)
             if arguments.language:
                 settings["language"] = arguments.language
             if arguments.share_ssids is not None:
-                settings["share_ssids"] = arguments.share_ssids
-            save_settings(settings, arguments.config_dir)
-            api_key = (
-                sys.stdin.readline().rstrip("\r\n")
-                if arguments.key_stdin
-                else getpass.getpass("OpenAI API key: ")
-            )
-            save_api_key(api_key, arguments.config_dir)
-            _print_json(public_status(arguments.config_dir), stdout)
-            return 0
-        if arguments.command == "status":
-            _print_json(public_status(arguments.config_dir), stdout)
-            return 0
-        if arguments.command == "advisor-capabilities":
-            _print_json(
-                AttackPathAdvisorService(arguments.config_dir).capabilities(), stdout
-            )
-            return 0
-        if arguments.command == "adaptive-capabilities":
-            _print_json(
-                AdaptiveReconService(arguments.config_dir).capabilities(), stdout
-            )
-            return 0
-        if arguments.command == "engagement":
-            store = EngagementStore(arguments.config_dir)
-            if arguments.engagement_command == "create":
-                output = store.create(_read_json(arguments.input))
-            elif arguments.engagement_command == "get":
-                output = store.get(
-                    arguments.id, arguments.after_sequence, arguments.limit
+                settings["share_ssids"] = arguments.share_ssids == "true"
+            save_settings(settings, config_dir)
+            if arguments.set_openai_key:
+                save_api_key(getpass.getpass("OpenAI API key: "), config_dir)
+            _print_json(public_status(config_dir), stdout)
+        elif arguments.command == "capabilities":
+            _print_json(service.capabilities(), stdout)
+        elif arguments.command == "assessment":
+            action = arguments.assessment_command
+            if action == "create":
+                result = store.create(_read_json(arguments.input))
+            elif action == "get":
+                result = service.assessment_detail(
+                    arguments.assessment_id,
+                    arguments.after_sequence,
+                    arguments.limit,
                 )
-            elif arguments.engagement_command == "list":
-                output = {
-                    "engagements": store.list(arguments.include_archived)
+            elif action == "list":
+                result = {
+                    "assessments": store.list(arguments.include_archived)
                 }
-            elif arguments.engagement_command == "update":
-                output = store.update(
-                    arguments.id,
-                    arguments.revision,
+            elif action == "update":
+                result = store.update(
+                    arguments.assessment_id,
+                    arguments.expected_revision,
                     _read_json(arguments.input),
                 )
-            elif arguments.engagement_command == "archive":
-                output = store.archive(arguments.id, arguments.revision)
             else:
-                output = store.append_event(
-                    arguments.id,
-                    arguments.revision,
-                    _read_json(arguments.input),
+                result = store.archive(
+                    arguments.assessment_id, arguments.expected_revision
                 )
-            _print_json(output, stdout)
-            return 0
-        if arguments.command in ("prepare-advice", "advise"):
-            profile_result = _read_json(arguments.input)
-            advisor = AttackPathAdvisorService(arguments.config_dir)
-            if arguments.command == "prepare-advice":
-                output = advisor.prepare_advice(
-                    arguments.engagement_id,
-                    profile_result,
-                    arguments.target_id,
-                    _options(arguments),
-                )
-            else:
-                output = advisor.advise(
-                    arguments.engagement_id,
-                    profile_result,
-                    arguments.target_id,
-                    _options(arguments, include_ai=True),
-                )
-            _print_json(output, stdout)
-            return 0
-        if arguments.command in ("prepare-recon-plan", "recommend-recon-plan"):
-            request_value = _read_json(arguments.input)
-            required = {
-                "engagement_id",
-                "expected_revision",
-                "profile_result",
-                "advisor_result",
-                "selected_path_ids",
-                "history",
-                "device_context",
-            }
-            if not isinstance(request_value, dict) or set(request_value) != required:
-                raise BackendError(
-                    "invalid_input",
-                    "Adaptive Recon input fields are invalid",
-                )
-            adaptive = AdaptiveReconService(arguments.config_dir)
-            method = (
-                adaptive.prepare
-                if arguments.command == "prepare-recon-plan"
-                else adaptive.recommend
-            )
-            output = method(
-                request_value["engagement_id"],
-                request_value["expected_revision"],
-                request_value["profile_result"],
-                request_value["advisor_result"],
-                request_value["selected_path_ids"],
-                request_value["history"],
-                request_value["device_context"],
-                _options(
-                    arguments,
-                    include_ai=arguments.command == "recommend-recon-plan",
+            _print_json(result, stdout)
+        elif arguments.command == "resolve":
+            _print_json(
+                service.resolve_recon(
+                    _read_json(arguments.input), _metadata(arguments.metadata)
                 ),
+                stdout,
             )
-            _print_json(output, stdout)
-            return 0
-        if arguments.command == "recon-plan":
-            adaptive = AdaptiveReconService(arguments.config_dir)
-            if arguments.recon_plan_command == "get":
-                output = adaptive.get_plan(arguments.engagement_id, arguments.plan_id)
-            elif arguments.recon_plan_command == "list":
-                output = {
-                    "plans": adaptive.list_plans(arguments.engagement_id)
-                }
-            elif arguments.recon_plan_command == "approve":
-                output = adaptive.approve(
-                    arguments.engagement_id,
-                    arguments.revision,
-                    arguments.plan_id,
-                    arguments.candidate_id,
-                    _read_json(arguments.device_context),
-                )
-            elif arguments.recon_plan_command == "started":
-                output = adaptive.record_started(
-                    arguments.engagement_id,
-                    arguments.revision,
-                    arguments.plan_id,
+        elif arguments.command == "baseline":
+            action = arguments.baseline_command
+            if action == "create":
+                result = service.create_baseline_version(
+                    arguments.assessment_id,
+                    arguments.expected_revision,
                     _read_json(arguments.input),
+                    _metadata(arguments.metadata),
+                    arguments.label,
+                )
+                result["baseline"] = result.pop("baseline_version")
+            elif action == "list":
+                result = service.list_baseline_versions(
+                    arguments.assessment_id
                 )
             else:
-                output = adaptive.record_finished(
-                    arguments.engagement_id,
-                    arguments.revision,
-                    arguments.plan_id,
-                    arguments.outcome,
-                    arguments.scan_id,
-                    _read_json(arguments.profile) if arguments.profile else None,
-                    arguments.error_code,
+                result = store.activate_baseline_version(
+                    arguments.assessment_id,
+                    arguments.expected_revision,
+                    arguments.baseline_version,
                 )
-            _print_json(output, stdout)
-            return 0
-
-        scan = _read_json(arguments.input)
-        service = TargetProfilerService(arguments.config_dir)
-        if arguments.command == "prepare":
-            output = service.prepare_recon(scan, options=_options(arguments))
-        else:
-            output = service.profile_recon(
-                scan, options=_options(arguments, include_ai=True)
+                result["baseline"] = result.pop("baseline_version")
+            _print_json(result, stdout)
+        elif arguments.command in ("compare", "analyze"):
+            scan = _read_json(arguments.input)
+            metadata = _metadata(arguments.metadata)
+            if arguments.command == "compare":
+                result = service.compare_recon(
+                    arguments.assessment_id, scan, metadata
+                )
+            else:
+                result = service.analyze_recon(
+                    arguments.assessment_id,
+                    arguments.expected_revision,
+                    scan,
+                    metadata,
+                )
+            _print_json(result, stdout)
+        elif arguments.command == "findings":
+            if arguments.finding_command == "list":
+                statuses = [arguments.status] if arguments.status else None
+                result = {
+                    "findings": store.list_findings(
+                        arguments.assessment_id, statuses
+                    )
+                }
+            else:
+                result = store.update_finding(
+                    arguments.assessment_id,
+                    arguments.expected_revision,
+                    arguments.finding_id,
+                    arguments.status,
+                    arguments.note,
+                )
+            _print_json(result, stdout)
+        elif arguments.command in ("prepare-ai", "generate-ai"):
+            values = (
+                arguments.assessment_id,
+                arguments.comparison_id,
+                _finding_ids(arguments.finding_ids),
+                _ai_options(arguments),
             )
-        _print_json(output, stdout)
+            result = (
+                service.prepare_ai_analysis(*values)
+                if arguments.command == "prepare-ai"
+                else service.generate_ai_analysis(*values)
+            )
+            _print_json(result, stdout)
+        elif arguments.command == "report":
+            ai_analysis = (
+                _read_json(arguments.ai_analysis)
+                if arguments.ai_analysis
+                else None
+            )
+            result = service.generate_report(
+                arguments.assessment_id,
+                arguments.comparison_id,
+                arguments.format,
+                ai_analysis,
+            )
+            if arguments.output:
+                Path(arguments.output).write_text(
+                    result["content"], encoding="utf-8"
+                )
+                result = dict(result)
+                result.pop("content")
+                result["output"] = str(Path(arguments.output))
+            _print_json(result, stdout)
         return 0
     except (BackendError, ConfigError) as failure:
         code = getattr(failure, "code", "configuration_error")
-        _print_json({"error": {"code": code, "message": str(failure)}}, stderr)
+        message = getattr(failure, "safe_message", str(failure))
+        _print_json({"error": {"code": code, "message": message}}, stderr)
         return 2
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

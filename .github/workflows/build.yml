@@ -26,6 +26,12 @@ jobs:
         run: npm test -- --watch=false --browsers=ChromeHeadless --progress=false
       - name: Compile Python sources
         run: python -m compileall -q projects/PineAI/src/module.py projects/PineAI/src/assets
+      - name: Scan tracked source for likely committed API keys
+        run: |
+          if git grep -nE 'sk-(proj-)?[A-Za-z0-9_-]{20,}'; then
+            echo "A likely API key was found in tracked source."
+            exit 1
+          fi
       - name: Build Hak5 module package layout
         run: PATH="$PWD/node_modules/.bin:$PATH" ./build.sh package
       - name: Verify release package
@@ -34,22 +40,28 @@ jobs:
           test -f dist/PineAI/module.py
           test -f dist/PineAI/module.json
           test -f dist/PineAI/module.svg
-          test -f dist/PineAI/assets/pineai_backend/service.py
+          test -f dist/PineAI/assets/pineai_backend/assurance.py
+          test -f dist/PineAI/assets/pineai_backend/recon.py
+          test -f dist/PineAI/assets/pineai_backend/assessment_store.py
+          test -f dist/PineAI/assets/pineai_backend/assurance_service.py
+          test -f dist/PineAI/assets/pineai_backend/ai_analysis.py
+          test -f dist/PineAI/assets/pineai_backend/reports.py
           test -f dist/PineAI/assets/pineai_backend/openai_client.py
-          test -f dist/PineAI/assets/pineai_backend/engagement_store.py
-          test -f dist/PineAI/assets/pineai_backend/advisor.py
-          test -f dist/PineAI/assets/pineai_backend/advisor_service.py
-          test -f dist/PineAI/assets/pineai_backend/adaptive_recon.py
-          test -f dist/PineAI/assets/pineai_backend/adaptive_recon_service.py
           test -f dist/PineAI/assets/pineai_cli.py
+          test ! -e dist/PineAI/assets/pineai_backend/advisor.py
+          test ! -e dist/PineAI/assets/pineai_backend/adaptive_recon.py
+          test ! -e dist/PineAI/assets/pineai_backend/engagement_store.py
+          test ! -e dist/PineAI/assets/pineai_backend/profiler.py
           test -z "$(find dist/PineAI -type f -name '*.pyc' -print -quit)"
-          test -f PineAI-0.5.0.tar.gz
-          test "$(tar -tzf PineAI-0.5.0.tar.gz | head -n 1)" = "PineAI/"
-          tar -tzf PineAI-0.5.0.tar.gz | grep -qx "PineAI/PineAI.umd.js"
-          sha256sum PineAI-0.5.0.tar.gz > PineAI-0.5.0.tar.gz.sha256
+          test -f PineAI-0.6.0.tar.gz
+          test "$(tar -tzf PineAI-0.6.0.tar.gz | sed -n '1p')" = "PineAI/"
+          tar -tzf PineAI-0.6.0.tar.gz PineAI/PineAI.umd.js > /dev/null
+          test "$(tar --numeric-owner -tvzf PineAI-0.6.0.tar.gz PineAI/module.py | awk '{print $1, $2}')" = "-rwxr-xr-x 0/0"
+          test "$(tar --numeric-owner -tvzf PineAI-0.6.0.tar.gz PineAI/module.json | awk '{print $1, $2}')" = "-rw-r--r-- 0/0"
+          sha256sum PineAI-0.6.0.tar.gz > PineAI-0.6.0.tar.gz.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: PineAI-0.5.0
+          name: PineAI-0.6.0
           path: |
-            PineAI-0.5.0.tar.gz
-            PineAI-0.5.0.tar.gz.sha256
+            PineAI-0.6.0.tar.gz
+            PineAI-0.6.0.tar.gz.sha256

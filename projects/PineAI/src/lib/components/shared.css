@@ -1,5 +1,5 @@
 .view {
-    padding: 20px;
+    padding: 22px;
     max-width: 1180px;
     margin: 0 auto;
 }
@@ -14,18 +14,31 @@
 
 .view-header h2 {
     margin: 0 0 4px;
-    font-size: 22px;
+    font-size: 23px;
+    font-weight: 600;
 }
 
 .view-header p,
 .muted {
-    color: #5d6975;
+    color: #61707a;
+}
+
+.eyebrow {
+    color: #287080;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
 }
 
 .grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px;
+}
+
+.grid.two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .stack {
@@ -50,17 +63,17 @@
 }
 
 .metric {
-    font-size: 30px;
-    font-weight: 600;
+    font-size: 31px;
+    font-weight: 650;
     line-height: 1;
 }
 
 .metric-label {
     margin-top: 8px;
-    color: #5d6975;
-    font-size: 12px;
+    color: #61707a;
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: .04em;
+    letter-spacing: .06em;
 }
 
 .status-banner,
@@ -68,15 +81,15 @@
 .error-banner,
 .warning-banner,
 .success-banner {
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 12px 14px;
     margin-bottom: 16px;
 }
 
 .notice,
 .status-banner {
-    background: #e9f2f8;
-    border-left: 4px solid #2878a5;
+    background: #e6f1f4;
+    border-left: 4px solid #28788b;
 }
 
 .error-banner {
@@ -87,7 +100,7 @@
 
 .warning-banner {
     background: #fff5dc;
-    border-left: 4px solid #e59b18;
+    border-left: 4px solid #dc9418;
 }
 
 .success-banner {
@@ -114,36 +127,65 @@
 
 .badge {
     display: inline-block;
+    max-width: 100%;
     padding: 3px 8px;
     border-radius: 12px;
     background: #e7ebef;
     color: #34414d;
     font-size: 12px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
 }
 
-.badge.high {
+.badge.critical,
+.badge.high,
+.badge.open {
     background: #f8d7d4;
     color: #8f1d18;
 }
 
-.badge.medium {
+.badge.medium,
+.badge.acknowledged,
+.badge.partially_comparable {
     background: #fff0c7;
-    color: #7b5700;
+    color: #745100;
 }
 
 .badge.low,
-.badge.complete {
+.badge.info,
+.badge.complete,
+.badge.comparable,
+.badge.resolved {
     background: #d9f0e5;
     color: #176447;
 }
 
+.badge.not_comparable,
+.badge.false_positive {
+    background: #e3e6e8;
+    color: #4f5c65;
+}
+
+.mono,
+.untrusted {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    overflow-wrap: anywhere;
+}
+
+.untrusted::before {
+    content: "Observed: ";
+    color: #78858e;
+    font-family: inherit;
+    font-size: 10px;
+}
+
 .json-preview {
-    background: #111820;
-    color: #d8e4ec;
-    border-radius: 6px;
+    background: #101b21;
+    color: #d8e7ea;
+    border-radius: 7px;
     padding: 14px;
     overflow: auto;
-    max-height: 420px;
+    max-height: 460px;
     font-size: 12px;
     white-space: pre-wrap;
     word-break: break-word;
@@ -155,6 +197,7 @@
     color: #64717d;
     border: 1px dashed #bac3ca;
     border-radius: 8px;
+    background: rgba(255, 255, 255, .4);
 }
 
 .empty-state mat-icon {
@@ -172,16 +215,56 @@
     gap: 12px;
 }
 
+.card-title-row > div {
+    min-width: 0;
+}
+
 mat-card {
-    border-radius: 8px;
+    border-radius: 9px;
 }
 
 mat-card + mat-card {
     margin-top: 16px;
 }
 
+mat-divider {
+    margin: 8px 0;
+}
+
 table {
     width: 100%;
+}
+
+.scroll-x {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.compact-list {
+    margin: 8px 0;
+    padding-left: 20px;
+}
+
+.step {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.step-number {
+    flex: 0 0 27px;
+    height: 27px;
+    border-radius: 50%;
+    background: #215f6e;
+    color: #fff;
+    line-height: 27px;
+    text-align: center;
+    font-weight: 600;
+}
+
+.break-all {
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 @media (max-width: 720px) {
@@ -193,12 +276,18 @@ table {
         display: block;
     }
 
-    .view-header button {
+    .view-header > .row,
+    .view-header > button {
         margin-top: 10px;
     }
 
-    .grid {
+    .grid,
+    .grid.two {
         grid-template-columns: 1fr;
+    }
+
+    .actions > button {
+        flex: 1 1 auto;
     }
 }
 

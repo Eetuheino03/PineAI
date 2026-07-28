@@ -2,11 +2,14 @@ import { Injectable } from '@angular/core';
 import { ApiService } from './api.service';
 import {
     ActivityEntry,
+    Assessment,
+    BaselineVersion,
+    Finding,
+    FrontendError,
+    PanelErrorMap,
     PineAISettings,
     ReconScan,
-    ReconStatus,
-    SessionSnapshot,
-    SupportedBand
+    ReconStatus
 } from '../models';
 
 @Injectable({
@@ -14,22 +17,30 @@ import {
 })
 export class PineAIService {
     health: any = null;
-    settings: PineAISettings = null;
-    advisorCapabilities: any = null;
-    adaptiveCapabilities: any = null;
+    settings: PineAISettings = {
+        language: 'en',
+        share_ssids: false,
+        api_key_configured: false,
+        api_key_source: 'none'
+    };
+    capabilities: any = null;
     reconStatus: ReconStatus = null;
     scans: ReconScan[] = [];
     selectedScan: ReconScan = null;
     selectedScanData: any = null;
-    profileResult: any = null;
-    selectedTargetIds: string[] = [];
-    engagements: any[] = [];
-    activeEngagement: any = null;
-    advisorResult: any = null;
-    selectedPathIds: string[] = [];
-    adaptivePlan: any = null;
-    sessionHistory: SessionSnapshot[] = [];
+    resolvedScan: any = null;
+    assessments: Assessment[] = [];
+    activeAssessment: Assessment = null;
+    baselines: BaselineVersion[] = [];
+    activeBaselineVersion: any = null;
+    comparison: any = null;
+    analysis: any = null;
+    findings: Finding[] = [];
+    aiPreview: any = null;
+    aiAnalysis: any = null;
+    report: any = null;
     activity: ActivityEntry[] = [];
+    panelErrors: PanelErrorMap = {};
     initializing = false;
     initialized = false;
 
@@ -41,7 +52,7 @@ export class PineAIService {
         );
     }
 
-    error(error: any): {code: string, message: string} {
+    error(error: any): FrontendError {
         if (error && typeof error.code === 'string') {
             return {
                 code: error.code,
@@ -60,6 +71,23 @@ export class PineAIService {
         return {code: 'request_failed', message: 'The request failed.'};
     }
 
+    errorText(error: any): string {
+        const value = this.error(error);
+        return `${value.code}: ${value.message}`;
+    }
+
+    setPanelError(panel: string, error: any): void {
+        this.panelErrors[panel] = this.error(error);
+        this.panelErrors = Object.assign({}, this.panelErrors);
+    }
+
+    clearPanelError(panel: string): void {
+        if (this.panelErrors[panel]) {
+            delete this.panelErrors[panel];
+            this.panelErrors = Object.assign({}, this.panelErrors);
+        }
+    }
+
     log(
         level: ActivityEntry['level'],
         title: string,
@@ -74,27 +102,42 @@ export class PineAIService {
         this.activity = this.activity.slice(0, 100);
     }
 
+    private settle(panel: string, operation: () => Promise<any>): Promise<void> {
+        return operation().then(() => {
+            this.clearPanelError(panel);
+        }).catch((error) => {
+            this.setPanelError(panel, error);
+            const failure = this.error(error);
+            this.log('warning', `${panel} unavailable`, `${failure.code}: ${failure.message}`);
+        });
+    }
+
     async initialize(): Promise<void> {
         if (this.initializing) {
             return;
         }
         this.initializing = true;
+        this.initialized = false;
         try {
+            // Health is the only hard dependency. Everything else degrades locally.
+            await this.refreshHealth();
             await Promise.all([
-                this.refreshHealth(),
-                this.refreshSettings(),
-                this.refreshCapabilities()
-            ]);
-            await Promise.all([
-                this.refreshReconStatus(),
-                this.refreshScans(),
-                this.refreshEngagements()
+                this.settle('settings', () => this.refreshSettings()),
+                this.settle('capabilities', () => this.refreshCapabilities()),
+                this.settle('recon', async () => {
+                    await Promise.all([this.refreshReconStatus(), this.refreshScans()]);
+                }),
+                this.settle('assessments', () => this.refreshAssessments())
             ]);
             this.initialized = true;
-            this.log('success', 'PineAI ready', 'Backend and device state loaded.');
+            this.log(
+                'success',
+                'PineAI ready',
+                'Baseline & Drift is available. Optional services may remain offline.'
+            );
         } catch (error) {
             const failure = this.error(error);
-            this.log('error', 'Initialization failed', `${failure.code}: ${failure.message}`);
+            this.log('error', 'Backend initialization failed', `${failure.code}: ${failure.message}`);
             throw error;
         } finally {
             this.initializing = false;
@@ -107,32 +150,23 @@ export class PineAIService {
     }
 
     async refreshSettings(): Promise<PineAISettings> {
-        this.settings = await this.module<PineAISettings>('get_settings');
+        const result = await this.module<PineAISettings>('get_settings');
+        this.settings = Object.assign({}, this.settings, result || {});
         return this.settings;
     }
 
-    async refreshCapabilities(): Promise<void> {
-        const values = await Promise.all([
-            this.module<any>('advisor_capabilities'),
-            this.module<any>('adaptive_recon_capabilities')
-        ]);
-        this.advisorCapabilities = values[0];
-        this.adaptiveCapabilities = values[1];
+    async refreshCapabilities(): Promise<any> {
+        this.capabilities = await this.module<any>('assurance_capabilities');
+        return this.capabilities;
     }
 
-    async saveSettings(
-        language: 'en' | 'fi',
-        shareSsids: boolean,
-        supportedBands: SupportedBand[]
-    ): Promise<PineAISettings> {
-        this.settings = await this.module<PineAISettings>('update_settings', {
-            settings: {
-                language,
-                share_ssids: shareSsids,
-                supported_bands: supportedBands
-            }
+    async saveSettings(language: 'en' | 'fi', shareSsids: boolean): Promise<PineAISettings> {
+        const result = await this.module<PineAISettings>('update_settings', {
+            settings: {language, share_ssids: shareSsids}
         });
-        this.log('success', 'Settings saved', 'Privacy and device capabilities updated.');
+        this.settings = Object.assign({}, this.settings, result || {});
+        this.clearPanelError('settings');
+        this.log('success', 'Settings saved', 'Language and privacy settings updated.');
         return this.settings;
     }
 
@@ -146,397 +180,528 @@ export class PineAIService {
             transport_secure: secure,
             insecure_transport_acknowledged: insecureAcknowledged
         });
-        await Promise.all([this.refreshSettings(), this.refreshHealth()]);
-        this.log('success', 'OpenAI key stored', 'The key was stored on the Pineapple.');
+        await this.refreshSettings();
+        this.log('success', 'OpenAI key stored', 'The key was sent once and is not retained by the browser.');
     }
 
     async deleteApiKey(): Promise<void> {
         await this.module<any>('delete_openai_api_key');
-        await Promise.all([this.refreshSettings(), this.refreshHealth()]);
+        await this.refreshSettings();
         this.log('warning', 'Managed OpenAI key removed');
     }
 
     async refreshReconStatus(): Promise<ReconStatus> {
         this.reconStatus = await this.api.nativeGet<ReconStatus>('/api/recon/status');
+        this.clearPanelError('recon');
         return this.reconStatus;
     }
 
     async refreshScans(): Promise<ReconScan[]> {
         const result: any = await this.api.nativeGet<any>('/api/recon/scans');
-        this.scans = Array.isArray(result) ? result : [];
-        this.scans.sort((left, right) => String(right.date).localeCompare(String(left.date)));
+        const values = Array.isArray(result)
+            ? result
+            : result && Array.isArray(result.scans) ? result.scans : [];
+        this.scans = values.slice().sort(
+            (left, right) => String(right.date || '').localeCompare(String(left.date || ''))
+        );
+        this.clearPanelError('recon');
         return this.scans;
     }
 
-    async loadScan(scan: ReconScan, preserveWorkflow: boolean = false): Promise<any> {
+    async loadScan(scan: ReconScan): Promise<any> {
         this.selectedScan = scan;
         this.selectedScanData = await this.api.nativeGet<any>(
             `/api/recon/scans/${encodeURIComponent(String(scan.scan_id))}`
         );
-        if (!preserveWorkflow) {
-            this.profileResult = null;
-            this.selectedTargetIds = [];
-            this.advisorResult = null;
-            this.selectedPathIds = [];
-            this.adaptivePlan = null;
-        }
-        this.log('success', 'Recon scan loaded', `Scan ${scan.scan_id} is ready for profiling.`);
+        this.resolvedScan = null;
+        this.comparison = null;
+        this.analysis = null;
+        this.aiPreview = null;
+        this.aiAnalysis = null;
+        this.report = null;
+        this.clearPanelError('recon');
+        this.log('success', 'Recon scan loaded', `Scan ${scan.scan_id} is ready.`);
         return this.selectedScanData;
     }
 
-    private options(aiEnabled: boolean = true): any {
-        return {
-            language: this.settings ? this.settings.language : 'en',
-            share_ssids: this.settings ? this.settings.share_ssids : false,
-            ai_enabled: aiEnabled
-        };
-    }
-
-    async prepareProfile(): Promise<any> {
-        this.requireSelectedScan();
-        return this.module<any>('prepare_profile_recon', {
-            scan: this.selectedScanData,
-            scan_metadata: this.selectedScan,
-            options: this.options(true)
-        });
-    }
-
-    async profileSelectedScan(
-        aiEnabled: boolean,
-        preserveWorkflow: boolean = false
-    ): Promise<any> {
-        this.requireSelectedScan();
-        this.profileResult = await this.module<any>('profile_recon', {
-            scan: this.selectedScanData,
-            scan_metadata: this.selectedScan,
-            options: this.options(aiEnabled)
-        });
-        if (!preserveWorkflow) {
-            this.selectedTargetIds = [];
-            this.advisorResult = null;
-            this.selectedPathIds = [];
-            this.adaptivePlan = null;
-        }
-        const state = this.profileResult.ai_status
-            ? this.profileResult.ai_status.state : 'unknown';
-        this.log(
-            state === 'complete' ? 'success' : 'warning',
-            'Target profile generated',
-            `AI status: ${state}.`
-        );
-        return this.profileResult;
-    }
-
-    private requireSelectedScan(): void {
+    private requireScan(): void {
         if (!this.selectedScan || !this.selectedScanData) {
-            throw {code: 'scan_required', message: 'Select and load a Recon scan first.'};
+            throw {code: 'scan_required', message: 'Load a saved Recon scan first.'};
         }
     }
 
-    toggleTarget(targetId: string, selected: boolean): void {
-        const values = this.selectedTargetIds.filter((value) => value !== targetId);
-        if (selected && values.length < 10) {
-            values.push(targetId);
+    private scanMetadata(): any {
+        const source: any = this.selectedScan || {};
+        const allowed = [
+            'scan_id',
+            'id',
+            'date',
+            'started_at',
+            'completed_at',
+            'scan_time',
+            'duration',
+            'coverage',
+            'source',
+            'label'
+        ];
+        const result: any = {};
+        for (const field of allowed) {
+            if (source[field] !== undefined && source[field] !== null) {
+                result[field] = Array.isArray(source[field])
+                    ? source[field].slice() : source[field];
+            }
         }
-        this.selectedTargetIds = values;
+        return result;
     }
 
-    async refreshEngagements(includeArchived: boolean = false): Promise<any[]> {
-        const result: any = await this.module<any>('list_engagements', {
+    async resolveSelectedScan(): Promise<any> {
+        this.requireScan();
+        this.resolvedScan = await this.module<any>('resolve_recon', {
+            scan: this.selectedScanData,
+            scan_metadata: this.scanMetadata()
+        });
+        this.clearPanelError('assets');
+        this.log('success', 'Assets resolved', `Scan ${this.selectedScan.scan_id} was normalized offline.`);
+        return this.resolvedScan;
+    }
+
+    async refreshAssessments(includeArchived: boolean = false): Promise<Assessment[]> {
+        const result: any = await this.module<any>('list_assessments', {
             include_archived: includeArchived
         });
-        this.engagements = result && Array.isArray(result.engagements)
-            ? result.engagements : [];
-        return this.engagements;
+        this.assessments = Array.isArray(result)
+            ? result
+            : result && Array.isArray(result.assessments) ? result.assessments : [];
+        this.clearPanelError('assessments');
+        return this.assessments;
     }
 
-    async selectEngagement(
-        engagementId: string,
+    async selectAssessment(
+        assessmentId: string,
         preserveWorkflow: boolean = false
-    ): Promise<any> {
-        this.activeEngagement = await this.module<any>('get_engagement', {
-            engagement_id: engagementId,
+    ): Promise<Assessment> {
+        const result: any = await this.module<any>('get_assessment', {
+            assessment_id: assessmentId,
             after_sequence: 0,
             limit: 100
         });
+        this.activeAssessment = result && result.assessment
+            ? Object.assign({}, result.assessment, {events: result.events || result.assessment.events})
+            : result;
+        this.baselines = [];
+        this.activeBaselineVersion = null;
+        this.findings = [];
         if (!preserveWorkflow) {
-            this.advisorResult = null;
-            this.selectedPathIds = [];
-            this.adaptivePlan = null;
+            this.comparison = null;
+            this.analysis = null;
+            this.aiPreview = null;
+            this.aiAnalysis = null;
+            this.report = null;
         }
-        return this.activeEngagement;
+        await Promise.all([
+            this.settle('baselines', () => this.refreshBaselines()),
+            this.settle('findings', () => this.refreshFindings())
+        ]);
+        return this.activeAssessment;
     }
 
-    async createEngagement(value: any): Promise<any> {
-        this.activeEngagement = await this.module<any>('create_engagement', {
-            engagement: value
+    async createAssessment(value: {
+        name: string;
+        location?: string;
+        notes?: string;
+    }): Promise<Assessment> {
+        const result: any = await this.module<any>('create_assessment', {
+            assessment: value
         });
-        await this.refreshEngagements();
-        this.log('success', 'Engagement created', this.activeEngagement.name);
-        return this.activeEngagement;
+        this.activeAssessment = result && result.assessment ? result.assessment : result;
+        await this.refreshAssessments();
+        await this.selectAssessment(this.activeAssessment.assessment_id);
+        this.log('success', 'Assessment created', this.activeAssessment.name);
+        return this.activeAssessment;
     }
 
-    async updateEngagement(changes: any): Promise<any> {
-        if (!this.activeEngagement) {
-            throw {code: 'engagement_required', message: 'Select an engagement first.'};
-        }
+    async updateAssessment(changes: any): Promise<Assessment> {
+        this.requireAssessment();
+        const assessmentId = this.activeAssessment.assessment_id;
         try {
-            this.activeEngagement = await this.module<any>('update_engagement', {
-                engagement_id: this.activeEngagement.engagement_id,
-                expected_revision: this.activeEngagement.revision,
+            const result: any = await this.module<any>('update_assessment', {
+                assessment_id: assessmentId,
+                expected_revision: this.activeAssessment.revision,
                 changes
             });
-            await this.refreshEngagements();
-            this.log('success', 'Engagement updated', this.activeEngagement.name);
-            return this.activeEngagement;
+            this.activeAssessment = result && result.assessment ? result.assessment : result;
+            await this.refreshAssessments();
+            await this.selectAssessment(assessmentId, true);
+            this.report = null;
+            this.log('success', 'Assessment updated', this.activeAssessment.name);
+            return this.activeAssessment;
         } catch (error) {
             if (this.error(error).code === 'revision_conflict') {
-                await this.selectEngagement(this.activeEngagement.engagement_id);
+                await this.selectAssessment(assessmentId);
             }
             throw error;
         }
     }
 
-    async archiveEngagement(): Promise<void> {
-        if (!this.activeEngagement) {
-            return;
+    async archiveAssessment(): Promise<void> {
+        this.requireAssessment();
+        const assessmentId = this.activeAssessment.assessment_id;
+        try {
+            await this.module<any>('archive_assessment', {
+                assessment_id: assessmentId,
+                expected_revision: this.activeAssessment.revision
+            });
+            this.log('warning', 'Assessment archived', this.activeAssessment.name);
+            this.activeAssessment = null;
+            this.baselines = [];
+            this.activeBaselineVersion = null;
+            this.findings = [];
+            this.comparison = null;
+            this.analysis = null;
+            this.aiPreview = null;
+            this.aiAnalysis = null;
+            this.report = null;
+            await this.refreshAssessments();
+        } catch (error) {
+            if (this.error(error).code === 'revision_conflict') {
+                await this.selectAssessment(assessmentId);
+            }
+            throw error;
         }
-        await this.module<any>('archive_engagement', {
-            engagement_id: this.activeEngagement.engagement_id,
-            expected_revision: this.activeEngagement.revision
-        });
-        this.log('warning', 'Engagement archived', this.activeEngagement.name);
-        this.activeEngagement = null;
-        this.advisorResult = null;
-        await this.refreshEngagements();
     }
 
-    async appendEvent(event: any): Promise<any> {
-        if (!this.activeEngagement) {
-            throw {code: 'engagement_required', message: 'Select an engagement first.'};
+    private requireAssessment(): void {
+        if (!this.activeAssessment) {
+            throw {code: 'assessment_required', message: 'Create or select an assessment first.'};
         }
-        const engagementId = this.activeEngagement.engagement_id;
+    }
+
+    private requireResolvedScan(): void {
+        this.requireScan();
+        if (!this.resolvedScan) {
+            throw {code: 'resolved_scan_required', message: 'Resolve the selected scan first.'};
+        }
+    }
+
+    async refreshBaselines(): Promise<BaselineVersion[]> {
+        this.requireAssessment();
+        const result: any = await this.module<any>('list_baseline_versions', {
+            assessment_id: this.activeAssessment.assessment_id
+        });
+        this.activeBaselineVersion = result && result.active_baseline_version
+            ? result.active_baseline_version : null;
+        this.baselines = Array.isArray(result)
+            ? result
+            : result && Array.isArray(result.baseline_versions)
+                ? result.baseline_versions
+                : result && Array.isArray(result.baselines) ? result.baselines : [];
+        this.clearPanelError('baselines');
+        return this.baselines;
+    }
+
+    async createBaselineVersion(label: string = ''): Promise<any> {
+        this.requireAssessment();
+        this.requireResolvedScan();
+        const assessmentId = this.activeAssessment.assessment_id;
+        const result: any = await this.module<any>('create_baseline_version', {
+            assessment_id: assessmentId,
+            expected_revision: this.activeAssessment.revision,
+            scan: this.selectedScanData,
+            scan_metadata: this.scanMetadata(),
+            label
+        });
+        if (result && result.assessment) {
+            this.activeAssessment = result.assessment;
+        }
+        await this.selectAssessment(assessmentId);
+        this.log('success', 'Baseline version created', label || 'Immutable baseline candidate saved.');
+        return result;
+    }
+
+    baselineId(value: any): string {
+        if (typeof value === 'string') {
+            return value;
+        }
+        return value
+            ? value.baseline_version_id || value.baseline_id ||
+              value.baseline_version || value.version_id || ''
+            : '';
+    }
+
+    async activateBaselineVersion(baselineVersionId: string): Promise<any> {
+        this.requireAssessment();
+        const assessmentId = this.activeAssessment.assessment_id;
+        const result = await this.module<any>('activate_baseline_version', {
+            assessment_id: assessmentId,
+            expected_revision: this.activeAssessment.revision,
+            baseline_version: baselineVersionId
+        });
+        await this.selectAssessment(assessmentId);
+        this.log('success', 'Baseline activated', baselineVersionId);
+        return result;
+    }
+
+    async compareSelectedScan(): Promise<any> {
+        this.requireAssessment();
+        this.requireResolvedScan();
+        this.comparison = await this.module<any>('compare_recon', {
+            assessment_id: this.activeAssessment.assessment_id,
+            scan: this.selectedScanData,
+            scan_metadata: this.scanMetadata()
+        });
+        this.clearPanelError('assets');
+        this.log('success', 'Comparison complete', this.comparabilityLabel(this.comparison));
+        return this.comparison;
+    }
+
+    async analyzeSelectedScan(): Promise<any> {
+        this.requireAssessment();
+        this.requireResolvedScan();
+        const assessmentId = this.activeAssessment.assessment_id;
         try {
-            const result = await this.module<any>('append_engagement_event', {
-                engagement_id: engagementId,
-                expected_revision: this.activeEngagement.revision,
-                event
+            this.analysis = await this.module<any>('analyze_recon', {
+                assessment_id: assessmentId,
+                expected_revision: this.activeAssessment.revision,
+                scan: this.selectedScanData,
+                scan_metadata: this.scanMetadata()
             });
-            await this.selectEngagement(engagementId, true);
-            this.log('success', 'Engagement event recorded', event.event_type);
+            if (this.analysis && this.analysis.assessment) {
+                this.activeAssessment = this.analysis.assessment;
+            }
+            this.aiPreview = null;
+            this.aiAnalysis = null;
+            this.report = null;
+            this.comparison = this.analysis.comparison || this.analysis;
+            await this.refreshAssessments();
+            await this.selectAssessment(assessmentId, true);
+            this.comparison = this.analysis.comparison || this.analysis;
+            await this.refreshFindings();
+            this.log('success', 'Analysis saved', this.comparabilityLabel(this.analysis));
+            return this.analysis;
+        } catch (error) {
+            if (this.error(error).code === 'revision_conflict') {
+                await this.selectAssessment(assessmentId);
+            }
+            throw error;
+        }
+    }
+
+    comparability(value: any): any {
+        if (!value) {
+            return null;
+        }
+        if (value.comparability) {
+            return value.comparability;
+        }
+        if (value.diff && value.diff.comparability) {
+            return value.diff.comparability;
+        }
+        if (value.comparison && value.comparison !== value) {
+            const nested = this.comparability(value.comparison);
+            if (nested) {
+                return nested;
+            }
+        }
+        if (value.result && value.result !== value) {
+            return this.comparability(value.result);
+        }
+        return null;
+    }
+
+    comparabilityLabel(value: any): string {
+        const comparable = this.comparability(value);
+        return comparable
+            ? comparable.status || comparable.state || String(comparable)
+            : 'unknown';
+    }
+
+    async refreshFindings(): Promise<Finding[]> {
+        this.requireAssessment();
+        const result: any = await this.module<any>('list_findings', {
+            assessment_id: this.activeAssessment.assessment_id
+        });
+        this.findings = Array.isArray(result)
+            ? result
+            : result && Array.isArray(result.findings) ? result.findings : [];
+        this.clearPanelError('findings');
+        return this.findings;
+    }
+
+    async updateFinding(
+        findingId: string,
+        status: 'open' | 'acknowledged' | 'false_positive',
+        note: string = ''
+    ): Promise<any> {
+        this.requireAssessment();
+        const assessmentId = this.activeAssessment.assessment_id;
+        try {
+            const result = await this.module<any>('update_finding', {
+                assessment_id: assessmentId,
+                expected_revision: this.activeAssessment.revision,
+                finding_id: findingId,
+                status,
+                note
+            });
+            await this.selectAssessment(assessmentId, true);
+            await this.refreshFindings();
+            this.aiPreview = null;
+            this.aiAnalysis = null;
+            this.report = null;
+            this.log('success', 'Finding updated', `${findingId}: ${status}`);
             return result;
         } catch (error) {
             if (this.error(error).code === 'revision_conflict') {
-                await this.selectEngagement(engagementId, true);
+                await this.selectAssessment(assessmentId, true);
+                await this.refreshFindings();
             }
             throw error;
         }
     }
 
-    async prepareAdvice(): Promise<any> {
-        this.requireAdvisorInputs();
-        return this.module<any>('prepare_attack_paths', {
-            engagement_id: this.activeEngagement.engagement_id,
-            profile_result: this.profileResult,
-            target_ids: this.selectedTargetIds,
-            options: this.options(true)
-        });
-    }
-
-    async advise(aiEnabled: boolean): Promise<any> {
-        this.requireAdvisorInputs();
-        this.advisorResult = await this.module<any>('advise_attack_paths', {
-            engagement_id: this.activeEngagement.engagement_id,
-            profile_result: this.profileResult,
-            target_ids: this.selectedTargetIds,
-            options: this.options(aiEnabled)
-        });
-        await this.selectEngagement(this.activeEngagement.engagement_id, true);
-        this.selectedPathIds = [];
-        this.adaptivePlan = null;
-        const state = this.advisorResult.advisor_status
-            ? this.advisorResult.advisor_status.state : 'unknown';
-        this.log(
-            state === 'complete' ? 'success' : 'warning',
-            'Attack paths generated',
-            `Advisor status: ${state}.`
-        );
-        return this.advisorResult;
-    }
-
-    private requireAdvisorInputs(): void {
-        if (!this.profileResult) {
-            throw {code: 'profile_required', message: 'Profile a Recon scan first.'};
-        }
-        if (!this.activeEngagement) {
-            throw {code: 'engagement_required', message: 'Select an engagement first.'};
-        }
-        if (!this.selectedTargetIds.length) {
-            throw {code: 'targets_required', message: 'Select at least one target.'};
-        }
-    }
-
-    pathSupportsAdaptive(path: any): boolean {
-        return path && Array.isArray(path.steps) && path.steps.some(
-            (step) => step.action_id === 'collect_additional_recon'
-        );
-    }
-
-    togglePath(pathId: string, selected: boolean): void {
-        const values = this.selectedPathIds.filter((value) => value !== pathId);
-        if (selected) {
-            values.push(pathId);
-        }
-        this.selectedPathIds = values;
-    }
-
-    deviceContext(): any {
+    private aiOptions(language?: 'en' | 'fi'): any {
         return {
-            observed_at: new Date().toISOString(),
-            supported_bands: this.settings ? this.settings.supported_bands : [],
-            recon_status: this.reconStatus
+            language: language || this.settings.language || 'en',
+            share_ssids: !!this.settings.share_ssids
         };
     }
 
-    async prepareAdaptive(): Promise<any> {
-        return this.adaptiveRequest('prepare_adaptive_recon');
-    }
-
-    async recommendAdaptive(): Promise<any> {
-        const result = await this.adaptiveRequest('recommend_adaptive_recon');
-        await this.selectEngagement(this.activeEngagement.engagement_id, true);
-        this.adaptivePlan = result;
-        this.log('success', 'Adaptive Recon plan recommended', result.plan_id);
-        return result;
-    }
-
-    private async adaptiveRequest(action: string): Promise<any> {
-        if (!this.advisorResult || !this.selectedPathIds.length) {
-            throw {code: 'paths_required', message: 'Select Recon-capable advisor paths.'};
-        }
-        if (!this.settings || !this.settings.supported_bands.length) {
-            throw {code: 'bands_required', message: 'Configure a device-confirmed band first.'};
-        }
-        await this.refreshReconStatus();
-        return this.module<any>(action, {
-            engagement_id: this.activeEngagement.engagement_id,
-            expected_revision: this.activeEngagement.revision,
-            profile_result: this.profileResult,
-            advisor_result: this.advisorResult,
-            selected_path_ids: this.selectedPathIds,
-            history: this.sessionHistory,
-            device_context: this.deviceContext(),
-            options: this.options(true)
-        });
-    }
-
-    async approveAndStartAdaptive(candidateId: string): Promise<any> {
-        if (!this.adaptivePlan) {
-            throw {code: 'plan_required', message: 'Recommend a plan first.'};
-        }
-        await this.refreshReconStatus();
-        const approved: any = await this.module<any>('approve_recon_plan', {
-            engagement_id: this.activeEngagement.engagement_id,
-            expected_revision: this.activeEngagement.revision,
-            plan_id: this.adaptivePlan.plan_id,
-            candidate_id: candidateId,
-            device_context: this.deviceContext()
-        });
-        await this.selectEngagement(this.activeEngagement.engagement_id, true);
-        const descriptor = approved.rest_request;
-        if (
-            !descriptor ||
-            descriptor.method !== 'POST' ||
-            descriptor.path !== '/api/recon/start'
-        ) {
-            throw {code: 'invalid_rest_descriptor', message: 'Backend returned an unsafe Recon descriptor.'};
-        }
-        const startResponse: any = await this.api.nativePost<any>(
-            descriptor.path, descriptor.body
-        );
-        const started = await this.module<any>('record_recon_scan_started', {
-            engagement_id: this.activeEngagement.engagement_id,
-            expected_revision: this.activeEngagement.revision,
-            plan_id: this.adaptivePlan.plan_id,
-            start_response: startResponse
-        });
-        await this.selectEngagement(this.activeEngagement.engagement_id, true);
-        this.adaptivePlan = started;
-        this.log('success', 'Adaptive Recon started', this.adaptivePlan.plan_id);
-        return startResponse;
-    }
-
-    async finishAdaptive(
-        outcome: 'completed' | 'failed' | 'aborted',
-        scanId: number,
-        profileResult: any = null,
-        errorCode: string = null
+    async prepareAiAnalysis(
+        findingIds: string[],
+        task: string,
+        language?: 'en' | 'fi'
     ): Promise<any> {
-        const result = await this.module<any>('record_recon_scan_finished', {
-            engagement_id: this.activeEngagement.engagement_id,
-            expected_revision: this.activeEngagement.revision,
-            plan_id: this.adaptivePlan.plan_id,
-            outcome,
-            scan_id: scanId,
-            profile_result: profileResult,
-            error_code: errorCode
+        this.requireAssessment();
+        this.aiPreview = await this.module<any>('prepare_ai_analysis', {
+            assessment_id: this.activeAssessment.assessment_id,
+            comparison_id: this.comparisonId(),
+            finding_ids: findingIds,
+            options: this.aiOptions(language)
         });
-        await this.selectEngagement(this.activeEngagement.engagement_id, true);
-        this.adaptivePlan = result;
-        this.log(
-            outcome === 'completed' ? 'success' : 'warning',
-            `Adaptive Recon ${outcome}`,
-            this.adaptivePlan.plan_id
-        );
-        return result;
+        return this.aiPreview;
     }
 
-    addCurrentProfileToHistory(request: {scan_time: number, band: string}): void {
-        if (!this.profileResult || !this.selectedScan) {
+    async generateAiAnalysis(
+        findingIds: string[],
+        task: string,
+        language?: 'en' | 'fi'
+    ): Promise<any> {
+        this.requireAssessment();
+        this.aiAnalysis = await this.module<any>('generate_ai_analysis', {
+            assessment_id: this.activeAssessment.assessment_id,
+            comparison_id: this.comparisonId(),
+            finding_ids: findingIds,
+            options: this.aiOptions(language)
+        });
+        this.clearPanelError('ai');
+        this.log('success', 'Optional AI analysis complete', task);
+        return this.aiAnalysis;
+    }
+
+    async generateReport(
+        format: 'json' | 'html',
+        includeAi: boolean
+    ): Promise<any> {
+        this.requireAssessment();
+        const comparisonId = this.comparisonId();
+        this.report = await this.module<any>('generate_report', {
+            assessment_id: this.activeAssessment.assessment_id,
+            comparison_id: comparisonId,
+            format,
+            ai_analysis: includeAi ? this.aiAnalysisValue() : null
+        });
+        this.clearPanelError('reports');
+        this.log('success', `${format.toUpperCase()} report generated`, this.report.filename || '');
+        return this.report;
+    }
+
+    downloadReport(result: any): void {
+        if (!result) {
             return;
         }
-        const item: SessionSnapshot = {
-            profile_result: this.profileResult,
-            scan_metadata: {
-                scan_id: this.selectedScan.scan_id,
-                date: this.selectedScan.date,
-                request: {
-                    live: false,
-                    scan_time: request.scan_time,
-                    band: request.band
-                }
-            }
+        const filename = result.filename || 'pineai-report.json';
+        if (result.path || result.file_path) {
+            this.api.APIDownload(result.path || result.file_path, filename);
+            return;
+        }
+        const content = result.content !== undefined
+            ? result.content
+            : result.report !== undefined ? result.report : result;
+        const mime = filename.toLowerCase().endsWith('.html')
+            ? 'text/html;charset=utf-8'
+            : 'application/json;charset=utf-8';
+        const text = typeof content === 'string'
+            ? content : JSON.stringify(content, null, 2);
+        const blob = new Blob([text], {type: mime});
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        document.body.appendChild(anchor);
+        anchor.style.display = 'none';
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.click();
+        window.URL.revokeObjectURL(url);
+        anchor.remove();
+    }
+
+    activeBaselineId(): string {
+        const assessmentValue = this.activeAssessment
+            ? this.activeAssessment.active_baseline_version ||
+              this.activeAssessment.active_baseline_version_id ||
+              this.activeAssessment.active_baseline_id
+            : '';
+        return assessmentValue || this.baselineId(this.activeBaselineVersion);
+    }
+
+    assessmentMutable(): boolean {
+        return !!this.activeAssessment &&
+            this.activeAssessment.status !== 'archived';
+    }
+
+    comparisonId(): string {
+        const value = this.analysis && this.analysis.comparison
+            ? this.analysis.comparison
+            : this.comparison;
+        const id = value
+            ? value.comparison_id || value.analysis_id || value.snapshot_id
+            : '';
+        const stored = this.activeAssessment &&
+            Array.isArray(this.activeAssessment.comparisons) &&
+            this.activeAssessment.comparisons.length
+            ? this.activeAssessment.comparisons[0].comparison_id
+            : '';
+        const selected = id || stored;
+        if (!selected) {
+            throw {
+                code: 'comparison_required',
+                message: 'Save a comparison before requesting AI text or a report.'
+            };
+        }
+        return selected;
+    }
+
+    hasComparison(): boolean {
+        try {
+            return !!this.comparisonId();
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    aiAnalysisValue(): any {
+        return this.aiAnalysis && this.aiAnalysis.analysis
+            ? this.aiAnalysis.analysis : null;
+    }
+
+    findingCounts(): {[status: string]: number} {
+        const counts: {[status: string]: number} = {
+            open: 0,
+            acknowledged: 0,
+            false_positive: 0,
+            resolved: 0
         };
-        this.sessionHistory = this.sessionHistory.filter(
-            (value) => value.scan_metadata.scan_id !== item.scan_metadata.scan_id
-        );
-        this.sessionHistory.push(item);
-        this.sessionHistory = this.sessionHistory.slice(-5);
-    }
-
-    async startManualRecon(band: string, scanTime: number): Promise<any> {
-        const allowed = this.settings && this.settings.supported_bands.some(
-            (value) => value.value === band
-        );
-        if (!allowed) {
-            throw {code: 'band_not_supported', message: 'Select a configured band.'};
+        for (const finding of this.findings) {
+            counts[finding.status] = (counts[finding.status] || 0) + 1;
         }
-        await this.refreshReconStatus();
-        if (this.reconStatus.scanRunning || this.reconStatus.captureRunning) {
-            throw {code: 'recon_busy', message: 'Recon or capture is already running.'};
-        }
-        const response = await this.api.nativePost<any>('/api/recon/start', {
-            live: false,
-            scan_time: scanTime,
-            band
-        });
-        this.log('success', 'Recon started', `${scanTime} seconds.`);
-        return response;
-    }
-
-    async stopRecon(): Promise<any> {
-        const result = await this.api.nativePost<any>('/api/recon/stop', {});
-        this.log('warning', 'Recon stop requested');
-        return result;
+        return counts;
     }
 }

@@ -1,23 +1,23 @@
 # PineAI
 
-PineAI is an experimental WiFi Pineapple Mark VII module for
-AI-assisted wireless reconnaissance during authorized security assessments.
+PineAI is an offline-first wireless assurance module for the WiFi Pineapple
+Mark VII. It turns saved Hak5 Recon observations into immutable baselines,
+deterministic changes, evidence-backed findings, and exportable reports.
 
-The project is intentionally split into three focused capabilities:
+PineAI is not an attack module. Version `0.6.0` replaces the earlier
+reconnaissance-copilot workflow with **Baseline & Drift**:
 
-1. **Target Profiler** normalizes Recon observations into evidence-backed
-   target profiles.
-2. **Attack-Path Advisor** proposes bounded next steps that respect the
-   operator-defined scope and rules of engagement.
-3. **Adaptive Recon** recommends additional Recon runs and requires explicit
-   operator approval before any scan is started.
+1. load a saved Recon scan through the authenticated Hak5 session;
+2. resolve access points and SSIDs into stable local assets;
+3. create and explicitly activate an immutable baseline;
+4. compare a later scan and decide whether it is comparable;
+5. evaluate eight deterministic finding rules;
+6. manage finding lifecycle and export JSON or standalone HTML.
 
-Version `0.5.0` adds the complete Mark VII frontend for the Target Profiler,
-persistent Attack-Path Advisor, and Adaptive Recon backends. Operators can
-load or start bounded Recon scans, profile targets, define engagement scope,
-review advisory paths, approve one policy-valid Recon candidate, and record
-the result. All three features retain deterministic offline output and
-optional schema-constrained OpenAI enrichment.
+The complete workflow works without an API key or internet connection. An
+optional AI provider may explain existing findings or draft clearly labelled
+report prose, but it cannot create findings or change facts, severity,
+confidence, comparability, or lifecycle state.
 
 ## Compatibility
 
@@ -25,7 +25,7 @@ optional schema-constrained OpenAI enrichment.
 - Hak5 module metadata and package layout
 - Angular 9 frontend used by the official module template
 - Python 3 backend using the bundled `pineapple.modules` library
-- Python standard library only; no additional Mark VII packages are required
+- Python standard library only; no additional Mark VII package is required
 
 ## Development
 
@@ -35,74 +35,97 @@ Use Node.js 16 for compatibility with the upstream Hak5 module build.
 npm ci
 npm run build -- --prod
 npm test -- --watch=false --browsers=ChromeHeadless
+python3 -m unittest discover -s tests -v
 ```
 
-To create an installable archive:
+Create an installable archive with:
 
 ```bash
 ./build.sh package
 ```
 
-The resulting `PineAI-0.5.0.tar.gz` archive can be uploaded through the WiFi
-Pineapple management interface. During development, the built
-`dist/PineAI/` directory can be copied to `/pineapple/modules/`.
+The resulting `PineAI-0.6.0.tar.gz` archive can be uploaded through the WiFi
+Pineapple management interface. During development, copy the built
+`dist/PineAI/` directory to `/pineapple/modules/PineAI/`.
 
-See [docs/frontend.md](docs/frontend.md) for the complete operator workflow,
-frontend/backend contracts, band capability setup, and Mark VII smoke test.
+## Operator workflow
 
-## Backend CLI
+PineAI reads only saved scans in this release:
 
-After building or copying the module, configure the OpenAI key interactively:
-
-```bash
-python3 assets/pineai_cli.py configure
-python3 assets/pineai_cli.py status
+```text
+GET /api/recon/scans
+GET /api/recon/scans/:scan_id
 ```
 
-The key is never accepted as a command-line argument. On the Mark VII it is
-stored at `/root/.PineAI/openai.key` with mode `0600`.
+The Angular frontend uses the already-authenticated Hak5 session and passes
+the loaded JSON to the PineAI module backend. PineAI does not store the
+Pineapple root password and `0.6.0` does not start or stop a Recon scan.
 
-Inspect the exact JSON that would leave the device without making a request:
+The recommended sequence is:
 
-```bash
-python3 assets/pineai_cli.py prepare --input scan.json
+```text
+create assessment
+    -> resolve saved Recon scan
+    -> create baseline version
+    -> explicitly activate baseline
+    -> compare a later scan
+    -> save analysis and finding lifecycle changes
+    -> export JSON or HTML report
 ```
 
-Run the complete profiling pipeline:
+See [the frontend guide](docs/frontend.md) for the operator workflow and
+[the backend API](docs/backend-api.md) for module action contracts. The
+machine-readable contract is
+[`baseline-drift-v1.schema.json`](docs/schemas/baseline-drift-v1.schema.json).
+Installation and first-run checks are in
+[the Mark VII installation guide](docs/install-mark-vii.md).
 
-```bash
-python3 assets/pineai_cli.py profile --input scan.json
-```
+## Deterministic authority
 
-Without a configured key or network connection, `profile` still returns all
-deterministic profiles and a machine-readable partial `ai_status`.
+The local engine alone decides:
 
-## Module backend API
+- what changed;
+- whether two scans are comparable;
+- which rule matched;
+- which evidence supports a finding;
+- finding severity and confidence;
+- finding lifecycle state;
+- all factual and machine-readable report content.
 
-The `profile_recon` action accepts `scan`, optional `scan_metadata`, and:
+The first rules cover new and missing access points, a known SSID appearing
+from a new BSSID, SSID and encryption-code changes, WPS becoming enabled,
+channel changes, and divergent encryption codes within one SSID.
 
-```json
-{
-  "options": {
-    "language": "en",
-    "share_ssids": false,
-    "ai_enabled": true
-  }
-}
-```
+Hak5 encryption values are treated as opaque numeric codes. PineAI reports a
+change but does not call it an upgrade or downgrade without a verified
+firmware-specific mapping.
 
-The frontend obtains Recon data through the already-authenticated Hak5 session
-and passes it to this action. PineAI does not store the Pineapple root
-password. See [docs/backend.md](docs/backend.md) for the complete contract,
-privacy model, and error states.
+## Privacy
 
-Attack-Path Advisor's engagement lifecycle, frontend contract and examples are
-documented in
-[docs/attack-path-advisor.md](docs/attack-path-advisor.md).
+- Raw Hak5 Recon JSON is processed in memory and is not persisted.
+- Normalized snapshots may retain real SSIDs and BSSIDs locally.
+- Stable public IDs are derived with a private HMAC-SHA256 key.
+- MAC addresses and BSSIDs never leave the device.
+- SSIDs leave the device only when the operator enables `share_ssids`.
+- Local notes, secrets, audit text, and legacy authorization material are
+  never included in an AI request.
+- An AI error never blocks comparison, finding evaluation, lifecycle updates,
+  or deterministic reporting.
 
-Adaptive Recon's plan lifecycle, runtime band allowlist, privacy payload, exact
-Hak5 REST descriptor, CLI, frontend sequence, and error contract are documented
-in [docs/adaptive-recon.md](docs/adaptive-recon.md).
+The optional OpenAI key is stored in `/root/.PineAI/openai.key` with mode
+`0600`. It is never accepted as a command-line argument, returned to Angular,
+logged, or committed.
+
+## Storage
+
+Assessments are stored below `/root/.PineAI/assessments/`. Directories use
+mode `0700`; assessment, baseline, snapshot, comparison, finding, and audit
+files use mode `0600`. Generated reports are returned in memory for download
+and are not persisted by PineAI. Baseline versions are immutable and
+activation always requires an explicit, revision-checked request.
+
+Legacy engagement data is neither migrated nor read by `0.6.0`. It is left
+untouched so an operator can recover or remove it separately.
 
 ## Upstream contribution
 
@@ -116,17 +139,16 @@ module repository:
 - document all network destinations and data sent off-device;
 - submit the module directory to `hak5/pineapple-modules` as a pull request.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and
-[docs/architecture.md](docs/architecture.md) for project-specific rules.
+See [CONTRIBUTING.md](CONTRIBUTING.md),
+[the architecture](docs/architecture.md), and
+[the product direction](docs/product-direction.md).
 
 ## Safety and scope
 
-PineAI is intended only for systems and wireless networks you own or
-are explicitly authorized to assess. AI output is advisory. The Target
-Profiler schema has no action or command field. Attack paths never execute
-from the UI. Adaptive Recon may execute only the exact backend-approved
-`POST /api/recon/start` descriptor after explicit operator confirmation. The
-backend itself never calls the Hak5 REST API.
+Use PineAI only with wireless environments you own or are authorized to
+assess. The module is read-only toward the radio in `0.6.0`: it analyzes saved
+Recon results and cannot execute validation steps, shell commands, deauth,
+evil-twin, association, capture, or scan-start actions.
 
 ## License
 

@@ -59,36 +59,20 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(load_api_key(directory), "env-key")
                 self.assertEqual(public_status(directory)["key_source"], "environment")
 
-    def test_frontend_settings_validate_and_persist_supported_bands(self):
+    def test_frontend_settings_validate_and_persist_privacy_preferences(self):
         with tempfile.TemporaryDirectory() as directory:
             status = update_frontend_settings(
                 {
                     "language": "fi",
                     "share_ssids": True,
-                    "supported_bands": [
-                        {
-                            "value": "device-confirmed",
-                            "covers": ["5", "2.4"],
-                            "is_default": True,
-                        }
-                    ],
                 },
                 directory,
             )
             self.assertEqual(status["language"], "fi")
             self.assertTrue(status["share_ssids"])
-            self.assertEqual(
-                status["supported_bands"],
-                [
-                    {
-                        "value": "device-confirmed",
-                        "covers": ["2.4", "5"],
-                        "is_default": True,
-                    }
-                ],
-            )
             persisted = load_settings(directory)
-            self.assertEqual(persisted["supported_bands"], status["supported_bands"])
+            self.assertEqual(persisted["language"], "fi")
+            self.assertTrue(persisted["share_ssids"])
 
     def test_frontend_settings_reject_unsafe_or_unknown_values(self):
         invalid = (

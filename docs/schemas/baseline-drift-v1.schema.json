@@ -1,0 +1,1976 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Eetuheino03/PineAI/docs/schemas/baseline-drift-v1.schema.json",
+  "title": "PineAI Baseline & Drift module API v1",
+  "description": "Versioned contracts for assessments, resolved Recon snapshots, immutable baselines, deterministic comparisons and findings, optional AI explanations, and reports.",
+  "type": "object",
+  "anyOf": [
+    { "$ref": "#/$defs/moduleError" },
+    { "$ref": "#/$defs/assuranceCapabilities" },
+    { "$ref": "#/$defs/assessment" },
+    { "$ref": "#/$defs/assessmentMutationResponse" },
+    { "$ref": "#/$defs/assessmentWithEvents" },
+    { "$ref": "#/$defs/assessmentListResponse" },
+    { "$ref": "#/$defs/resolveReconResponse" },
+    { "$ref": "#/$defs/baselineMutationResponse" },
+    { "$ref": "#/$defs/baselineListResponse" },
+    { "$ref": "#/$defs/comparisonPreview" },
+    { "$ref": "#/$defs/analysisResponse" },
+    { "$ref": "#/$defs/findingListResponse" },
+    { "$ref": "#/$defs/findingMutationResponse" },
+    { "$ref": "#/$defs/aiPrepareResponse" },
+    { "$ref": "#/$defs/aiAnalysisResponse" },
+    { "$ref": "#/$defs/reportResponse" }
+  ],
+  "x-module-actions": {
+    "assurance_capabilities": {
+      "response": "#/$defs/assuranceCapabilities"
+    },
+    "create_assessment": {
+      "request": "#/$defs/createAssessmentRequest",
+      "response": "#/$defs/assessmentMutationResponse"
+    },
+    "get_assessment": {
+      "request": "#/$defs/getAssessmentRequest",
+      "response": "#/$defs/assessmentWithEvents"
+    },
+    "list_assessments": {
+      "request": "#/$defs/listAssessmentsRequest",
+      "response": "#/$defs/assessmentListResponse"
+    },
+    "update_assessment": {
+      "request": "#/$defs/updateAssessmentRequest",
+      "response": "#/$defs/assessmentMutationResponse"
+    },
+    "archive_assessment": {
+      "request": "#/$defs/archiveAssessmentRequest",
+      "response": "#/$defs/assessmentMutationResponse"
+    },
+    "resolve_recon": {
+      "request": "#/$defs/resolveReconRequest",
+      "response": "#/$defs/resolveReconResponse"
+    },
+    "create_baseline_version": {
+      "request": "#/$defs/createBaselineRequest",
+      "response": "#/$defs/baselineMutationResponse"
+    },
+    "list_baseline_versions": {
+      "request": "#/$defs/listBaselinesRequest",
+      "response": "#/$defs/baselineListResponse"
+    },
+    "activate_baseline_version": {
+      "request": "#/$defs/activateBaselineRequest",
+      "response": "#/$defs/baselineMutationResponse"
+    },
+    "compare_recon": {
+      "request": "#/$defs/compareReconRequest",
+      "response": "#/$defs/comparisonPreview"
+    },
+    "analyze_recon": {
+      "request": "#/$defs/analyzeReconRequest",
+      "response": "#/$defs/analysisResponse"
+    },
+    "list_findings": {
+      "request": "#/$defs/listFindingsRequest",
+      "response": "#/$defs/findingListResponse"
+    },
+    "update_finding": {
+      "request": "#/$defs/updateFindingRequest",
+      "response": "#/$defs/findingMutationResponse"
+    },
+    "prepare_ai_analysis": {
+      "request": "#/$defs/aiAnalysisRequest",
+      "response": "#/$defs/aiPrepareResponse"
+    },
+    "generate_ai_analysis": {
+      "request": "#/$defs/aiAnalysisRequest",
+      "response": "#/$defs/aiAnalysisResponse"
+    },
+    "generate_report": {
+      "request": "#/$defs/reportRequest",
+      "response": "#/$defs/reportResponse"
+    }
+  },
+  "$defs": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "assessmentId": {
+      "type": "string",
+      "pattern": "^assessment_[0-9a-f-]{36}$"
+    },
+    "baselineVersionId": {
+      "type": "string",
+      "pattern": "^baseline_v[0-9]{4}$"
+    },
+    "snapshotId": {
+      "type": "string",
+      "pattern": "^snapshot_[0-9a-f]{16}$"
+    },
+    "assetId": {
+      "type": "string",
+      "pattern": "^ap_[0-9a-f]{12}$"
+    },
+    "networkId": {
+      "type": "string",
+      "pattern": "^network_[0-9a-f]{12}$"
+    },
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^evidence_[0-9a-f]{12}$"
+    },
+    "findingId": {
+      "type": "string",
+      "pattern": "^finding_[0-9a-f]{12}$"
+    },
+    "comparisonId": {
+      "type": "string",
+      "pattern": "^comparison_[0-9a-f]{16}$"
+    },
+    "analysisId": {
+      "type": "string",
+      "pattern": "^analysis_[0-9a-f]{16}$"
+    },
+    "language": {
+      "enum": ["en", "fi"]
+    },
+    "assessmentStatus": {
+      "enum": ["active", "archived"]
+    },
+    "comparabilityStatus": {
+      "enum": ["comparable", "partially_comparable", "not_comparable"]
+    },
+    "findingStatus": {
+      "enum": ["open", "acknowledged", "false_positive", "resolved"]
+    },
+    "operatorFindingStatus": {
+      "enum": ["open", "acknowledged", "false_positive"]
+    },
+    "severity": {
+      "enum": ["critical", "high", "medium", "low", "info"]
+    },
+    "ruleId": {
+      "enum": [
+        "new_access_point",
+        "known_ssid_new_bssid",
+        "access_point_missing",
+        "ssid_changed",
+        "encryption_changed",
+        "wps_enabled",
+        "channel_changed",
+        "security_profile_divergence"
+      ]
+    },
+    "reportFormat": {
+      "enum": ["json", "html"]
+    },
+    "band": {
+      "enum": ["2.4", "5"]
+    },
+    "moduleError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          }
+        }
+      }
+    },
+    "ruleCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "title", "severity", "base_confidence"],
+      "properties": {
+        "rule_id": { "$ref": "#/$defs/ruleId" },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "severity": { "$ref": "#/$defs/severity" },
+        "base_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "assuranceCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "product_mode",
+        "offline_complete",
+        "comparability_states",
+        "finding_statuses",
+        "rules",
+        "limits",
+        "authoritative_fields",
+        "backend_version",
+        "module_actions",
+        "ai_role",
+        "recon_control"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "product_mode": { "const": "baseline_and_drift" },
+        "offline_complete": { "const": true },
+        "comparability_states": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "comparable" },
+            { "const": "partially_comparable" },
+            { "const": "not_comparable" }
+          ],
+          "items": false
+        },
+        "finding_statuses": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "open" },
+            { "const": "acknowledged" },
+            { "const": "false_positive" },
+            { "const": "resolved" }
+          ],
+          "items": false
+        },
+        "rules": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/ruleCapability" }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "access_points_per_scan",
+            "baseline_versions_per_assessment",
+            "observations_per_assessment",
+            "ai_findings_per_request",
+            "findings_per_assessment"
+          ],
+          "properties": {
+            "access_points_per_scan": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "baseline_versions_per_assessment": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "findings_per_assessment": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "observations_per_assessment": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "ai_findings_per_request": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "authoritative_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "backend_version": {
+          "const": "0.6.0"
+        },
+        "module_actions": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "assurance_capabilities" },
+            { "const": "create_assessment" },
+            { "const": "get_assessment" },
+            { "const": "list_assessments" },
+            { "const": "update_assessment" },
+            { "const": "archive_assessment" },
+            { "const": "resolve_recon" },
+            { "const": "create_baseline_version" },
+            { "const": "list_baseline_versions" },
+            { "const": "activate_baseline_version" },
+            { "const": "compare_recon" },
+            { "const": "analyze_recon" },
+            { "const": "list_findings" },
+            { "const": "update_finding" },
+            { "const": "prepare_ai_analysis" },
+            { "const": "generate_ai_analysis" },
+            { "const": "generate_report" }
+          ],
+          "items": false
+        },
+        "ai_role": {
+          "const": "non_authoritative_explanation_and_report_prose"
+        },
+        "recon_control": {
+          "const": false
+        }
+      }
+    },
+    "assessmentInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "location", "notes"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "location": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "assessment_id",
+        "name",
+        "location",
+        "notes",
+        "status",
+        "revision",
+        "active_baseline_version",
+        "created_at",
+        "updated_at",
+        "last_event_sequence"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "location": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "status": { "$ref": "#/$defs/assessmentStatus" },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "active_baseline_version": {
+          "oneOf": [
+            { "$ref": "#/$defs/baselineVersionId" },
+            { "type": "null" }
+          ]
+        },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" },
+        "last_event_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/auditEvent" }
+        },
+        "events_has_more": {
+          "type": "boolean"
+        },
+        "baseline_versions": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/baselineVersion" }
+        },
+        "comparisons": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "finding_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "total",
+            "open",
+            "acknowledged",
+            "false_positive",
+            "resolved",
+            "currently_observed"
+          ],
+          "properties": {
+            "total": { "type": "integer", "minimum": 0 },
+            "open": { "type": "integer", "minimum": 0 },
+            "acknowledged": { "type": "integer", "minimum": 0 },
+            "false_positive": { "type": "integer", "minimum": 0 },
+            "resolved": { "type": "integer", "minimum": 0 },
+            "currently_observed": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "auditEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "event_id",
+        "event_type",
+        "recorded_at",
+        "revision"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^evt_[0-9a-f-]{36}$"
+        },
+        "event_type": {
+          "enum": [
+            "assessment_created",
+            "assessment_updated",
+            "assessment_archived",
+            "baseline_version_created",
+            "baseline_version_activated",
+            "analysis_persisted",
+            "finding_status_updated"
+          ]
+        },
+        "recorded_at": { "$ref": "#/$defs/timestamp" },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "data": {
+          "type": "object"
+        }
+      }
+    },
+    "assessmentWithEvents": {
+      "allOf": [
+        { "$ref": "#/$defs/assessment" },
+        {
+          "required": [
+            "events",
+            "events_has_more",
+            "baseline_versions",
+            "comparisons",
+            "finding_summary"
+          ]
+        }
+      ]
+    },
+    "assessmentMutationResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/assessment" },
+        { "required": ["events"] }
+      ]
+    },
+    "createAssessmentRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment"],
+      "properties": {
+        "assessment": { "$ref": "#/$defs/assessmentInput" }
+      }
+    },
+    "getAssessmentRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id"],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "after_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "listAssessmentsRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include_archived": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "assessmentListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "assessments"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "assessments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/assessment" }
+        }
+      }
+    },
+    "updateAssessmentRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id", "expected_revision", "changes"],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "changes": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "location": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          }
+        }
+      }
+    },
+    "archiveAssessmentRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id", "expected_revision"],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "scanMetadataInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scan_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "started_at": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "completed_at": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "scan_time": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "duration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "coverage": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/band" }
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 128
+        }
+      }
+    },
+    "normalizedScanMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scan_id",
+        "date",
+        "started_at",
+        "completed_at",
+        "scan_time",
+        "coverage",
+        "source",
+        "label"
+      ],
+      "properties": {
+        "scan_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            { "type": "null" }
+          ]
+        },
+        "date": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 64
+            },
+            { "type": "null" }
+          ]
+        },
+        "started_at": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 64
+            },
+            { "type": "null" }
+          ]
+        },
+        "completed_at": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 64
+            },
+            { "type": "null" }
+          ]
+        },
+        "scan_time": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            { "type": "null" }
+          ]
+        },
+        "coverage": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/band" }
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "label": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "comparabilityProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "declared_coverage",
+        "observed_coverage",
+        "effective_coverage",
+        "scan_time"
+      ],
+      "properties": {
+        "declared_coverage": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/band" }
+        },
+        "observed_coverage": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/band" }
+        },
+        "effective_coverage": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/band" }
+        },
+        "scan_time": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "snapshotSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "access_point_count",
+        "network_count",
+        "associated_client_count",
+        "out_of_range_client_count",
+        "unassociated_client_count",
+        "input_bytes"
+      ],
+      "properties": {
+        "access_point_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "network_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "associated_client_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "out_of_range_client_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unassociated_client_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "input_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "accessPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "asset_id",
+        "network_id",
+        "evidence_id",
+        "bssid",
+        "ssid",
+        "hidden",
+        "encryption",
+        "wps",
+        "channel",
+        "band",
+        "signal",
+        "vendor",
+        "client_count",
+        "data",
+        "probes",
+        "last_seen"
+      ],
+      "properties": {
+        "asset_id": { "$ref": "#/$defs/assetId" },
+        "network_id": { "$ref": "#/$defs/networkId" },
+        "evidence_id": { "$ref": "#/$defs/evidenceId" },
+        "bssid": {
+          "type": "string",
+          "pattern": "^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$"
+        },
+        "ssid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "hidden": { "type": "boolean" },
+        "encryption": { "type": "integer" },
+        "wps": { "type": "boolean" },
+        "channel": { "type": "integer" },
+        "band": {
+          "oneOf": [
+            { "$ref": "#/$defs/band" },
+            { "type": "null" }
+          ]
+        },
+        "signal": { "type": "integer" },
+        "vendor": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "client_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "data": {
+          "type": "integer"
+        },
+        "probes": {
+          "type": "integer"
+        },
+        "last_seen": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network_id",
+        "ssid",
+        "hidden",
+        "asset_ids",
+        "bssids",
+        "channels",
+        "encryption_codes",
+        "vendors",
+        "client_count"
+      ],
+      "properties": {
+        "network_id": { "$ref": "#/$defs/networkId" },
+        "ssid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "hidden": { "type": "boolean" },
+        "asset_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/assetId" }
+        },
+        "bssids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$"
+          }
+        },
+        "channels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer" }
+        },
+        "encryption_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer" }
+        },
+        "vendors": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "client_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "snapshot_id",
+        "evidence_type",
+        "subject_id",
+        "observed"
+      ],
+      "properties": {
+        "evidence_id": { "$ref": "#/$defs/evidenceId" },
+        "snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "subject_id": {
+          "$ref": "#/$defs/assetId"
+        },
+        "evidence_type": {
+          "const": "recon_access_point_observation"
+        },
+        "observed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "network_id",
+            "bssid",
+            "ssid",
+            "hidden",
+            "encryption",
+            "wps",
+            "channel",
+            "signal",
+            "vendor",
+            "client_count"
+          ],
+          "properties": {
+            "network_id": { "$ref": "#/$defs/networkId" },
+            "bssid": {
+              "type": "string",
+              "pattern": "^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$"
+            },
+            "ssid": { "type": "string", "maxLength": 128 },
+            "hidden": { "type": "boolean" },
+            "encryption": { "type": "integer" },
+            "wps": { "type": "boolean" },
+            "channel": { "type": "integer" },
+            "signal": { "type": "integer" },
+            "vendor": { "type": "string", "maxLength": 128 },
+            "client_count": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "resolvedSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "snapshot_id",
+        "snapshot_digest",
+        "observed_at",
+        "scan_metadata",
+        "comparability_profile",
+        "summary",
+        "access_points",
+        "networks",
+        "evidence"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "snapshot_digest": { "$ref": "#/$defs/digest" },
+        "observed_at": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 64
+            },
+            { "type": "null" }
+          ]
+        },
+        "scan_metadata": { "$ref": "#/$defs/normalizedScanMetadata" },
+        "comparability_profile": {
+          "$ref": "#/$defs/comparabilityProfile"
+        },
+        "summary": { "$ref": "#/$defs/snapshotSummary" },
+        "access_points": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": { "$ref": "#/$defs/accessPoint" }
+        },
+        "networks": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": { "$ref": "#/$defs/network" }
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence" }
+        }
+      }
+    },
+    "resolveReconRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scan"],
+      "properties": {
+        "scan": {
+          "type": "object"
+        },
+        "scan_metadata": { "$ref": "#/$defs/scanMetadataInput" }
+      }
+    },
+    "resolveReconResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "snapshot"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "snapshot": { "$ref": "#/$defs/resolvedSnapshot" }
+      }
+    },
+    "baselineVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "baseline_version_id",
+        "assessment_id",
+        "version",
+        "label",
+        "created_at",
+        "snapshot_id",
+        "snapshot_digest",
+        "summary",
+        "scan_metadata",
+        "comparability_profile",
+        "is_active"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "baseline_version_id": { "$ref": "#/$defs/baselineVersionId" },
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "snapshot_digest": { "$ref": "#/$defs/digest" },
+        "summary": { "$ref": "#/$defs/snapshotSummary" },
+        "scan_metadata": { "$ref": "#/$defs/normalizedScanMetadata" },
+        "comparability_profile": {
+          "$ref": "#/$defs/comparabilityProfile"
+        },
+        "is_active": { "type": "boolean" },
+        "snapshot": { "$ref": "#/$defs/resolvedSnapshot" }
+      }
+    },
+    "createBaselineRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_id",
+        "expected_revision",
+        "scan"
+      ],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "scan": {
+          "type": "object"
+        },
+        "scan_metadata": { "$ref": "#/$defs/scanMetadataInput" },
+        "label": {
+          "type": "string",
+          "maxLength": 128
+        }
+      }
+    },
+    "listBaselinesRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id"],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" }
+      }
+    },
+    "activateBaselineRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_id",
+        "baseline_version",
+        "expected_revision"
+      ],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "baseline_version": { "$ref": "#/$defs/baselineVersionId" },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "baselineMutationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment", "baseline", "event"],
+      "properties": {
+        "assessment": { "$ref": "#/$defs/assessment" },
+        "baseline": { "$ref": "#/$defs/baselineVersion" },
+        "event": { "$ref": "#/$defs/auditEvent" }
+      }
+    },
+    "baselineListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "active_baseline_version",
+        "baselines"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "active_baseline_version": {
+          "oneOf": [
+            { "$ref": "#/$defs/baselineVersionId" },
+            { "type": "null" }
+          ]
+        },
+        "baselines": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/baselineVersion" }
+        }
+      }
+    },
+    "comparabilitySide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coverage", "scan_time", "access_point_count"],
+      "properties": {
+        "coverage": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/band" }
+        },
+        "scan_time": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            { "type": "null" }
+          ]
+        },
+        "access_point_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "comparability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "positive_findings_allowed",
+        "absence_findings_allowed",
+        "lifecycle_updates_allowed",
+        "reasons",
+        "baseline",
+        "current"
+      ],
+      "properties": {
+        "status": { "$ref": "#/$defs/comparabilityStatus" },
+        "positive_findings_allowed": {
+          "type": "boolean"
+        },
+        "absence_findings_allowed": {
+          "type": "boolean"
+        },
+        "lifecycle_updates_allowed": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "current_scan_contains_no_access_points",
+              "current_scan_does_not_cover_baseline_bands",
+              "band_coverage_is_incomplete",
+              "scan_duration_is_unknown",
+              "current_scan_is_materially_shorter"
+            ]
+          }
+        },
+        "baseline": { "$ref": "#/$defs/comparabilitySide" },
+        "current": { "$ref": "#/$defs/comparabilitySide" }
+      }
+    },
+    "fieldChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after"],
+      "properties": {
+        "before": {},
+        "after": {}
+      }
+    },
+    "accessPointChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "asset_id",
+        "network_id",
+        "bssid",
+        "evidence_id",
+        "changes"
+      ],
+      "properties": {
+        "asset_id": { "$ref": "#/$defs/assetId" },
+        "network_id": { "$ref": "#/$defs/networkId" },
+        "bssid": {
+          "type": "string",
+          "pattern": "^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$"
+        },
+        "evidence_id": { "$ref": "#/$defs/evidenceId" },
+        "changes": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "ssid": { "$ref": "#/$defs/fieldChange" },
+            "hidden": { "$ref": "#/$defs/fieldChange" },
+            "encryption": { "$ref": "#/$defs/fieldChange" },
+            "wps": { "$ref": "#/$defs/fieldChange" },
+            "channel": { "$ref": "#/$defs/fieldChange" },
+            "vendor": { "$ref": "#/$defs/fieldChange" }
+          }
+        }
+      }
+    },
+    "networkChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["network_id", "ssid", "changes"],
+      "properties": {
+        "network_id": { "$ref": "#/$defs/networkId" },
+        "ssid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "changes": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "asset_ids": { "$ref": "#/$defs/fieldChange" },
+            "channels": { "$ref": "#/$defs/fieldChange" },
+            "encryption_codes": { "$ref": "#/$defs/fieldChange" },
+            "vendors": { "$ref": "#/$defs/fieldChange" }
+          }
+        }
+      }
+    },
+    "diffSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "access_points_added",
+        "access_points_removed",
+        "access_points_changed",
+        "networks_added",
+        "networks_removed",
+        "networks_changed"
+      ],
+      "properties": {
+        "access_points_added": { "type": "integer", "minimum": 0 },
+        "access_points_removed": { "type": "integer", "minimum": 0 },
+        "access_points_changed": { "type": "integer", "minimum": 0 },
+        "networks_added": { "type": "integer", "minimum": 0 },
+        "networks_removed": { "type": "integer", "minimum": 0 },
+        "networks_changed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "baseline_snapshot_id",
+        "current_snapshot_id",
+        "comparability",
+        "access_points",
+        "networks",
+        "summary"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "comparison_id": { "$ref": "#/$defs/comparisonId" },
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "baseline_version_id": { "$ref": "#/$defs/baselineVersionId" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "baseline_snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "current_snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "comparability": { "$ref": "#/$defs/comparability" },
+        "access_points": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["added", "removed", "changed"],
+          "properties": {
+            "added": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/accessPoint" }
+            },
+            "removed": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/accessPoint" }
+            },
+            "changed": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/accessPointChange" }
+            }
+          }
+        },
+        "networks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["added", "removed", "changed"],
+          "properties": {
+            "added": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/network" }
+            },
+            "removed": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/network" }
+            },
+            "changed": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/networkChange" }
+            }
+          }
+        },
+        "summary": { "$ref": "#/$defs/diffSummary" },
+        "current_snapshot": { "$ref": "#/$defs/resolvedSnapshot" }
+      }
+    },
+    "confidenceFactors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base", "comparability_penalty", "evidence_bonus"],
+      "properties": {
+        "base": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "comparability_penalty": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidence_bonus": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.05
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finding_id",
+        "rule_id",
+        "title",
+        "severity",
+        "confidence",
+        "subject_id",
+        "summary",
+        "evidence_ids",
+        "details",
+        "confidence_factors"
+      ],
+      "properties": {
+        "finding_id": { "$ref": "#/$defs/findingId" },
+        "rule_id": { "$ref": "#/$defs/ruleId" },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "severity": { "$ref": "#/$defs/severity" },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "subject_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/assetId" },
+            { "$ref": "#/$defs/networkId" }
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/evidenceId" }
+        },
+        "details": {
+          "type": "object"
+        },
+        "confidence_factors": {
+          "$ref": "#/$defs/confidenceFactors"
+        },
+        "status": { "$ref": "#/$defs/findingStatus" },
+        "currently_observed": { "type": "boolean" },
+        "first_seen": { "$ref": "#/$defs/timestamp" },
+        "last_seen": { "$ref": "#/$defs/timestamp" },
+        "occurrence_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status_updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "comparisonPreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "mode",
+        "assessment_revision",
+        "baseline",
+        "current_snapshot",
+        "diff",
+        "candidate_findings"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "mode": { "const": "preview" },
+        "assessment_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "baseline": { "$ref": "#/$defs/baselineVersion" },
+        "current_snapshot": { "$ref": "#/$defs/resolvedSnapshot" },
+        "diff": { "$ref": "#/$defs/comparison" },
+        "candidate_findings": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/finding" }
+        }
+      }
+    },
+    "compareReconRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id", "scan"],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "scan": { "type": "object" },
+        "scan_metadata": { "$ref": "#/$defs/scanMetadataInput" }
+      }
+    },
+    "analyzeReconRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id", "expected_revision", "scan"],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "scan": { "type": "object" },
+        "scan_metadata": { "$ref": "#/$defs/scanMetadataInput" }
+      }
+    },
+    "lifecycleChanges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "opened",
+        "reopened",
+        "updated",
+        "resolved",
+        "preserved_false_positive",
+        "mutated"
+      ],
+      "properties": {
+        "opened": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/findingId" }
+        },
+        "reopened": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/findingId" }
+        },
+        "updated": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/findingId" }
+        },
+        "resolved": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/findingId" }
+        },
+        "preserved_false_positive": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/findingId" }
+        },
+        "mutated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "persistedComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "comparison_id",
+        "assessment_id",
+        "baseline_version_id",
+        "created_at",
+        "baseline_snapshot_id",
+        "current_snapshot_id",
+        "current_snapshot_digest",
+        "comparability_status",
+        "observed_finding_ids",
+        "lifecycle",
+        "comparison"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "comparison_id": { "$ref": "#/$defs/comparisonId" },
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "baseline_version_id": { "$ref": "#/$defs/baselineVersionId" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "baseline_snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "current_snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "current_snapshot_digest": { "$ref": "#/$defs/digest" },
+        "comparability_status": { "$ref": "#/$defs/comparabilityStatus" },
+        "observed_finding_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/findingId" }
+        },
+        "lifecycle": { "$ref": "#/$defs/lifecycleChanges" },
+        "comparison": { "$ref": "#/$defs/comparison" }
+      }
+    },
+    "analysisResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "assessment",
+        "comparison",
+        "findings",
+        "lifecycle",
+        "event"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "assessment": { "$ref": "#/$defs/assessment" },
+        "comparison": { "$ref": "#/$defs/persistedComparison" },
+        "findings": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/finding" }
+        },
+        "lifecycle": { "$ref": "#/$defs/lifecycleChanges" },
+        "event": { "$ref": "#/$defs/auditEvent" }
+      }
+    },
+    "listFindingsRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment_id"],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "status": { "$ref": "#/$defs/findingStatus" }
+      }
+    },
+    "findingListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "findings"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "findings": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/finding" }
+        }
+      }
+    },
+    "updateFindingRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_id",
+        "finding_id",
+        "expected_revision",
+        "status"
+      ],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "finding_id": { "$ref": "#/$defs/findingId" },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": { "$ref": "#/$defs/operatorFindingStatus" },
+        "note": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "findingMutationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessment", "finding", "event"],
+      "properties": {
+        "assessment": { "$ref": "#/$defs/assessment" },
+        "finding": { "$ref": "#/$defs/finding" },
+        "event": { "$ref": "#/$defs/auditEvent" }
+      }
+    },
+    "aiOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "share_ssids"],
+      "properties": {
+        "language": { "$ref": "#/$defs/language" },
+        "share_ssids": { "type": "boolean" }
+      }
+    },
+    "aiAnalysisRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_id",
+        "comparison_id",
+        "options"
+      ],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "comparison_id": { "$ref": "#/$defs/comparisonId" },
+        "finding_ids": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/findingId" }
+        },
+        "options": { "$ref": "#/$defs/aiOptions" }
+      }
+    },
+    "aiPrepareResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "model",
+        "language",
+        "share_ssids",
+        "cloud_payload"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "language": { "$ref": "#/$defs/language" },
+        "share_ssids": { "type": "boolean" },
+        "cloud_payload": {
+          "type": "object"
+        }
+      }
+    },
+    "findingExplanation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finding_id",
+        "explanation",
+        "alternative_explanations",
+        "validation_steps",
+        "evidence_ids"
+      ],
+      "properties": {
+        "finding_id": { "$ref": "#/$defs/findingId" },
+        "evidence_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/evidenceId" }
+        },
+        "explanation": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "alternative_explanations": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "validation_steps": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        }
+      }
+    },
+    "aiAnalysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analysis_id",
+        "model",
+        "language",
+        "summary",
+        "finding_explanations",
+        "report_sections"
+      ],
+      "properties": {
+        "analysis_id": { "$ref": "#/$defs/analysisId" },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "language": { "$ref": "#/$defs/language" },
+        "summary": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "finding_explanations": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/findingExplanation" }
+        },
+        "report_sections": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "executive_summary",
+            "technical_summary",
+            "change_summary",
+            "limitations"
+          ],
+          "properties": {
+            "executive_summary": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "technical_summary": {
+              "type": "string",
+              "maxLength": 8000
+            },
+            "change_summary": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "limitations": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "string",
+                "maxLength": 1000
+              }
+            }
+          }
+        }
+      }
+    },
+    "aiStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "code", "message"],
+      "properties": {
+        "state": {
+          "enum": ["complete", "partial", "unavailable"]
+        },
+        "code": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
+            { "type": "null" }
+          ]
+        },
+        "message": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            { "type": "null" }
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "tokenUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_tokens": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "aiAnalysisResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "analysis",
+        "ai_status",
+        "model",
+        "token_usage"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "analysis": {
+          "oneOf": [
+            { "$ref": "#/$defs/aiAnalysis" },
+            { "type": "null" }
+          ]
+        },
+        "ai_status": { "$ref": "#/$defs/aiStatus" },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "token_usage": { "$ref": "#/$defs/tokenUsage" }
+      }
+    },
+    "reportRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_id",
+        "comparison_id",
+        "format"
+      ],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "comparison_id": { "$ref": "#/$defs/comparisonId" },
+        "format": { "$ref": "#/$defs/reportFormat" },
+        "ai_analysis": {
+          "oneOf": [
+            { "$ref": "#/$defs/aiAnalysis" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "reportResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "format",
+        "filename",
+        "mime_type",
+        "sha256",
+        "content"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "format": { "$ref": "#/$defs/reportFormat" },
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "mime_type": {
+          "enum": [
+            "application/json",
+            "text/html"
+          ]
+        },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "content": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

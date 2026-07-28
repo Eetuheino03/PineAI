@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""PineAI module backend."""
+"""Hak5 module adapter for PineAI Baseline & Drift."""
 
 import logging
 import os
@@ -9,149 +9,115 @@ import sys
 from pineapple.modules import Module, Request
 
 
-ASSETS_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+ASSETS_DIRECTORY = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "assets"
+)
 if ASSETS_DIRECTORY not in sys.path:
     sys.path.insert(0, ASSETS_DIRECTORY)
 
 from pineai_backend import __version__  # noqa: E402
-from pineai_backend.adaptive_recon_service import AdaptiveReconService  # noqa: E402
-from pineai_backend.advisor_service import AttackPathAdvisorService  # noqa: E402
-from pineai_backend.config import (  # noqa: E402
-    ConfigError,
-    delete_api_key,
-    public_status,
-    save_api_key,
-    update_frontend_settings,
-)
-from pineai_backend.engagement_store import EngagementStore  # noqa: E402
-from pineai_backend.errors import BackendError  # noqa: E402
-from pineai_backend.service import TargetProfilerService  # noqa: E402
 
 
 module = Module("PineAI", logging.INFO)
 
 
+def _backend_failure(failure):
+    return (
+        {"error": {"code": failure.code, "message": failure.safe_message}},
+        False,
+    )
+
+
+def _configuration_failure(failure):
+    return (
+        {"error": {"code": "configuration_error", "message": str(failure)}},
+        False,
+    )
+
+
+def _service():
+    # Keep Mark VII cold-start quick: import the analysis graph only when an
+    # assurance action is actually requested.
+    from pineai_backend.assurance_service import AssuranceService
+
+    return AssuranceService()
+
+
+def _store():
+    from pineai_backend.assessment_store import AssessmentStore
+
+    return AssessmentStore()
+
+
+def _settings_response(status):
+    return {
+        "schema_version": "1.0",
+        "model": status["model"],
+        "language": status["language"],
+        "share_ssids": status["share_ssids"],
+        "api_key_configured": status["configured"],
+        "api_key_source": status["key_source"],
+    }
+
+
 @module.handles_action("health")
 def health(_request: Request):
-    """Return safe runtime configuration without exposing secrets."""
+    """Return only safe startup information and never import analysis services."""
+    from pineai_backend.config import ConfigError, public_status
+
     try:
         status = public_status()
         return {
             "status": "ok",
             "module": "PineAI",
+            "product_mode": "baseline_and_drift",
             "version": __version__,
             "backend_version": __version__,
             "model": status["model"],
             "api_key_configured": status["configured"],
             "language": status["language"],
             "share_ssids": status["share_ssids"],
-            "supported_band_count": len(status["supported_bands"]),
+            "offline_complete": True,
+            "recon_control": False,
         }
     except ConfigError as failure:
-        return (
-            {
-                "error": {
-                    "code": "configuration_error",
-                    "message": str(failure),
-                }
-            },
-            False,
-        )
-
-
-@module.handles_action("profile_recon")
-def profile_recon(request: Request):
-    """Profile Recon JSON supplied by an authenticated Hak5 frontend session."""
-    try:
-        scan = getattr(request, "scan", None)
-        metadata = getattr(request, "scan_metadata", None)
-        options = getattr(request, "options", None)
-        return TargetProfilerService().profile_recon(scan, metadata, options)
-    except BackendError as failure:
-        return (
-            {
-                "error": {
-                    "code": failure.code,
-                    "message": failure.safe_message,
-                }
-            },
-            False,
-        )
-
-
-def _backend_failure(failure: BackendError):
-    return (
-        {
-            "error": {
-                "code": failure.code,
-                "message": failure.safe_message,
-            }
-        },
-        False,
-    )
-
-
-def _configuration_failure(failure: ConfigError):
-    return (
-        {
-            "error": {
-                "code": "configuration_error",
-                "message": str(failure),
-            }
-        },
-        False,
-    )
+        return _configuration_failure(failure)
 
 
 @module.handles_action("get_settings")
 def get_settings(_request: Request):
-    """Return the non-secret settings used by the frontend."""
+    from pineai_backend.config import ConfigError, public_status
+
     try:
-        status = public_status()
-        return {
-            "schema_version": "1.0",
-            "model": status["model"],
-            "language": status["language"],
-            "share_ssids": status["share_ssids"],
-            "max_ai_targets": status["max_ai_targets"],
-            "supported_bands": status["supported_bands"],
-            "api_key_configured": status["configured"],
-            "api_key_source": status["key_source"],
-        }
+        return _settings_response(public_status())
     except ConfigError as failure:
         return _configuration_failure(failure)
 
 
 @module.handles_action("update_settings")
 def update_settings(request: Request):
-    """Persist only the frontend-editable non-secret settings."""
+    from pineai_backend.config import ConfigError, update_frontend_settings
+
     try:
-        status = update_frontend_settings(getattr(request, "settings", None))
-        return {
-            "schema_version": "1.0",
-            "model": status["model"],
-            "language": status["language"],
-            "share_ssids": status["share_ssids"],
-            "max_ai_targets": status["max_ai_targets"],
-            "supported_bands": status["supported_bands"],
-            "api_key_configured": status["configured"],
-            "api_key_source": status["key_source"],
-        }
+        return _settings_response(
+            update_frontend_settings(getattr(request, "settings", None))
+        )
     except ConfigError as failure:
         return _configuration_failure(failure)
 
 
 @module.handles_action("set_openai_api_key")
 def set_openai_api_key(request: Request):
-    """Store a key without echoing it back to the browser."""
+    from pineai_backend.config import ConfigError, public_status, save_api_key
+
     try:
         transport_secure = getattr(request, "transport_secure", None)
-        insecure_acknowledged = getattr(
+        acknowledged = getattr(
             request, "insecure_transport_acknowledged", False
         )
         if not isinstance(transport_secure, bool):
             raise ConfigError("transport_secure must be a boolean")
-        if not transport_secure and insecure_acknowledged is not True:
+        if not transport_secure and acknowledged is not True:
             raise ConfigError(
                 "insecure HTTP key submission requires explicit acknowledgement"
             )
@@ -167,7 +133,8 @@ def set_openai_api_key(request: Request):
 
 @module.handles_action("delete_openai_api_key")
 def delete_openai_api_key(_request: Request):
-    """Delete the managed key file and report any environment override."""
+    from pineai_backend.config import ConfigError, delete_api_key, public_status
+
     try:
         delete_api_key()
         status = public_status()
@@ -179,40 +146,33 @@ def delete_openai_api_key(_request: Request):
         return _configuration_failure(failure)
 
 
-@module.handles_action("prepare_profile_recon")
-def prepare_profile_recon(request: Request):
-    """Return the exact privacy-filtered profiler cloud payload."""
+@module.handles_action("assurance_capabilities")
+def assurance_capabilities(_request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
-        return TargetProfilerService().prepare_recon(
-            getattr(request, "scan", None),
-            getattr(request, "scan_metadata", None),
-            getattr(request, "options", None),
-        )
+        return _service().capabilities()
     except BackendError as failure:
         return _backend_failure(failure)
 
 
-@module.handles_action("advisor_capabilities")
-def advisor_capabilities(_request: Request):
+@module.handles_action("create_assessment")
+def create_assessment(request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
-        return AttackPathAdvisorService().capabilities()
+        return _store().create(getattr(request, "assessment", None))
     except BackendError as failure:
         return _backend_failure(failure)
 
 
-@module.handles_action("create_engagement")
-def create_engagement(request: Request):
-    try:
-        return EngagementStore().create(getattr(request, "engagement", None))
-    except BackendError as failure:
-        return _backend_failure(failure)
+@module.handles_action("get_assessment")
+def get_assessment(request: Request):
+    from pineai_backend.errors import BackendError
 
-
-@module.handles_action("get_engagement")
-def get_engagement(request: Request):
     try:
-        return EngagementStore().get(
-            getattr(request, "engagement_id", None),
+        return _service().assessment_detail(
+            getattr(request, "assessment_id", None),
             getattr(request, "after_sequence", 0),
             getattr(request, "limit", 100),
         )
@@ -220,23 +180,28 @@ def get_engagement(request: Request):
         return _backend_failure(failure)
 
 
-@module.handles_action("list_engagements")
-def list_engagements(request: Request):
+@module.handles_action("list_assessments")
+def list_assessments(request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
         return {
-            "engagements": EngagementStore().list(
+            "schema_version": "1.0",
+            "assessments": _store().list(
                 getattr(request, "include_archived", False)
-            )
+            ),
         }
     except BackendError as failure:
         return _backend_failure(failure)
 
 
-@module.handles_action("update_engagement")
-def update_engagement(request: Request):
+@module.handles_action("update_assessment")
+def update_assessment(request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
-        return EngagementStore().update(
-            getattr(request, "engagement_id", None),
+        return _store().update(
+            getattr(request, "assessment_id", None),
             getattr(request, "expected_revision", None),
             getattr(request, "changes", None),
         )
@@ -244,156 +209,180 @@ def update_engagement(request: Request):
         return _backend_failure(failure)
 
 
-@module.handles_action("archive_engagement")
-def archive_engagement(request: Request):
+@module.handles_action("archive_assessment")
+def archive_assessment(request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
-        return EngagementStore().archive(
-            getattr(request, "engagement_id", None),
+        return _store().archive(
+            getattr(request, "assessment_id", None),
             getattr(request, "expected_revision", None),
         )
     except BackendError as failure:
         return _backend_failure(failure)
 
 
-@module.handles_action("append_engagement_event")
-def append_engagement_event(request: Request):
+@module.handles_action("resolve_recon")
+def resolve_recon(request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
-        return EngagementStore().append_event(
-            getattr(request, "engagement_id", None),
+        return _service().resolve_recon(
+            getattr(request, "scan", None),
+            getattr(request, "scan_metadata", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("create_baseline_version")
+def create_baseline_version(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        result = _service().create_baseline_version(
+            getattr(request, "assessment_id", None),
             getattr(request, "expected_revision", None),
-            getattr(request, "event", None),
+            getattr(request, "scan", None),
+            getattr(request, "scan_metadata", None),
+            getattr(request, "label", ""),
+        )
+        result["baseline"] = result.pop("baseline_version")
+        return result
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("list_baseline_versions")
+def list_baseline_versions(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().list_baseline_versions(
+            getattr(request, "assessment_id", None)
         )
     except BackendError as failure:
         return _backend_failure(failure)
 
 
-@module.handles_action("advise_attack_paths")
-def advise_attack_paths(request: Request):
+@module.handles_action("activate_baseline_version")
+def activate_baseline_version(request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
-        return AttackPathAdvisorService().advise(
-            getattr(request, "engagement_id", None),
-            getattr(request, "profile_result", None),
-            getattr(request, "target_ids", None),
-            getattr(request, "options", None),
+        result = _store().activate_baseline_version(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "baseline_version", None),
+        )
+        result["baseline"] = result.pop("baseline_version")
+        return result
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("compare_recon")
+def compare_recon(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().compare_recon(
+            getattr(request, "assessment_id", None),
+            getattr(request, "scan", None),
+            getattr(request, "scan_metadata", None),
         )
     except BackendError as failure:
         return _backend_failure(failure)
 
 
-@module.handles_action("prepare_attack_paths")
-def prepare_attack_paths(request: Request):
-    """Return the exact policy-filtered advisor cloud payload."""
+@module.handles_action("analyze_recon")
+def analyze_recon(request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
-        return AttackPathAdvisorService().prepare_advice(
-            getattr(request, "engagement_id", None),
-            getattr(request, "profile_result", None),
-            getattr(request, "target_ids", None),
-            getattr(request, "options", None),
+        return _service().analyze_recon(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_revision", None),
+            getattr(request, "scan", None),
+            getattr(request, "scan_metadata", None),
         )
     except BackendError as failure:
         return _backend_failure(failure)
 
 
-def _adaptive_request(request: Request, method: str):
-    service = AdaptiveReconService()
-    function = getattr(service, method)
-    return function(
-        getattr(request, "engagement_id", None),
-        getattr(request, "expected_revision", None),
-        getattr(request, "profile_result", None),
-        getattr(request, "advisor_result", None),
-        getattr(request, "selected_path_ids", None),
-        getattr(request, "history", None),
-        getattr(request, "device_context", None),
-        getattr(request, "options", None),
-    )
+@module.handles_action("list_findings")
+def list_findings(request: Request):
+    from pineai_backend.errors import BackendError
 
-
-@module.handles_action("adaptive_recon_capabilities")
-def adaptive_recon_capabilities(_request: Request):
     try:
-        return AdaptiveReconService().capabilities()
-    except BackendError as failure:
-        return _backend_failure(failure)
-
-
-@module.handles_action("prepare_adaptive_recon")
-def prepare_adaptive_recon(request: Request):
-    try:
-        return _adaptive_request(request, "prepare")
-    except BackendError as failure:
-        return _backend_failure(failure)
-
-
-@module.handles_action("recommend_adaptive_recon")
-def recommend_adaptive_recon(request: Request):
-    try:
-        return _adaptive_request(request, "recommend")
-    except BackendError as failure:
-        return _backend_failure(failure)
-
-
-@module.handles_action("get_recon_plan")
-def get_recon_plan(request: Request):
-    try:
-        return AdaptiveReconService().get_plan(
-            getattr(request, "engagement_id", None),
-            getattr(request, "plan_id", None),
-        )
-    except BackendError as failure:
-        return _backend_failure(failure)
-
-
-@module.handles_action("list_recon_plans")
-def list_recon_plans(request: Request):
-    try:
+        status = getattr(request, "status", None)
+        statuses = [status] if status is not None else None
         return {
-            "plans": AdaptiveReconService().list_plans(
-                getattr(request, "engagement_id", None)
-            )
+            "schema_version": "1.0",
+            "findings": _store().list_findings(
+                getattr(request, "assessment_id", None), statuses
+            ),
         }
     except BackendError as failure:
         return _backend_failure(failure)
 
 
-@module.handles_action("approve_recon_plan")
-def approve_recon_plan(request: Request):
+@module.handles_action("update_finding")
+def update_finding(request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
-        return AdaptiveReconService().approve(
-            getattr(request, "engagement_id", None),
+        return _store().update_finding(
+            getattr(request, "assessment_id", None),
             getattr(request, "expected_revision", None),
-            getattr(request, "plan_id", None),
-            getattr(request, "candidate_id", None),
-            getattr(request, "device_context", None),
+            getattr(request, "finding_id", None),
+            getattr(request, "status", None),
+            getattr(request, "note", ""),
         )
     except BackendError as failure:
         return _backend_failure(failure)
 
 
-@module.handles_action("record_recon_scan_started")
-def record_recon_scan_started(request: Request):
+@module.handles_action("prepare_ai_analysis")
+def prepare_ai_analysis(request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
-        return AdaptiveReconService().record_started(
-            getattr(request, "engagement_id", None),
-            getattr(request, "expected_revision", None),
-            getattr(request, "plan_id", None),
-            getattr(request, "start_response", None),
+        return _service().prepare_ai_analysis(
+            getattr(request, "assessment_id", None),
+            getattr(request, "comparison_id", None),
+            getattr(request, "finding_ids", None),
+            getattr(request, "options", None),
         )
     except BackendError as failure:
         return _backend_failure(failure)
 
 
-@module.handles_action("record_recon_scan_finished")
-def record_recon_scan_finished(request: Request):
+@module.handles_action("generate_ai_analysis")
+def generate_ai_analysis(request: Request):
+    from pineai_backend.errors import BackendError
+
     try:
-        return AdaptiveReconService().record_finished(
-            getattr(request, "engagement_id", None),
-            getattr(request, "expected_revision", None),
-            getattr(request, "plan_id", None),
-            getattr(request, "outcome", None),
-            getattr(request, "scan_id", None),
-            getattr(request, "profile_result", None),
-            getattr(request, "error_code", None),
+        return _service().generate_ai_analysis(
+            getattr(request, "assessment_id", None),
+            getattr(request, "comparison_id", None),
+            getattr(request, "finding_ids", None),
+            getattr(request, "options", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("generate_report")
+def generate_report_action(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        return _service().generate_report(
+            getattr(request, "assessment_id", None),
+            getattr(request, "comparison_id", None),
+            getattr(request, "format", None),
+            getattr(request, "ai_analysis", None),
         )
     except BackendError as failure:
         return _backend_failure(failure)

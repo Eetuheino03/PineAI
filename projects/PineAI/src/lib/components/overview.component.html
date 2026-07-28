@@ -1,109 +1,104 @@
 <section class="view">
     <header class="view-header">
         <div>
-            <h2>Overview</h2>
-            <p>Current engagement and wireless assessment readiness.</p>
+            <div class="eyebrow">Baseline &amp; Drift</div>
+            <h2>Wireless assurance at a glance</h2>
+            <p>Deterministic changes and evidence remain available without an AI connection.</p>
         </div>
         <button mat-stroked-button (click)="refresh()" [disabled]="refreshing">
             <mat-icon>refresh</mat-icon>
-            Refresh
+            {{ refreshing ? 'Refreshing…' : 'Refresh state' }}
         </button>
     </header>
 
     <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+    <div *ngIf="partialServices.length" class="warning-banner" role="status">
+        <strong>Partial offline mode:</strong>
+        {{ partialServices.join(', ') }} could not be refreshed. Other views remain usable.
+    </div>
+
     <div class="status-banner">
-        <strong>Recommended next step</strong>
+        <strong>Next safe step</strong>
         <div>{{ nextAction }}</div>
     </div>
 
     <div class="grid">
         <mat-card>
             <mat-card-content>
-                <div class="metric">{{ pineai.scans.length }}</div>
-                <div class="metric-label">Saved Recon scans</div>
+                <div class="metric">{{ pineai.assessments.length }}</div>
+                <div class="metric-label">Active assessments</div>
             </mat-card-content>
         </mat-card>
         <mat-card>
             <mat-card-content>
-                <div class="metric">{{ pineai.profileResult?.targets?.length || 0 }}</div>
-                <div class="metric-label">Profiled targets</div>
+                <div class="metric">{{ pineai.baselines.length }}</div>
+                <div class="metric-label">Baseline versions</div>
             </mat-card-content>
         </mat-card>
         <mat-card>
             <mat-card-content>
-                <div class="metric">{{ pineai.selectedTargetIds.length }}</div>
-                <div class="metric-label">Selected targets</div>
-            </mat-card-content>
-        </mat-card>
-        <mat-card>
-            <mat-card-content>
-                <div class="metric">{{ pineai.sessionHistory.length }}</div>
-                <div class="metric-label">Session snapshots</div>
+                <div class="metric">{{ openFindings }}</div>
+                <div class="metric-label">Open or acknowledged findings</div>
             </mat-card-content>
         </mat-card>
     </div>
 
-    <div class="grid" style="margin-top: 16px">
+    <div class="grid two" style="margin-top: 16px">
         <mat-card>
-            <mat-card-title>Device</mat-card-title>
+            <mat-card-title>Current context</mat-card-title>
             <mat-card-content class="stack">
                 <div class="row">
-                    <span>Backend</span>
+                    <span>Assessment</span>
                     <span class="spacer"></span>
-                    <span class="badge complete">{{ pineai.health?.status || 'unknown' }}</span>
+                    <strong>{{ pineai.activeAssessment?.name || 'Not selected' }}</strong>
                 </div>
                 <div class="row">
-                    <span>Recon</span>
+                    <span>Recon scan</span>
                     <span class="spacer"></span>
-                    <span class="badge" [class.medium]="pineai.reconStatus?.scanRunning">
-                        {{ pineai.reconStatus?.scanRunning ? 'running' : 'idle' }}
+                    <span class="mono">{{ pineai.selectedScan?.scan_id || 'Not loaded' }}</span>
+                </div>
+                <div class="row">
+                    <span>Active baseline</span>
+                    <span class="spacer"></span>
+                    <span class="mono break-all">{{ pineai.activeBaselineId() || 'Not activated' }}</span>
+                </div>
+                <div class="row">
+                    <span>Comparability</span>
+                    <span class="spacer"></span>
+                    <span
+                        class="badge"
+                        [ngClass]="pineai.comparabilityLabel(pineai.analysis || pineai.comparison)">
+                        {{ pineai.comparabilityLabel(pineai.analysis || pineai.comparison) }}
                     </span>
-                </div>
-                <div class="row">
-                    <span>Configured bands</span>
-                    <span class="spacer"></span>
-                    <strong>{{ pineai.settings?.supported_bands?.length || 0 }}</strong>
                 </div>
             </mat-card-content>
         </mat-card>
 
         <mat-card>
-            <mat-card-title>AI</mat-card-title>
+            <mat-card-title>Trust boundary</mat-card-title>
             <mat-card-content class="stack">
-                <div class="row">
-                    <span>Model</span>
-                    <span class="spacer"></span>
-                    <strong>{{ pineai.settings?.model || '—' }}</strong>
+                <div class="step">
+                    <span class="step-number">1</span>
+                    <div>
+                        <strong>Code decides</strong>
+                        <div class="muted">Diffs, rules, evidence, severity and confidence are deterministic.</div>
+                    </div>
                 </div>
-                <div class="row">
-                    <span>API key</span>
-                    <span class="spacer"></span>
-                    <span class="badge" [class.complete]="pineai.settings?.api_key_configured">
-                        {{ pineai.settings?.api_key_configured ? 'configured' : 'not configured' }}
-                    </span>
+                <div class="step">
+                    <span class="step-number">2</span>
+                    <div>
+                        <strong>Operator controls state</strong>
+                        <div class="muted">Baselines and finding decisions require explicit actions.</div>
+                    </div>
                 </div>
-                <div class="row">
-                    <span>SSID sharing</span>
-                    <span class="spacer"></span>
-                    <strong>{{ pineai.settings?.share_ssids ? 'enabled' : 'disabled' }}</strong>
-                </div>
-            </mat-card-content>
-        </mat-card>
-
-        <mat-card>
-            <mat-card-title>Engagement</mat-card-title>
-            <mat-card-content *ngIf="pineai.activeEngagement; else noEngagement" class="stack">
-                <strong>{{ pineai.activeEngagement.name }}</strong>
-                <div>Revision {{ pineai.activeEngagement.revision }}</div>
-                <div>
-                    <span class="badge" [class.complete]="pineai.activeEngagement.status === 'active'">
-                        {{ pineai.activeEngagement.status }}
-                    </span>
+                <div class="step">
+                    <span class="step-number">3</span>
+                    <div>
+                        <strong>AI only explains</strong>
+                        <div class="muted">Optional text can never change authoritative results.</div>
+                    </div>
                 </div>
             </mat-card-content>
-            <ng-template #noEngagement>
-                <mat-card-content class="muted">No engagement selected.</mat-card-content>
-            </ng-template>
         </mat-card>
     </div>
 </section>

@@ -1,5 +1,4 @@
 import io
-import datetime
 import json
 import tempfile
 import unittest
@@ -19,90 +18,105 @@ import sys
 sys.path.insert(0, str(ASSETS))
 
 import pineai_cli  # noqa: E402
-from pineai_backend.advisor_service import AttackPathAdvisorService  # noqa: E402
-from pineai_backend.engagement_store import EngagementStore  # noqa: E402
-from test_adaptive_recon import device_context  # noqa: E402
-from test_advisor import profile_result  # noqa: E402
-from test_engagement_store import TARGET_ID, engagement_value  # noqa: E402
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "recon_basic.json"
+
+
+def write_json(directory, name, value):
+    path = Path(directory) / name
+    path.write_text(json.dumps(value), encoding="utf-8")
+    return str(path)
 
 
 class CliTests(unittest.TestCase):
     def test_configure_and_status_never_print_key(self):
         with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()
-            with mock.patch("pineai_cli.getpass.getpass", return_value="sk-secret"):
+            with mock.patch(
+                "pineai_cli.getpass.getpass", return_value="sk-secret"
+            ):
                 exit_code = pineai_cli.main(
-                    ["--config-dir", directory, "configure"],
+                    [
+                        "--config-dir",
+                        directory,
+                        "configure",
+                        "--language",
+                        "fi",
+                        "--set-openai-key",
+                    ],
                     stdout=output,
                 )
             self.assertEqual(exit_code, 0)
             self.assertNotIn("sk-secret", output.getvalue())
-            self.assertTrue(json.loads(output.getvalue())["configured"])
+            configured = json.loads(output.getvalue())
+            self.assertTrue(configured["configured"])
+            self.assertEqual(configured["language"], "fi")
 
-    def test_prepare_prints_exact_private_payload(self):
+    def test_resolve_and_invalid_input_exit_codes(self):
         with tempfile.TemporaryDirectory() as directory:
-            output = io.StringIO()
-            exit_code = pineai_cli.main(
-                [
-                    "--config-dir",
-                    directory,
-                    "prepare",
-                    "--input",
-                    str(FIXTURE),
-                ],
-                stdout=output,
+            metadata = write_json(
+                directory,
+                "metadata.json",
+                {"scan_time": 180, "coverage": ["2.4"]},
             )
-            self.assertEqual(exit_code, 0)
-            payload = json.loads(output.getvalue())
-            self.assertNotIn("Example-Corp", json.dumps(payload))
-            self.assertNotIn("AA:BB:CC", json.dumps(payload))
-
-    def test_profile_offline_is_successful_partial_result(self):
-        with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()
-            exit_code = pineai_cli.main(
-                [
-                    "--config-dir",
-                    directory,
-                    "profile",
-                    "--input",
-                    str(FIXTURE),
-                ],
-                stdout=output,
-            )
-            self.assertEqual(exit_code, 0)
             self.assertEqual(
-                json.loads(output.getvalue())["ai_status"]["code"], "not_configured"
+                pineai_cli.main(
+                    [
+                        "--config-dir",
+                        directory,
+                        "resolve",
+                        "--input",
+                        str(FIXTURE),
+                        "--metadata",
+                        metadata,
+                    ],
+                    stdout=output,
+                ),
+                0,
             )
-
-    def test_invalid_input_exit_code(self):
-        with tempfile.TemporaryDirectory() as directory:
-            invalid = Path(directory) / "bad.json"
+            self.assertEqual(
+                json.loads(output.getvalue())["snapshot"]["summary"][
+                    "access_point_count"
+                ],
+                3,
+            )
+            invalid = Path(directory) / "invalid.json"
             invalid.write_text("not json", encoding="utf-8")
             errors = io.StringIO()
-            exit_code = pineai_cli.main(
-                [
-                    "--config-dir",
-                    directory,
-                    "prepare",
-                    "--input",
-                    str(invalid),
-                ],
-                stderr=errors,
+            self.assertEqual(
+                pineai_cli.main(
+                    [
+                        "--config-dir",
+                        directory,
+                        "resolve",
+                        "--input",
+                        str(invalid),
+                    ],
+                    stderr=errors,
+                ),
+                2,
             )
-            self.assertEqual(exit_code, 2)
             self.assertEqual(
                 json.loads(errors.getvalue())["error"]["code"], "invalid_input"
             )
 
-    def test_engagement_and_offline_advisor_commands(self):
+    def test_assessment_baseline_analyze_findings_and_report_workflow(self):
         with tempfile.TemporaryDirectory() as directory:
-            engagement_input = Path(directory) / "engagement.json"
-            engagement_input.write_text(
-                json.dumps(engagement_value()), encoding="utf-8"
+            assessment_input = write_json(
+                directory,
+                "assessment.json",
+                {"name": "Office", "location": "Helsinki", "notes": ""},
+            )
+            metadata = write_json(
+                directory,
+                "metadata.json",
+                {
+                    "scan_id": "baseline",
+                    "scan_time": 180,
+                    "coverage": ["2.4"],
+                },
             )
             created_output = io.StringIO()
             self.assertEqual(
@@ -110,169 +124,109 @@ class CliTests(unittest.TestCase):
                     [
                         "--config-dir",
                         directory,
-                        "engagement",
+                        "assessment",
                         "create",
                         "--input",
-                        str(engagement_input),
+                        assessment_input,
                     ],
                     stdout=created_output,
                 ),
                 0,
             )
-            created = json.loads(created_output.getvalue())
-            profile_path = Path(directory) / "profile.json"
-            profile_path.write_text(json.dumps(profile_result()), encoding="utf-8")
-            advice_output = io.StringIO()
+            assessment = json.loads(created_output.getvalue())
+
+            baseline_output = io.StringIO()
             self.assertEqual(
                 pineai_cli.main(
                     [
                         "--config-dir",
                         directory,
-                        "advise",
-                        "--engagement-id",
-                        created["engagement_id"],
+                        "baseline",
+                        "create",
+                        assessment["assessment_id"],
+                        "--expected-revision",
+                        str(assessment["revision"]),
                         "--input",
-                        str(profile_path),
-                        "--target-id",
-                        TARGET_ID,
-                        "--no-ai",
+                        str(FIXTURE),
+                        "--metadata",
+                        metadata,
                     ],
-                    stdout=advice_output,
+                    stdout=baseline_output,
                 ),
                 0,
             )
-            advice = json.loads(advice_output.getvalue())
-            self.assertEqual(advice["advisor_status"]["code"], "ai_disabled")
-            self.assertEqual(len(advice["target_results"][0]["paths"]), 3)
+            baseline = json.loads(baseline_output.getvalue())
 
-    def test_adaptive_recon_cli_lifecycle_and_exit_codes(self):
-        with tempfile.TemporaryDirectory() as directory:
-            engagement = EngagementStore(directory).create(engagement_value())
-            advisor = AttackPathAdvisorService(directory).advise(
-                engagement["engagement_id"],
-                profile_result(),
-                [TARGET_ID],
-                {"ai_enabled": False},
-            )
-            path_id = next(
-                path["path_id"]
-                for path in advisor["target_results"][0]["paths"]
-                if any(
-                    step["action_id"] == "collect_additional_recon"
-                    for step in path["steps"]
-                )
-            )
-            observed_at = datetime.datetime.now(
-                datetime.timezone.utc
-            ).isoformat().replace("+00:00", "Z")
-            context = device_context()
-            context["observed_at"] = observed_at
-            request_value = {
-                "engagement_id": engagement["engagement_id"],
-                "expected_revision": 1,
-                "profile_result": profile_result(),
-                "advisor_result": advisor,
-                "selected_path_ids": [path_id],
-                "history": [],
-                "device_context": context,
-            }
-            input_path = Path(directory) / "adaptive.json"
-            input_path.write_text(json.dumps(request_value), encoding="utf-8")
-
-            prepared_output = io.StringIO()
+            activated_output = io.StringIO()
             self.assertEqual(
                 pineai_cli.main(
                     [
                         "--config-dir",
                         directory,
-                        "prepare-recon-plan",
+                        "baseline",
+                        "activate",
+                        assessment["assessment_id"],
+                        "--expected-revision",
+                        str(baseline["assessment"]["revision"]),
+                        baseline["baseline"]["baseline_version_id"],
+                    ],
+                    stdout=activated_output,
+                ),
+                0,
+            )
+            activated = json.loads(activated_output.getvalue())
+
+            changed = json.loads(FIXTURE.read_text(encoding="utf-8"))
+            changed["APResults"].append(
+                {
+                    "ssid": "Example-Corp",
+                    "bssid": "AA:BB:CC:00:00:03",
+                    "encryption": 5,
+                    "channel": 11,
+                }
+            )
+            changed_path = write_json(directory, "changed.json", changed)
+            analyzed_output = io.StringIO()
+            self.assertEqual(
+                pineai_cli.main(
+                    [
+                        "--config-dir",
+                        directory,
+                        "analyze",
+                        assessment["assessment_id"],
+                        "--expected-revision",
+                        str(activated["assessment"]["revision"]),
                         "--input",
-                        str(input_path),
+                        changed_path,
+                        "--metadata",
+                        metadata,
                     ],
-                    stdout=prepared_output,
+                    stdout=analyzed_output,
                 ),
                 0,
             )
-            self.assertNotIn("documented-device-value", prepared_output.getvalue())
+            analyzed = json.loads(analyzed_output.getvalue())
+            self.assertEqual(len(analyzed["findings"]), 1)
 
-            recommended_output = io.StringIO()
+            report_output = io.StringIO()
             self.assertEqual(
                 pineai_cli.main(
                     [
                         "--config-dir",
                         directory,
-                        "recommend-recon-plan",
-                        "--input",
-                        str(input_path),
-                        "--no-ai",
+                        "report",
+                        assessment["assessment_id"],
+                        analyzed["comparison"]["comparison_id"],
+                        "--format",
+                        "json",
                     ],
-                    stdout=recommended_output,
+                    stdout=report_output,
                 ),
                 0,
             )
-            plan = json.loads(recommended_output.getvalue())
-            self.assertEqual(plan["engagement_revision"], 2)
-
-            device_path = Path(directory) / "device.json"
-            context["observed_at"] = datetime.datetime.now(
-                datetime.timezone.utc
-            ).isoformat().replace("+00:00", "Z")
-            device_path.write_text(json.dumps(context), encoding="utf-8")
-            approved_output = io.StringIO()
-            self.assertEqual(
-                pineai_cli.main(
-                    [
-                        "--config-dir",
-                        directory,
-                        "recon-plan",
-                        "approve",
-                        "--engagement-id",
-                        engagement["engagement_id"],
-                        "--revision",
-                        "2",
-                        "--plan-id",
-                        plan["plan_id"],
-                        "--candidate-id",
-                        plan["candidates"][0]["candidate_id"],
-                        "--device-context",
-                        str(device_path),
-                    ],
-                    stdout=approved_output,
-                ),
-                0,
-            )
-            self.assertEqual(
-                json.loads(approved_output.getvalue())["rest_request"]["path"],
-                "/api/recon/start",
-            )
-
-            errors = io.StringIO()
-            self.assertEqual(
-                pineai_cli.main(
-                    [
-                        "--config-dir",
-                        directory,
-                        "recon-plan",
-                        "approve",
-                        "--engagement-id",
-                        engagement["engagement_id"],
-                        "--revision",
-                        "2",
-                        "--plan-id",
-                        plan["plan_id"],
-                        "--candidate-id",
-                        "reconcandidate_ffffffffffff",
-                        "--device-context",
-                        str(device_path),
-                    ],
-                    stderr=errors,
-                ),
-                2,
-            )
-            self.assertIn(
-                json.loads(errors.getvalue())["error"]["code"],
-                ("revision_conflict", "unknown_recon_candidate"),
-            )
+            report = json.loads(report_output.getvalue())
+            self.assertEqual(report["mime_type"], "application/json")
+            self.assertIn("known_ssid_new_bssid", report["content"])
 
 
 if __name__ == "__main__":

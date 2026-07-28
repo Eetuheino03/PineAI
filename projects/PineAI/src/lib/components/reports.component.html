@@ -1,0 +1,175 @@
+<section class="view">
+    <header class="view-header">
+        <div>
+            <h2>Reports</h2>
+            <p>Deterministic JSON and standalone HTML, with optional non-authoritative AI prose.</p>
+        </div>
+    </header>
+
+    <div *ngIf="errorMessage" class="error-banner" role="alert">{{ errorMessage }}</div>
+    <div *ngIf="successMessage" class="success-banner" role="status">{{ successMessage }}</div>
+
+    <div *ngIf="!pineai.activeAssessment" class="empty-state">
+        Select an assessment before generating reports.
+    </div>
+
+    <div *ngIf="pineai.activeAssessment" class="stack">
+        <mat-card>
+            <mat-card-title>Authoritative report</mat-card-title>
+            <mat-card-subtitle>
+                Requires a saved analysis. AI is never required for this export.
+            </mat-card-subtitle>
+            <mat-card-content>
+                <div *ngIf="!pineai.hasComparison()" class="warning-banner">
+                    Save an analysis in Assets &amp; Changes before generating a report.
+                </div>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Format</mat-label>
+                        <mat-select [(ngModel)]="format">
+                            <mat-option value="html">Standalone HTML</mat-option>
+                            <mat-option value="json">JSON</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <mat-checkbox
+                        [(ngModel)]="includeAi"
+                        [disabled]="!pineai.aiAnalysisValue()">
+                        Include clearly labelled AI text
+                    </mat-checkbox>
+                </div>
+                <div class="actions">
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="generateReport()"
+                        [disabled]="busy || !pineai.hasComparison()">
+                        Generate report
+                    </button>
+                    <button
+                        mat-stroked-button
+                        (click)="download()"
+                        [disabled]="!pineai.report">
+                        <mat-icon>download</mat-icon>
+                        Download
+                    </button>
+                </div>
+                <div *ngIf="pineai.report" class="stack" style="margin-top: 16px">
+                    <div class="row">
+                        <strong>{{ pineai.report.filename }}</strong>
+                        <span class="badge">{{ pineai.report.mime_type }}</span>
+                    </div>
+                    <div class="mono break-all">SHA-256 {{ pineai.report.sha256 }}</div>
+                    <pre class="json-preview">{{ reportPreview() }}</pre>
+                </div>
+            </mat-card-content>
+        </mat-card>
+
+        <mat-card>
+            <div class="card-title-row">
+                <div>
+                    <mat-card-title>Optional AI analyst</mat-card-title>
+                    <mat-card-subtitle>
+                        Explains existing structured findings; it cannot create or change them.
+                    </mat-card-subtitle>
+                </div>
+                <span
+                    class="badge"
+                    [class.complete]="pineai.settings?.api_key_configured">
+                    {{ pineai.settings?.api_key_configured ? 'Configured' : 'Offline only' }}
+                </span>
+            </div>
+            <mat-card-content class="stack">
+                <div *ngIf="!pineai.settings?.api_key_configured" class="notice">
+                    PineAI is fully usable offline. Configure an API key only if explanatory prose is wanted.
+                </div>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Language</mat-label>
+                        <mat-select [(ngModel)]="language">
+                            <mat-option value="en">English</mat-option>
+                            <mat-option value="fi">Finnish</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <span>{{ selectedFindingIds.length }} finding(s) selected</span>
+                    <button mat-stroked-button (click)="selectActive()">Select active</button>
+                    <button mat-button (click)="selectedFindingIds = []">Clear</button>
+                </div>
+                <div class="scroll-x" *ngIf="pineai.findings.length">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Use</th>
+                                <th scope="col">Finding</th>
+                                <th scope="col">Severity</th>
+                                <th scope="col">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr *ngFor="let finding of pineai.findings">
+                                <td>
+                                    <mat-checkbox
+                                        [checked]="selected(finding.finding_id)"
+                                        [attr.aria-label]="'Select finding ' + finding.finding_id"
+                                        (change)="toggle(finding.finding_id, $event.checked)">
+                                    </mat-checkbox>
+                                </td>
+                                <td>
+                                    <div>{{ finding.title || finding.rule_id }}</div>
+                                    <div class="mono muted">{{ finding.finding_id }}</div>
+                                </td>
+                                <td><span class="badge" [ngClass]="finding.severity">{{ finding.severity }}</span></td>
+                                <td><span class="badge" [ngClass]="finding.status">{{ finding.status }}</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="actions">
+                    <button
+                        mat-stroked-button
+                        (click)="previewAi()"
+                        [disabled]="busy || !pineai.hasComparison()">
+                        Privacy preview
+                    </button>
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="generateAi()"
+                        [disabled]="busy || !pineai.hasComparison() || !pineai.settings?.api_key_configured">
+                        Generate explanations
+                    </button>
+                </div>
+
+                <mat-card *ngIf="previewVisible && pineai.aiPreview">
+                    <div class="card-title-row">
+                        <mat-card-title>Exact provider payload</mat-card-title>
+                        <button mat-icon-button (click)="previewVisible = false" aria-label="Close privacy preview">
+                            <mat-icon>close</mat-icon>
+                        </button>
+                    </div>
+                    <mat-card-content>
+                        <pre class="json-preview">{{ pineai.aiPreview.cloud_payload | json }}</pre>
+                    </mat-card-content>
+                </mat-card>
+
+                <div
+                    *ngIf="pineai.aiAnalysis && !pineai.aiAnalysisValue()"
+                    class="warning-banner">
+                    AI status:
+                    {{ pineai.aiAnalysis.ai_status?.state || 'unavailable' }} —
+                    {{ pineai.aiAnalysis.ai_status?.message || 'No AI text was returned.' }}
+                    Deterministic reporting remains available.
+                </div>
+
+                <mat-card *ngIf="pineai.aiAnalysisValue()">
+                    <mat-card-title>Non-authoritative AI text</mat-card-title>
+                    <mat-card-content>
+                        <div class="warning-banner">
+                            This prose does not change finding severity, confidence, status or evidence.
+                        </div>
+                        <pre class="json-preview">{{ aiText() }}</pre>
+                    </mat-card-content>
+                </mat-card>
+            </mat-card-content>
+        </mat-card>
+    </div>
+</section>

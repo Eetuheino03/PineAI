@@ -1,192 +1,261 @@
-# PineAI frontend 0.5
+# PineAI Baseline & Drift frontend
 
-The Angular 9 frontend implements the complete operator workflow without
-turning the AI model into an action executor.
+The Angular 9 frontend implements an offline-first wireless assurance
+workflow:
 
 ```text
-Recon -> Target Profiler -> Engagement -> Advisor -> Adaptive Recon
+Assessment -> saved Recon scan -> resolved assets -> baseline
+           -> comparison -> findings -> report
 ```
 
-## Installation
+AI is optional and never controls this sequence.
 
-Build the Hak5 archive from the repository root:
+## Views
 
-```bash
-npm ci
-./build.sh package
-```
+- **Overview** — runtime health, active assessment and baseline, latest
+  comparison, open finding counts, and the next deterministic workflow step.
+- **Recon** — saved Hak5 Recon scans, metadata, load state, and resolver
+  preview. There are no start or stop controls in `0.6.0`.
+- **Assessments** — create, edit, archive, and select one wireless environment.
+- **Baselines** — create immutable versions, inspect them, and explicitly
+  activate one with revision checking.
+- **Assets & Changes** — access points, SSID networks, comparability, and AP or
+  SSID drift.
+- **Findings** — severity, confidence factors, evidence, occurrence history,
+  acknowledgment, false-positive marking, and resolved state.
+- **Reports** — deterministic JSON and standalone HTML export plus optional,
+  labelled AI prose.
+- **Activity** — append-only assessment events.
+- **Settings** — language, optional SSID sharing, and OpenAI key status.
 
-When Angular was built with the Windows Node.js 16 runtime and packaging is
-performed from WSL, assemble that verified output without rebuilding:
+The layout must remain usable in the narrow Mark VII management view. Status
+must be communicated with text in addition to color, all interactive elements
+must be keyboard reachable, and loading or error state in one view must not
+prevent other offline views from opening.
 
-```bash
-PINEAI_SKIP_ANGULAR_BUILD=1 ./build.sh package
-```
+## Backend calls
 
-This mode refuses to run unless `dist/PineAI/bundles/` already exists.
+Every module request includes `"module": "PineAI"`. The complete field
+contract and errors are documented in [backend-api.md](backend-api.md).
 
-Upload `PineAI-0.5.0.tar.gz` through the WiFi Pineapple module management
-interface. For development, copy `dist/PineAI/` to
-`/pineapple/modules/PineAI/`.
+The frontend uses:
 
-The archive has one top-level `PineAI/` directory containing the UMD bundle,
-module metadata, icon, `module.py`, CLI, and standard-library Python backend.
+- `health`
+- `get_settings`, `update_settings`
+- `set_openai_api_key`, `delete_openai_api_key`
+- `assurance_capabilities`
+- `create_assessment`, `get_assessment`, `list_assessments`,
+  `update_assessment`, `archive_assessment`
+- `resolve_recon`
+- `create_baseline_version`, `list_baseline_versions`,
+  `activate_baseline_version`
+- `compare_recon`, `analyze_recon`
+- `list_findings`, `update_finding`
+- `prepare_ai_analysis`, `generate_ai_analysis`
+- `generate_report`
 
-## First run
-
-1. Open **Settings**.
-2. Select the analysis language. Real SSID sharing remains disabled by
-   default.
-3. Add one or more exact `band` values that have been verified on the physical
-   Mark VII. Assign `2.4`, `5`, or both coverages and optionally one default.
-4. Store an OpenAI API key, or leave AI offline and use deterministic results.
-5. Open **Recon** and load a saved scan or confirm a bounded new scan.
-
-Hak5 documents the `band` request field but not its accepted values. PineAI
-therefore ships an empty allowlist and never guesses a value.
-
-## API key handling
-
-`set_openai_api_key` accepts the key in one module request and writes
-`/root/.PineAI/openai.key` with mode `0600`. The response contains only:
+Backend failures have this safe shape:
 
 ```json
 {
-  "api_key_configured": true,
-  "api_key_source": "file"
-}
-```
-
-The field is cleared from the form after every request. It is never stored in
-browser storage or returned by the backend. On HTTP pages, the operator must
-explicitly acknowledge that network observers may see the request. HTTPS or
-the interactive CLI is safer:
-
-```bash
-python3 /pineapple/modules/PineAI/assets/pineai_cli.py configure
-```
-
-`delete_openai_api_key` deletes only the managed file. If
-`OPENAI_API_KEY` is set in the backend environment, the status remains
-configured with source `environment`.
-
-## Frontend module actions
-
-Every module request includes `"module": "PineAI"`.
-
-### Settings
-
-`get_settings` returns schema `1.0`, the fixed model, analysis language,
-SSID-sharing state, maximum target count, API-key status, and supported bands.
-
-`update_settings` accepts only:
-
-```json
-{
-  "settings": {
-    "language": "en",
-    "share_ssids": false,
-    "supported_bands": [
-      {
-        "value": "device-confirmed-value",
-        "covers": ["2.4", "5"],
-        "is_default": true
-      }
-    ]
+  "error": {
+    "code": "revision_conflict",
+    "message": "The assessment changed; refresh it before retrying."
   }
 }
 ```
 
-There may be 0-8 unique printable ASCII values, each 1-32 characters. Coverage
-must contain `2.4`, `5`, or both. At most one entry is the default.
+The UI displays `code: message`, keeps the operator's unsaved form data where
+safe, refreshes authoritative state on a revision conflict, and requires a
+new confirmation before retrying a mutation.
 
-### Exact privacy previews
+## Saved Recon integration
 
-- `prepare_profile_recon` accepts the same fields as `profile_recon` and
-  returns the exact profiler payload without a network request.
-- `prepare_attack_paths` accepts the same fields as `advise_attack_paths` and
-  returns only policy-approved paths in the exact advisor payload.
-- `prepare_adaptive_recon` already provides the corresponding exact Adaptive
-  Recon payload.
-
-No preview contains API keys, authorization references, local notes, event
-free text, or MAC addresses.
-
-## Operator workflow
-
-### Recon and profiling
-
-The frontend calls the authenticated native endpoints:
+The Recon view uses only:
 
 ```text
-GET  /api/recon/status
-GET  /api/recon/scans
-GET  /api/recon/scans/:scan_id
-POST /api/recon/start
-POST /api/recon/stop
+GET /api/recon/scans
+GET /api/recon/scans/:scan_id
 ```
 
-Manual and Adaptive starts always use `live:false`. The manual UI accepts only
-60, 180, 300, or 600 seconds and an allowlisted band. The operator must confirm
-authorization before starting.
+The selected response is held in memory and sent to `resolve_recon`,
+`create_baseline_version`, `compare_recon`, or `analyze_recon`. Raw Recon JSON
+must not be written to `localStorage`, session storage, application logs, or
+the PineAI backend.
 
-The loaded JSON is sent to `profile_recon`. Deterministic profiles remain
-visible when `ai_status.state` is `partial` or `disabled`. Operators may select
-1-10 target IDs for advice.
+The frontend supplies explicit scan metadata when known:
 
-### Engagement and advice
+```json
+{
+  "scan_id": "local-ui-reference",
+  "date": "2026-07-27T16:00:00Z",
+  "scan_time": 300,
+  "coverage": ["2.4"],
+  "source": "hak5_recon",
+  "label": "Office sweep"
+}
+```
 
-An engagement requires a name, 1-5 objective codes, one or more profiled
-target IDs, at least one allowed action, authorization reference, and a UTC
-time window. The UI supplies `expected_revision` for every mutation.
+`scan_id` is local request context. It is never included in an AI payload.
+Unknown duration or coverage remains unknown; the frontend must not infer
+Hak5 band values.
 
-On `revision_conflict`, the frontend refreshes the engagement and requires the
-operator to review and retry. Archived engagements remain readable but cannot
-be changed or used for advice.
+## Recommended UI sequence
 
-Advisor cards show authoritative risk, detectability, approval requirements,
-preconditions, and stop conditions. Buttons only append
-`action_started|completed|failed|aborted` audit events; they never execute the
-action.
+### 1. Create or select an assessment
 
-### Adaptive Recon
+Create an assessment with name, location, optional local notes, and
+`expected_revision` on every later mutation. One assessment represents one
+wireless environment.
 
-Only paths containing `collect_additional_recon` can be selected, one per
-target. The sequence is:
+If an assessment is archived, keep it readable and allow deterministic report
+exports from its stored comparisons. Disable baseline changes, new comparisons,
+analysis persistence, and finding-status mutations. Optional AI explanation of
+already stored comparisons remains a read-only operation.
 
-1. Refresh `/api/recon/status`.
-2. Call `prepare_adaptive_recon` or `recommend_adaptive_recon`.
-3. Display only returned candidate IDs and parameters.
-4. Require the operator to select and confirm one candidate.
-5. Refresh status and call `approve_recon_plan`.
-6. Verify the descriptor is exactly `POST /api/recon/start`.
-7. Send its `body` unchanged through the Hak5 session.
-8. Record the returned `scanRunning` and `scanID`.
-9. Poll status without automatically starting another scan.
-10. Load and profile the completed scan, then record the aggregate result.
+### 2. Load and resolve a saved scan
 
-Up to five prior profiler snapshots are held only in Angular memory. Raw Recon
-JSON and snapshots are not written to `localStorage` or backend audit files.
+Load a scan through the Hak5 REST API and call `resolve_recon`. Show:
 
-## Error behavior
+- access-point and network counts;
+- normalized AP and SSID assets;
+- declared, observed, and effective coverage;
+- scan duration and evidence IDs;
+- validation errors before enabling baseline creation.
 
-Errors are displayed as `code: safe message`. Partial AI failures do not hide
-deterministic output. Stale status, expired approval, changed band capability,
-out-of-scope target, revision conflict, or unexpected REST descriptor stops
-the workflow.
+The returned snapshot contains local identifiers. Treat every SSID, vendor,
+and label as untrusted text and render it through normal Angular interpolation,
+never `innerHTML`.
+
+### 3. Create the baseline
+
+Call `create_baseline_version` with the raw scan, scan metadata, assessment ID,
+and current revision. Show a confirmation that:
+
+- the version is immutable;
+- creating it does not activate it;
+- raw Recon JSON is not stored.
+
+After creation, call `activate_baseline_version` separately. Display the
+version, digest, source metadata, creation time, creator-supplied label, and
+whether it is active.
+
+### 4. Preview comparison
+
+Load a later saved scan and call `compare_recon`. This is read-only and does
+not change assessment revision, finding state, or audit history.
+
+Display comparability before findings:
+
+- status;
+- reason codes;
+- baseline and current coverage, duration, and AP count;
+- whether absence-based findings are allowed.
+
+For `not_comparable`, show diagnostic differences and label **Save analysis**
+as a diagnostic record: saving produces no findings or lifecycle changes. For
+`partially_comparable`, explain that observed changes are available with a
+confidence penalty and missing-AP findings are suppressed.
+
+### 5. Save analysis
+
+Call `analyze_recon` only after the operator reviews the preview. Supply the
+current `expected_revision`.
+
+Show:
+
+- immutable comparison ID and timestamp;
+- AP and SSID diff;
+- findings emitted this run;
+- lifecycle transitions in the stored comparison, including resolved or
+  reopened findings;
+- updated assessment revision.
+
+Do not convert AI prose into a finding or lifecycle action.
+
+### 6. Manage findings
+
+`list_findings` supports status and severity filters without changing state.
+
+`update_finding` allows only:
+
+- `open` to reverse an earlier operator decision;
+- `acknowledged`
+- `false_positive`
+
+The operator sees the finding ID, current state, assessment revision, and
+optional local audit note before confirming. A resolved finding cannot be
+manually reopened. The backend controls automatic `resolved` and recurrence
+reopen transitions.
+
+### 7. Export a report
+
+Call `generate_report` with the assessment and comparison IDs and requested
+format:
+
+- `json` for authoritative machine-readable output;
+- `html` for a standalone, script-free human report.
+
+The response includes a safe filename, MIME type, SHA-256 checksum, and plain
+UTF-8 JSON or HTML content. Verify the checksum in the browser when practical,
+create a `Blob`, and download it without injecting HTML into the module page.
+
+AI prose is optional and visibly labelled **AI-generated, non-authoritative
+analysis**.
+
+## Optional AI analysis
+
+Before any network request, `prepare_ai_analysis` shows the exact
+pseudonymized payload. It contains only selected deterministic comparisons,
+findings, and valid evidence references.
+
+The privacy preview must make these states clear:
+
+- BSSIDs and client MAC addresses are absent;
+- local notes and audit free text are absent;
+- SSIDs are pseudonymized by default;
+- enabling `share_ssids` is explicit and reversible.
+
+`generate_ai_analysis` returns deterministic context unchanged plus an
+`ai_status`. A missing key, refusal, timeout, invalid JSON, or provider error
+leaves comparison, findings, and reporting usable.
+
+## Settings and key handling
+
+`update_settings` changes only `language` (`en` or `fi`) and `share_ssids`.
+Legacy runtime band settings are not part of the Baseline & Drift UI.
+
+`set_openai_api_key` accepts the key once and returns only configured state.
+Clear the form field immediately after success or failure. Never place the key
+in Angular source, browser storage, query parameters, error text, or logs.
+
+On an HTTP management page, require explicit acknowledgement before sending a
+key. HTTPS or the interactive device CLI is preferred. AI configuration is
+never required for the offline workflow.
+
+## State handling
+
+- Keep only the currently loaded raw scan in Angular memory.
+- Refresh assessment and baseline state after every successful mutation.
+- On `revision_conflict`, stop and reload before allowing a retry.
+- Never silently activate a baseline or save a comparison.
+- Never infer a clean environment from a non-comparable scan.
+- Keep deterministic results visible when `ai_status` is `unavailable` or
+  `partial`.
+- Render prompt-injection-like SSIDs, vendor names, labels, and notes only as
+  escaped data.
 
 ## Physical Mark VII smoke test
 
-After installing the release archive:
+After installing the `0.6.0` archive:
 
-1. Verify the module loads without a browser console error.
-2. Confirm backend version `0.5.0` and settings state.
-3. Confirm secret and config files use `0600`; engagement directory uses
-   `0700`.
-4. Enter a known accepted band value and run a 60-second authorized scan.
-5. Load and profile its result offline.
-6. Configure an API key over HTTPS or CLI and repeat profiling.
-7. Create an engagement and generate advice.
-8. Approve one Recon-only path and verify the exact REST descriptor.
-9. Confirm completion is recorded once and no next scan starts automatically.
-10. Reinstall the module and verify persistent settings and engagements.
+1. Confirm the module loads with AI unconfigured.
+2. Confirm backend and schema version `0.6.0` / `1.0`.
+3. List and load a saved Recon scan.
+4. Resolve it and create an assessment baseline.
+5. Confirm the baseline requires a separate activation.
+6. Compare a later scan and verify comparability, diff, and findings.
+7. Save the analysis, acknowledge one finding, and refresh the module.
+8. Export JSON and HTML and verify both checksums.
+9. Confirm all deterministic operations still work with no network access.
+10. Verify assessment directories are `0700` and files are `0600`.
