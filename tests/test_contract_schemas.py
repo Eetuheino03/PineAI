@@ -123,6 +123,42 @@ class ContractSchemaTests(unittest.TestCase):
         ):
             self.assertFalse((schema_directory / name).exists(), name)
 
+    def test_runtime_output_validates_against_json_schema(self):
+        try:
+            import jsonschema
+        except ImportError:
+            self.skipTest("jsonschema library not installed")
+
+        from pineai_backend.assurance import compare_snapshots, resolve_assets  # noqa: E402
+
+        schema = load_schema()
+        fixture_path = ROOT / "tests" / "fixtures" / "recon_basic.json"
+        raw_scan = json.loads(fixture_path.read_text(encoding="utf-8"))
+        metadata = {
+            "scan_id": "scan-1",
+            "date": "2026-07-27T12:00:00Z",
+            "scan_time": 180,
+            "coverage": ["2.4"],
+            "location_id": "loc-1",
+            "measurement_point_id": "point-1",
+            "declared_channels": [1, 6, 11],
+        }
+        secret = b"a" * 32
+        snapshot = resolve_assets(raw_scan, metadata, secret, oui_database={})
+
+        def validate_def(instance, def_name):
+            wrapper = {
+                "$schema": schema["$schema"],
+                "$defs": schema["$defs"],
+                "$ref": f"#/$defs/{def_name}",
+            }
+            jsonschema.validate(instance=instance, schema=wrapper)
+
+        validate_def(snapshot, "resolvedSnapshot")
+        comparison_res = compare_snapshots(snapshot, snapshot)
+        validate_def(comparison_res["comparability"], "comparability")
+
 
 if __name__ == "__main__":
     unittest.main()
+

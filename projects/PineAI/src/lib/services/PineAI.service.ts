@@ -53,6 +53,7 @@ export class PineAIService {
         interface: '',
         declared_channels: []
     };
+    measurementContextByScan: { [scanId: string]: MeasurementContext } = {};
 
     constructor(private api: ApiService) {}
 
@@ -229,6 +230,18 @@ export class PineAIService {
         this.aiPreview = null;
         this.aiAnalysis = null;
         this.report = null;
+        const scanIdStr = String(scan.scan_id);
+        if (!this.measurementContextByScan[scanIdStr]) {
+            this.measurementContextByScan[scanIdStr] = {
+                location_id: '',
+                measurement_point_id: '',
+                scan_profile_id: '',
+                radio_profile_id: '',
+                interface: '',
+                declared_channels: []
+            };
+        }
+        this.measurementContext = this.measurementContextByScan[scanIdStr];
         this.clearPanelError('recon');
         this.log('success', 'Recon scan loaded', `Scan ${scan.scan_id} is ready.`);
         return this.selectedScanData;
@@ -282,36 +295,50 @@ export class PineAIService {
     reasonLabel(reason: string, lang: 'en' | 'fi' = 'fi'): string {
         const fiMap: {[key: string]: string} = {
             'legacy_baseline_missing_measurement_context': 'Vertailukohtana vanha baseline (ei mittauskontekstia)',
+            'measurement_context_unknown': 'Mittauskonteksti puuttuu tai on tuntematon (location_id / measurement_point_id)',
             'location_mismatch': 'Sijainti (location_id) ei täsmää baselineen',
             'measurement_point_mismatch': 'Mittauspiste (measurement_point_id) ei täsmää baselineen',
             'position_confirmation_different': 'Laite- tai antenniasento poikkeaa baselinesta',
+            'radio_profile_mismatch': 'Radio/rauta-profiili ei täsmää baselineen',
+            'radio_profile_unknown': 'Radio-ohjaimen profiili on tuntematon',
             'radio_interface_mismatch': 'Radio/rauta-rajapinta ei täsmää baselineen',
             'scan_profile_mismatch': 'Skannausprofiili poikkeaa baselinesta',
+            'channel_coverage_unknown': 'Kanavakattavuus on tuntematon (ilmoittamaton kanalista)',
             'declared_channels_do_not_cover_baseline_channels': 'Määritellyt kanavat eivät kata baselinen kanavia',
             'current_scan_contains_no_access_points': 'Nykyisessä skannauksessa ei havaittu yhtään tukiasemaa',
             'current_scan_does_not_cover_baseline_bands': 'Skannaus ei kata baselinen taajuusalueita',
             'band_coverage_is_incomplete': 'Taajuusalueen kattavuus on puutteellinen',
             'scan_duration_is_unknown': 'Skannauksen kesto on tuntematon',
             'current_scan_is_materially_shorter': 'Skannauksen kesto on huomattavasti baselinea lyhyempi',
+            'low_comparison_quality_score': 'Vertailun laatupistemäärä on liian alhainen (< 75%)',
             'low_overall_comparison_quality_score': 'Vertailun kokonaislaatu on liian alhainen (< 75%)',
-            'baseline_ap_detection_ratio_too_low': 'Baselinen ankkuri-tukiasemien havaintosuhde liian alhainen (< 70%)',
+            'low_baseline_ap_detection_ratio': 'Ankkuri-tukiasemien havaintosuhde liian alhainen (< 50%)',
+            'baseline_ap_detection_ratio_too_low': 'Baselinen ankkuri-tukiasemien havaintosuhde liian alhainen (< 50%)',
+            'signal_profile_changed_materially': 'Signaaliprofiilissa merkittävä muutos (> 15 dB)',
             'essential_measurement_context_missing': 'Mittaustietoja tai puuttuvia kanavia ei voida vahvistaa'
         };
         const enMap: {[key: string]: string} = {
             'legacy_baseline_missing_measurement_context': 'Legacy baseline without measurement context',
+            'measurement_context_unknown': 'Measurement context missing or unknown (location_id / measurement_point_id)',
             'location_mismatch': 'Location ID does not match baseline',
             'measurement_point_mismatch': 'Measurement point ID does not match baseline',
             'position_confirmation_different': 'Position or antenna orientation differs',
+            'radio_profile_mismatch': 'Radio profile does not match baseline',
+            'radio_profile_unknown': 'Radio profile is unknown',
             'radio_interface_mismatch': 'Radio/interface does not match baseline',
             'scan_profile_mismatch': 'Scan profile differs from baseline',
+            'channel_coverage_unknown': 'Channel coverage is unknown (undeclared channels)',
             'declared_channels_do_not_cover_baseline_channels': 'Declared channels do not cover candidate channels',
             'current_scan_contains_no_access_points': 'Current scan contains no access points',
             'current_scan_does_not_cover_baseline_bands': 'Current scan does not cover baseline frequency bands',
             'band_coverage_is_incomplete': 'Band coverage is incomplete',
             'scan_duration_is_unknown': 'Scan duration is unknown',
             'current_scan_is_materially_shorter': 'Scan duration is materially shorter than baseline',
+            'low_comparison_quality_score': 'Comparison quality score is too low (< 75%)',
             'low_overall_comparison_quality_score': 'Overall comparison quality score is too low (< 75%)',
-            'baseline_ap_detection_ratio_too_low': 'Baseline anchor AP detection ratio is too low (< 70%)',
+            'low_baseline_ap_detection_ratio': 'Baseline anchor AP detection ratio is too low (< 50%)',
+            'baseline_ap_detection_ratio_too_low': 'Baseline anchor AP detection ratio is too low (< 50%)',
+            'signal_profile_changed_materially': 'Signal profile has changed materially (> 15 dB)',
             'essential_measurement_context_missing': 'Essential measurement context missing'
         };
         if (lang === 'fi') {

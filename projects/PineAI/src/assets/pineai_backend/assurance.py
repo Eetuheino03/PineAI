@@ -521,6 +521,12 @@ def evaluate_comparability(
         reasons.append("position_confirmation_different")
         hard_gate_failed = True
 
+    if location_match is not True or measurement_point_match is not True:
+        if baseline.get("schema_version") == "1.0" or current.get("schema_version") == "1.0":
+            reasons.append("legacy_baseline_missing_measurement_context")
+        else:
+            reasons.append("measurement_context_unknown")
+
     baseline_count = baseline["summary"].get("access_point_count", 0)
     current_count = current["summary"].get("access_point_count", 0)
     if baseline_count > 0 and current_count == 0:
@@ -564,8 +570,6 @@ def evaluate_comparability(
             channel_coverage_ratio = round(covered_count / float(len(baseline_ap_channels)), 4)
         else:
             channel_coverage_ratio = 1.0
-    elif baseline_coverage and current_coverage and baseline_coverage.issubset(current_coverage):
-        channel_coverage_ratio = 1.0
     else:
         channel_coverage_ratio = None
         reasons.append("channel_coverage_unknown")
@@ -604,9 +608,6 @@ def evaluate_comparability(
     if matched_ap_signal_stability["median_absolute_delta_db"] is not None and matched_ap_signal_stability["median_absolute_delta_db"] > 15:
         reasons.append("signal_profile_changed_materially")
 
-    if baseline.get("schema_version") == "1.0" or current.get("schema_version") == "1.0" or location_match is None:
-        reasons.append("legacy_baseline_missing_measurement_context")
-
     quality_factors = {
         "duration_score": duration_score,
         "channel_coverage_score": channel_coverage_ratio,
@@ -633,7 +634,9 @@ def evaluate_comparability(
     if hard_gate_failed:
         status = "not_comparable"
     elif (
-        comparison_quality_score is None
+        location_match is not True
+        or measurement_point_match is not True
+        or comparison_quality_score is None
         or comparison_quality_score < 0.75
         or baseline_ap_detection_ratio < 0.50
         or channel_coverage_ratio is None

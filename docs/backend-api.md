@@ -1,6 +1,6 @@
 # Baseline & Drift backend API
 
-This document defines the PineAI `0.6.0` module contract. The corresponding
+This document defines the PineAI `0.6.1` module contract. The corresponding
 machine-readable definitions are in
 [`baseline-drift-v1.schema.json`](schemas/baseline-drift-v1.schema.json).
 

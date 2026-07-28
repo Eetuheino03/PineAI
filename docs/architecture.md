@@ -103,15 +103,11 @@ AI and network failure leave the complete deterministic workflow operational.
 
 The resolver returns one of:
 
-- `comparable`: absence-based drift and lifecycle changes are allowed;
-- `partially_comparable`: observed changes are reported with a confidence
-  penalty, but absence-based findings are suppressed;
-- `not_comparable`: a diagnostic diff is returned, but finding lifecycle is
-  not changed.
+- `comparable`: absence-based drift and lifecycle resolution are allowed. Requires matching `location_id` and `measurement_point_id`, valid declared channels coverage (1.0), and passing duration, detection, and quality thresholds.
+- `partially_comparable`: observed changes are reported with a confidence penalty, but absence-based findings are suppressed. Triggered when measurement context or declared channels are unknown (`null`), or when quality scores are below thresholds.
+- `not_comparable`: a diagnostic diff is returned, but finding lifecycle is not changed. Triggered by explicit location/measurement point mismatches, band mismatches, or empty scan results.
 
-The decision considers declared and observed band coverage, scan duration,
-empty results, and whether the current scan covers the active baseline.
-Reason codes remain machine-readable.
+The decision considers absolute measurement context (`location_id` and `measurement_point_id`), declared and observed channel coverage, scan duration, baseline AP detection ratio, and overall comparison quality score. Reason codes remain machine-readable.
 
 ## Finding rules and confidence
 

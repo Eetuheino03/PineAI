@@ -28,6 +28,9 @@ def metadata(identifier):
         "date": "2026-07-27T12:00:00Z",
         "scan_time": 180,
         "coverage": ["2.4"],
+        "location_id": "loc-1",
+        "measurement_point_id": "point-1",
+        "declared_channels": [1, 6, 11],
     }
 
 

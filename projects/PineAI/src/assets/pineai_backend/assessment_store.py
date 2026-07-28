@@ -1352,8 +1352,8 @@ class AssessmentStore:
                 for finding_id, existing in by_id.items():
                     if finding_id in observed_ids:
                         continue
-                    existing["currently_observed"] = False
                     if status == "comparable":
+                        existing["currently_observed"] = False
                         if existing["status"] in (
                             "open",
                             "acknowledged",

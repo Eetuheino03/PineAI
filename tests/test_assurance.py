@@ -27,7 +27,6 @@ def load_fixture():
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
-class AssuranceTests(unittest.TestCase):
     def setUp(self):
         self.secret = b"a" * 32
         self.metadata = {
@@ -35,6 +34,9 @@ class AssuranceTests(unittest.TestCase):
             "date": "2026-07-27T12:00:00Z",
             "scan_time": 180,
             "coverage": ["2.4"],
+            "location_id": "loc-1",
+            "measurement_point_id": "point-1",
+            "declared_channels": [1, 6, 11],
         }
 
     def resolve(self, scan=None, metadata=None):
@@ -75,7 +77,7 @@ class AssuranceTests(unittest.TestCase):
             evaluate_comparability(baseline, self.resolve())["status"],
             "comparable",
         )
-        unknown = self.resolve(metadata={"scan_id": "x"})
+        unknown = self.resolve(metadata={"scan_id": "x", "coverage": ["2.4"]})
         self.assertEqual(
             evaluate_comparability(baseline, unknown)["status"],
             "partially_comparable",
@@ -86,6 +88,50 @@ class AssuranceTests(unittest.TestCase):
         result = evaluate_comparability(baseline, wrong_band)
         self.assertEqual(result["status"], "not_comparable")
         self.assertFalse(result["lifecycle_updates_allowed"])
+
+    def test_unknown_measurement_context_prevents_comparable_status(self):
+        baseline = self.resolve()
+        no_context_meta = {
+            "scan_id": "scan-no-ctx",
+            "scan_time": 180,
+            "coverage": ["2.4"],
+            "declared_channels": [1, 6, 11],
+        }
+        no_context_scan = self.resolve(metadata=no_context_meta)
+        result = evaluate_comparability(baseline, no_context_scan)
+        self.assertEqual(result["status"], "partially_comparable")
+        self.assertFalse(result["absence_findings_allowed"])
+        self.assertIn("measurement_context_unknown", result["reasons"])
+
+    def test_location_and_point_mismatches_cause_not_comparable(self):
+        baseline = self.resolve()
+        loc_mismatch_meta = dict(self.metadata, scan_id="loc-mismatch", location_id="loc-2")
+        loc_mismatch_scan = self.resolve(metadata=loc_mismatch_meta)
+        res1 = evaluate_comparability(baseline, loc_mismatch_scan)
+        self.assertEqual(res1["status"], "not_comparable")
+        self.assertIn("location_mismatch", res1["reasons"])
+
+        point_mismatch_meta = dict(self.metadata, scan_id="pt-mismatch", measurement_point_id="point-2")
+        point_mismatch_scan = self.resolve(metadata=point_mismatch_meta)
+        res2 = evaluate_comparability(baseline, point_mismatch_scan)
+        self.assertEqual(res2["status"], "not_comparable")
+        self.assertIn("measurement_point_mismatch", res2["reasons"])
+
+    def test_undeclared_channels_forces_partially_comparable(self):
+        baseline = self.resolve()
+        no_channels_meta = {
+            "scan_id": "scan-no-chan",
+            "scan_time": 180,
+            "coverage": ["2.4"],
+            "location_id": "loc-1",
+            "measurement_point_id": "point-1",
+        }
+        no_channels_scan = self.resolve(metadata=no_channels_meta)
+        result = evaluate_comparability(baseline, no_channels_scan)
+        self.assertEqual(result["status"], "partially_comparable")
+        self.assertIsNone(result["channel_coverage_ratio"])
+        self.assertFalse(result["absence_findings_allowed"])
+        self.assertIn("channel_coverage_unknown", result["reasons"])
 
     def test_known_ssid_new_bssid_does_not_duplicate_generic_rule(self):
         baseline = self.resolve()

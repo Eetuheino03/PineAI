@@ -447,7 +447,7 @@ class AssessmentStoreTests(unittest.TestCase):
                 [],
             )
             self.assertEqual(partial["findings"][0]["status"], "open")
-            self.assertFalse(
+            self.assertTrue(
                 partial["findings"][0]["currently_observed"]
             )
 

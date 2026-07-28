@@ -112,8 +112,13 @@ export interface ComparabilityEvaluation {
     measurement_point_match?: boolean | null;
     radio_profile_match?: boolean | null;
     channel_coverage_ratio?: number | null;
+    eligible_baseline_ap_count?: number;
+    reobserved_baseline_ap_count?: number;
     baseline_ap_detection_ratio?: number | null;
-    matched_ap_signal_stability?: number | null;
+    matched_ap_signal_stability?: {
+        matched_ap_count: number;
+        median_absolute_delta_db: number | null;
+    } | null;
     baseline?: any;
     current?: any;
 }

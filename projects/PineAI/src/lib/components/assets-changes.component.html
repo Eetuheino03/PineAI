@@ -96,15 +96,21 @@
                 <div *ngIf="pineai.comparability(comparison)?.quality_factors" class="grid three">
                     <div class="quality-factor">
                         <div class="metric-label">Duration Score</div>
-                        <div class="metric-small">{{ ((pineai.comparability(comparison)?.quality_factors?.duration_score || 0) * 100) | number:'1.0-0' }}%</div>
+                        <div class="metric-small">
+                            {{ pineai.comparability(comparison)?.quality_factors?.duration_score !== null && pineai.comparability(comparison)?.quality_factors?.duration_score !== undefined ? (((pineai.comparability(comparison)?.quality_factors?.duration_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
+                        </div>
                     </div>
                     <div class="quality-factor">
                         <div class="metric-label">Channel Coverage</div>
-                        <div class="metric-small">{{ ((pineai.comparability(comparison)?.quality_factors?.channel_coverage_score || 0) * 100) | number:'1.0-0' }}%</div>
+                        <div class="metric-small">
+                            {{ pineai.comparability(comparison)?.quality_factors?.channel_coverage_score !== null && pineai.comparability(comparison)?.quality_factors?.channel_coverage_score !== undefined ? (((pineai.comparability(comparison)?.quality_factors?.channel_coverage_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
+                        </div>
                     </div>
                     <div class="quality-factor">
                         <div class="metric-label">Anchor AP Detection</div>
-                        <div class="metric-small">{{ ((pineai.comparability(comparison)?.quality_factors?.baseline_detection_score || 0) * 100) | number:'1.0-0' }}%</div>
+                        <div class="metric-small">
+                            {{ pineai.comparability(comparison)?.quality_factors?.baseline_detection_score !== null && pineai.comparability(comparison)?.quality_factors?.baseline_detection_score !== undefined ? (((pineai.comparability(comparison)?.quality_factors?.baseline_detection_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
+                        </div>
                     </div>
                 </div>
 

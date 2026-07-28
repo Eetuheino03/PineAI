@@ -81,7 +81,7 @@ class ModuleAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with mock.patch.dict(os.environ, {"PINEAI_CONFIG_DIR": directory}):
                 response = loaded.health(FakeRequest())
-        self.assertEqual(response["version"], "0.6.0")
+        self.assertEqual(response["version"], "0.6.1")
         self.assertEqual(response["product_mode"], "baseline_and_drift")
         self.assertTrue(response["offline_complete"])
         self.assertFalse(response["recon_control"])
@@ -149,6 +149,9 @@ class ModuleAdapterTests(unittest.TestCase):
             "scan_time": 180,
             "coverage": ["2.4"],
             "source": "hak5_recon",
+            "location_id": "loc-1",
+            "measurement_point_id": "point-1",
+            "declared_channels": [1, 6, 11],
         }
         with tempfile.TemporaryDirectory() as directory:
             with mock.patch.dict(
@@ -237,7 +240,7 @@ class ModuleAdapterTests(unittest.TestCase):
             sys.modules.pop(name, None)
         try:
             loaded = self.load_module()
-            self.assertEqual(loaded.__version__, "0.6.0")
+            self.assertEqual(loaded.__version__, "0.6.1")
             self.assertTrue(service_modules.isdisjoint(sys.modules))
         finally:
             for name in list(sys.modules):

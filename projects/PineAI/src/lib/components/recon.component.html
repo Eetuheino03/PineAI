@@ -79,6 +79,9 @@
             Set absolute measurement context for comparability enforcement between scans.
         </mat-card-subtitle>
         <mat-card-content class="stack">
+            <div *ngIf="!pineai.measurementContext.location_id || !pineai.measurementContext.measurement_point_id" class="warning-banner" style="margin-bottom: 8px;">
+                Measurement context incomplete. Location ID and Measurement Point ID are required for fully comparable status. Without them, absence findings (e.g. missing APs) are disabled.
+            </div>
             <div class="row">
                 <mat-form-field appearance="outline">
                     <mat-label>Location ID</mat-label>

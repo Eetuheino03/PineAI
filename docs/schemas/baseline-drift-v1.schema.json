@@ -801,6 +801,20 @@
         "scan_time"
       ],
       "properties": {
+        "location_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "measurement_point_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "scan_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "radio_profile_id": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] },
+        "interface": { "oneOf": [{ "type": "string", "maxLength": 64 }, { "type": "null" }] },
+        "declared_channels_scanned": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1, "maximum": 200 }
+            },
+            { "type": "null" }
+          ]
+        },
         "declared_coverage": {
           "type": "array",
           "maxItems": 2,
@@ -826,6 +840,16 @@
               "minimum": 1,
               "maximum": 86400
             },
+            { "type": "null" }
+          ]
+        },
+        "observed_channels": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 200 }
+        },
+        "signal_summary": {
+          "oneOf": [
+            { "type": "object" },
             { "type": "null" }
           ]
         }
@@ -1316,11 +1340,30 @@
         "channel_coverage_ratio": {
           "oneOf": [{ "type": "number", "minimum": 0, "maximum": 1 }, { "type": "null" }]
         },
+        "eligible_baseline_ap_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reobserved_baseline_ap_count": {
+          "type": "integer",
+          "minimum": 0
+        },
         "baseline_ap_detection_ratio": {
           "oneOf": [{ "type": "number", "minimum": 0, "maximum": 1 }, { "type": "null" }]
         },
         "matched_ap_signal_stability": {
-          "oneOf": [{ "type": "number" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["matched_ap_count", "median_absolute_delta_db"],
+              "properties": {
+                "matched_ap_count": { "type": "integer", "minimum": 0 },
+                "median_absolute_delta_db": { "oneOf": [{ "type": "number" }, { "type": "null" }] }
+              }
+            },
+            { "type": "null" }
+          ]
         },
         "baseline": { "$ref": "#/$defs/comparabilitySide" },
         "current": { "$ref": "#/$defs/comparabilitySide" }

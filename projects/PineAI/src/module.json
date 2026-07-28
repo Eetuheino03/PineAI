@@ -2,7 +2,7 @@
     "name": "PineAI",
     "title": "PineAI",
     "description": "Deterministic WiFi baseline, drift, evidence, findings, and optional AI-assisted reporting.",
-    "version": "0.6.0",
+    "version": "0.6.1",
     "author": "Eetuheino03",
     "firmware_required": "1.0.0",
     "devices": ["wifipineapplemk7"]
