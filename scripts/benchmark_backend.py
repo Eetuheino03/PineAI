@@ -179,8 +179,11 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
         }
 
 
-def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path="/tmp/pineai.sock"):
+def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path=None):
     """Run native Hak5 Unix-domain socket benchmark on Mark VII device."""
+    if socket_path is None:
+        socket_path = os.environ.get("PINEAI_SOCKET_PATH", "/tmp/pineai.sock")
+
     cold_start_ms = []
     actions_to_measure = [
         "health",
@@ -196,45 +199,6 @@ def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path=
         env = os.environ.copy()
         env["PINEAI_CONFIG_DIR"] = config_dir
 
-        for _ in range(cold_start_runs):
-            if os.path.exists(socket_path):
-                try:
-                    os.unlink(socket_path)
-                except OSError:
-                    pass
-
-            t0 = time.monotonic_ns()
-            proc = subprocess.Popen(
-                [sys.executable, "-u", str(SRC_DIR / "module.py")],
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-
-            # Wait for socket readiness
-            ready = False
-            for _ in range(50):
-                if os.path.exists(socket_path):
-                    try:
-                        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                        s.connect(socket_path)
-                        s.close()
-                        ready = True
-                        break
-                    except OSError:
-                        pass
-                time.sleep(0.05)
-
-            dt_ms = (time.monotonic_ns() - t0) / 1e6
-            if ready:
-                cold_start_ms.append(dt_ms)
-
-            proc.terminate()
-            try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-
         # Launch main daemon for action benchmarks
         proc = subprocess.Popen(
             [sys.executable, "-u", str(SRC_DIR / "module.py")],
@@ -244,39 +208,76 @@ def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path=
         )
 
         try:
-            # Connect socket
-            sock = None
+            connected_socket = None
             for _ in range(50):
-                try:
-                    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                    sock.connect(socket_path)
-                    break
-                except OSError:
+                if os.path.exists(socket_path):
+                    try:
+                        candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                        candidate.settimeout(1.0)
+                        candidate.connect(socket_path)
+                        connected_socket = candidate
+                        break
+                    except OSError:
+                        time.sleep(0.05)
+                else:
                     time.sleep(0.05)
 
-            idle_rss = get_process_rss_mib(proc.pid)
+            if connected_socket is None:
+                return {
+                    "schema_version": "1.0",
+                    "mode": "mark-vii-socket",
+                    "pineai_version": "0.6.3",
+                    "iterations": iterations,
+                    "socket_path": socket_path,
+                    "service_initialization_ms": {"runs": [], "p50": 0.0, "p95": 0.0, "max": 0.0},
+                    "actions": {},
+                    "rss_mib": {"idle": 0.0, "steady": 0.0, "peak": 0.0},
+                    "cache": {"items": 0, "accounted_bytes": 0, "hits": 0, "misses": 0, "evictions": 0},
+                    "violations": ["Could not connect to Mark VII UDS socket"],
+                    "passed": False,
+                }
 
-            if sock:
-                for action_name in actions_to_measure:
-                    durations = []
-                    first_ms = 0.0
-                    for i in range(iterations):
-                        payload = json.dumps({"action": action_name}).encode("utf-8") + b"\n"
-                        t0 = time.monotonic_ns()
-                        sock.sendall(payload)
-                        _resp = sock.recv(16384)
+            idle_rss = get_process_rss_mib(proc.pid)
+            all_actions_passed = True
+
+            for action_name in actions_to_measure:
+                durations = []
+                first_ms = 0.0
+                for i in range(iterations):
+                    payload = json.dumps({"action": action_name}).encode("utf-8") + b"\n"
+                    t0 = time.monotonic_ns()
+                    try:
+                        connected_socket.sendall(payload)
+                        response_data = b""
+                        while True:
+                            chunk = connected_socket.recv(4096)
+                            if not chunk:
+                                break
+                            response_data += chunk
+                            if b"\n" in response_data:
+                                break
                         dt_ms = (time.monotonic_ns() - t0) / 1e6
                         if i == 0:
                             first_ms = dt_ms
                         durations.append(dt_ms)
 
-                    action_metrics[action_name] = {
-                        "first_ms": round(first_ms, 3),
-                        "p50_ms": round(calculate_percentile(durations, 50), 3),
-                        "p95_ms": round(calculate_percentile(durations, 95), 3),
-                        "max_ms": round(max(durations) if durations else 0.0, 3),
-                    }
-                sock.close()
+                        if response_data:
+                            resp_json = json.loads(response_data.decode("utf-8").strip())
+                            if isinstance(resp_json, dict) and ("error" in resp_json or resp_json.get("success") is False):
+                                all_actions_passed = False
+                        else:
+                            all_actions_passed = False
+                    except (OSError, ValueError):
+                        all_actions_passed = False
+
+                action_metrics[action_name] = {
+                    "first_ms": round(first_ms, 3),
+                    "p50_ms": round(calculate_percentile(durations, 50), 3),
+                    "p95_ms": round(calculate_percentile(durations, 95), 3),
+                    "max_ms": round(max(durations) if durations else 0.0, 3),
+                }
+
+            connected_socket.close()
 
             peak_rss = get_process_peak_rss_mib(proc.pid)
             steady_rss = get_process_rss_mib(proc.pid)
@@ -286,7 +287,8 @@ def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path=
                 "mode": "mark-vii-socket",
                 "pineai_version": "0.6.3",
                 "iterations": iterations,
-                "startup_ms": {
+                "socket_path": socket_path,
+                "service_initialization_ms": {
                     "runs": [round(x, 3) for x in cold_start_ms],
                     "p50": round(calculate_percentile(cold_start_ms, 50), 3),
                     "p95": round(calculate_percentile(cold_start_ms, 95), 3),
@@ -305,8 +307,8 @@ def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path=
                     "misses": 0,
                     "evictions": 0,
                 },
-                "violations": [],
-                "passed": True,
+                "violations": [] if all_actions_passed else ["One or more socket actions failed or returned error"],
+                "passed": all_actions_passed,
             }
         finally:
             proc.terminate()
@@ -326,6 +328,9 @@ def main():
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--cold-start-runs", type=int, default=3)
     parser.add_argument(
+        "--socket-path", type=str, default=None, help="Path to Unix domain socket for mark-vii-socket mode"
+    )
+    parser.add_argument(
         "--json", action="store_true", help="Output JSON only to stdout"
     )
     args = parser.parse_args()
@@ -333,7 +338,7 @@ def main():
     if args.mode == "local-adapter":
         results = run_local_adapter_benchmark(args.iterations, args.cold_start_runs)
     else:
-        results = run_mark_vii_socket_benchmark(args.iterations, args.cold_start_runs)
+        results = run_mark_vii_socket_benchmark(args.iterations, args.cold_start_runs, args.socket_path)
 
     if args.json:
         print(json.dumps(results, indent=2))

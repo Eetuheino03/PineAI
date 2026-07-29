@@ -678,6 +678,42 @@ class AssessmentStoreTests(unittest.TestCase):
             updated = store.get(created["assessment_id"])
             self.assertEqual(updated["name"], "Updated Name")
 
+    def test_lru_cache_oversized_item_bypass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            large_file = Path(directory) / "large.json"
+            large_data = {"data": "x" * (260 * 1024)}  # > 256 KiB limit
+            store._write_json(large_file, large_data)
+            cache_count_before = len(store._mtime_cache)
+            got = store._read_json(large_file, "missing", "missing")
+            self.assertEqual(len(got["data"]), 260 * 1024)
+            # Oversized item must bypass cache
+            self.assertEqual(len(store._mtime_cache), cache_count_before)
+
+    def test_lru_cache_ordering_on_hit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            a1 = store.create({"name": "First", "location": "Lab", "notes": "n1"})
+            a2 = store.create({"name": "Second", "location": "Lab", "notes": "n2"})
+            store.get(a1["assessment_id"])
+            store.get(a2["assessment_id"])
+            keys1 = list(store._mtime_cache.keys())
+            # Re-fetch a1 -> it should be moved to end of OrderedDict
+            store.get(a1["assessment_id"])
+            keys2 = list(store._mtime_cache.keys())
+            self.assertEqual(keys2[-1], keys1[0])
+
+    def test_lru_cache_malformed_json_handling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            created = store.create(assessment_value())
+            _, json_path, _, _, _ = store._assessment_paths(created["assessment_id"])
+            json_path.write_text("{malformed json", encoding="utf-8")
+            with self.assertRaises(BackendError) as cm:
+                store.get(created["assessment_id"])
+            self.assertEqual(cm.exception.code, "storage_error")
+
 
 if __name__ == "__main__":
     unittest.main()
+

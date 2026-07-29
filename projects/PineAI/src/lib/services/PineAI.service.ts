@@ -295,20 +295,24 @@ export class PineAIService {
             platformPromise,
             assurancePromise
         ]);
-        this.platformCapabilities = values[0];
-        this.capabilities = values[1] || values[0];
-        if (platformError && !this.platformCapabilities) {
+        if (values[0]) {
+            this.clearPanelError('platform_capabilities');
+        } else if (platformError) {
             this.setPanelError('platform_capabilities', platformError);
             const failure = this.error(platformError);
             this.log('warning', 'platform_capabilities unavailable',
                 `${failure.code}: ${failure.message}`);
         }
-        if (assuranceError && !this.capabilities) {
+        if (values[1]) {
+            this.clearPanelError('assurance_capabilities');
+        } else if (assuranceError) {
             this.setPanelError('assurance_capabilities', assuranceError);
             const failure = this.error(assuranceError);
             this.log('warning', 'assurance_capabilities unavailable',
                 `${failure.code}: ${failure.message}`);
         }
+        this.platformCapabilities = values[0];
+        this.capabilities = values[1] || values[0];
         this.updateCapabilitySummary();
         if (!this.capabilities && !this.platformCapabilities) {
             throw {
