@@ -7,7 +7,7 @@ evidence proves each result.
 
 ![PineAI Banner](docs/asset.png)
 
-PineAI is not an attack module. Version `0.6.2` is the Customer Audit
+PineAI is not an attack module. Version `0.6.3` is the Customer Audit
 Foundation:
 
 1. load a saved Recon scan through the authenticated Hak5 session;
@@ -48,14 +48,14 @@ Create an installable archive with:
 
 ```bash
 ./build.sh package
-bash scripts/verify-package.sh PineAI-0.6.2.tar.gz
+bash scripts/verify-package.sh PineAI-0.6.3.tar.gz
 ```
 
-The resulting `PineAI-0.6.2.tar.gz` archive can be uploaded through the WiFi
+The resulting `PineAI-0.6.3.tar.gz` archive can be uploaded through the WiFi
 Pineapple management interface. During development, copy the built
 `dist/PineAI/` directory to `/pineapple/modules/PineAI/`.
 
-The `v0.6.2` release is published as a pre-release until its smoke test is
+The `v0.6.3` release is published as a pre-release until its smoke test is
 completed on a physical Mark VII. Automated tests, package integrity, and
 offline behavior are verified independently; no physical-device verification
 is claimed yet.
@@ -179,11 +179,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md),
 ## Safety and scope
 
 Use PineAI only with wireless environments you own or are authorized to
-assess. The module is read-only toward the radio in `0.6.2`: it analyzes saved
+assess. The module is read-only toward the radio in `0.6.3`: it analyzes saved
 Recon results and cannot execute validation steps, shell commands, deauth,
 evil-twin, association, capture, or scan-start actions.
 
-The physical Mark VII smoke test for `v0.6.2` is pending. This limitation is
+The physical Mark VII smoke test for `v0.6.3` is pending. This limitation is
 also recorded in the release notes and implementation handoff.
 
 ## License
