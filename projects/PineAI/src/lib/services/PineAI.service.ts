@@ -160,6 +160,10 @@ export class PineAIService {
         });
     }
 
+    private measurementProfilesPromise: Promise<any> | null = null;
+    private reconPromise: Promise<any> | null = null;
+    private cachedCapabilitySummary: CapabilitySummary | null = null;
+
     async initialize(): Promise<void> {
         if (this.initializing) {
             return;
@@ -167,25 +171,18 @@ export class PineAIService {
         this.initializing = true;
         this.initialized = false;
         try {
-            // Health is the only hard dependency. Everything else degrades locally.
+            // Bootstrap Phase: fetch health, settings, platform capabilities, and assessments.
             await this.refreshHealth();
             await Promise.all([
                 this.settle('settings', () => this.refreshSettings()),
-                this.settle('capabilities', () => this.refreshCapabilities()),
-                this.settle(
-                    'measurement_profiles',
-                    () => this.refreshMeasurementProfiles()
-                ),
-                this.settle('recon', async () => {
-                    await Promise.all([this.refreshReconStatus(), this.refreshScans()]);
-                }),
+                this.settle('capabilities', () => this.refreshPlatformOnlyCapabilities()),
                 this.settle('assessments', () => this.refreshAssessments())
             ]);
             this.initialized = true;
             this.log(
                 'success',
                 'PineAI ready',
-                'Baseline & Drift is available. Optional services may remain offline.'
+                'Baseline & Drift is available. Optional services load on demand.'
             );
         } catch (error) {
             const failure = this.error(error);
@@ -196,8 +193,43 @@ export class PineAIService {
         }
     }
 
+    async refreshPlatformOnlyCapabilities(): Promise<any> {
+        this.platformCapabilities = await this.module<any>('platform_capabilities').catch(() => null);
+        this.updateCapabilitySummary();
+        return this.platformCapabilities;
+    }
+
+    async ensureMeasurementProfilesLoaded(): Promise<void> {
+        if (this.measurementProfiles && this.measurementProfiles.length > 0) {
+            return;
+        }
+        if (!this.measurementProfilesPromise) {
+            this.measurementProfilesPromise = this.settle('measurement_profiles', () =>
+                this.refreshMeasurementProfiles()
+            ).finally(() => {
+                this.measurementProfilesPromise = null;
+            });
+        }
+        return this.measurementProfilesPromise;
+    }
+
+    async ensureReconLoaded(): Promise<void> {
+        if (this.scans && this.scans.length > 0) {
+            return;
+        }
+        if (!this.reconPromise) {
+            this.reconPromise = this.settle('recon', async () => {
+                await Promise.all([this.refreshReconStatus(), this.refreshScans()]);
+            }).finally(() => {
+                this.reconPromise = null;
+            });
+        }
+        return this.reconPromise;
+    }
+
     async refreshHealth(): Promise<any> {
         this.health = await this.module<any>('health');
+        this.updateCapabilitySummary();
         return this.health;
     }
 
@@ -218,6 +250,7 @@ export class PineAIService {
         ]);
         this.platformCapabilities = values[0];
         this.capabilities = values[1] || values[0];
+        this.updateCapabilitySummary();
         if (!this.capabilities && !this.platformCapabilities) {
             throw {
                 code: 'capabilities_unavailable',
@@ -227,7 +260,19 @@ export class PineAIService {
         return this.capabilities;
     }
 
+    updateCapabilitySummary(): CapabilitySummary {
+        this.cachedCapabilitySummary = this.computeCapabilitySummary();
+        return this.cachedCapabilitySummary;
+    }
+
     capabilitySummary(): CapabilitySummary {
+        if (!this.cachedCapabilitySummary) {
+            this.updateCapabilitySummary();
+        }
+        return this.cachedCapabilitySummary;
+    }
+
+    private computeCapabilitySummary(): CapabilitySummary {
         if (!this.health) {
             return {
                 level: 'blocked',

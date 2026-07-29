@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { PineAIService } from '../services/PineAI.service';
 import { ReconScan } from '../models';
 
@@ -7,13 +7,20 @@ import { ReconScan } from '../models';
     templateUrl: './recon.component.html',
     styleUrls: ['./shared.css']
 })
-export class ReconComponent {
+export class ReconComponent implements OnInit {
     busy = false;
     loadingScanId: number | string = null;
     errorMessage = '';
     declaredChannelsText = '';
 
     constructor(public pineai: PineAIService) {}
+
+    async ngOnInit(): Promise<void> {
+        await Promise.all([
+            this.pineai.ensureReconLoaded(),
+            this.pineai.ensureMeasurementProfilesLoaded()
+        ]);
+    }
 
     selectMeasurementProfile(profileId: string): void {
         const profile = this.pineai.measurementProfiles.find(

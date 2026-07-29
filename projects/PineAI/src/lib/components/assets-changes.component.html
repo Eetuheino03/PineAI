@@ -79,65 +79,57 @@
                 </div>
                 <div class="row">
                     <span
-                        *ngIf="pineai.comparability(comparison)?.comparison_quality_score !== undefined && pineai.comparability(comparison)?.comparison_quality_score !== null"
+                        *ngIf="comparability?.comparison_quality_score !== undefined && comparability?.comparison_quality_score !== null"
                         class="badge"
-                        [class.complete]="(pineai.comparability(comparison)?.comparison_quality_score || 0) >= 0.75"
-                        [class.medium]="(pineai.comparability(comparison)?.comparison_quality_score || 0) < 0.75">
-                        Quality: {{ ((pineai.comparability(comparison)?.comparison_quality_score || 0) * 100) | number:'1.0-1' }}%
+                        [class.complete]="(comparability?.comparison_quality_score || 0) >= 0.75"
+                        [class.medium]="(comparability?.comparison_quality_score || 0) < 0.75">
+                        Quality: {{ ((comparability?.comparison_quality_score || 0) * 100) | number:'1.0-1' }}%
                     </span>
                     <span
                         class="badge"
-                        [ngClass]="pineai.comparabilityLabel(comparison)">
-                        {{ pineai.comparabilityLabel(comparison) }}
+                        [ngClass]="comparabilityLabel">
+                        {{ comparabilityLabel }}
                     </span>
                 </div>
             </div>
             <mat-card-content class="stack" style="margin-top: 12px;">
-                <div *ngIf="pineai.comparability(comparison)?.quality_factors" class="grid three">
+                <div *ngIf="comparability?.quality_factors" class="grid three">
                     <div class="quality-factor">
                         <div class="metric-label">Duration Score</div>
                         <div class="metric-small">
-                            {{ pineai.comparability(comparison)?.quality_factors?.duration_score !== null && pineai.comparability(comparison)?.quality_factors?.duration_score !== undefined ? (((pineai.comparability(comparison)?.quality_factors?.duration_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
+                            {{ comparability?.quality_factors?.duration_score !== null && comparability?.quality_factors?.duration_score !== undefined ? (((comparability?.quality_factors?.duration_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
                         </div>
                     </div>
                     <div class="quality-factor">
-                        <div class="metric-label">Channel Coverage</div>
+                        <div class="metric-label">Coverage Score</div>
                         <div class="metric-small">
-                            {{ pineai.comparability(comparison)?.quality_factors?.channel_coverage_score !== null && pineai.comparability(comparison)?.quality_factors?.channel_coverage_score !== undefined ? (((pineai.comparability(comparison)?.quality_factors?.channel_coverage_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
+                            {{ comparability?.quality_factors?.coverage_score !== null && comparability?.quality_factors?.coverage_score !== undefined ? (((comparability?.quality_factors?.coverage_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
                         </div>
                     </div>
                     <div class="quality-factor">
-                        <div class="metric-label">Anchor AP Detection</div>
+                        <div class="metric-label">Location Score</div>
                         <div class="metric-small">
-                            {{ pineai.comparability(comparison)?.quality_factors?.baseline_detection_score !== null && pineai.comparability(comparison)?.quality_factors?.baseline_detection_score !== undefined ? (((pineai.comparability(comparison)?.quality_factors?.baseline_detection_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
+                            {{ comparability?.quality_factors?.location_score !== null && comparability?.quality_factors?.location_score !== undefined ? (((comparability?.quality_factors?.location_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
                         </div>
                     </div>
                 </div>
 
-                <div
-                    *ngIf="pineai.comparability(comparison)?.reasons?.length"
-                    class="stack">
-                    <div class="eyebrow">Reasons / Syyt</div>
-                    <div
-                        *ngFor="let reason of pineai.comparability(comparison).reasons"
-                        class="warning-banner" style="margin-bottom: 4px; padding: 8px 12px;">
-                        <strong>{{ pineai.reasonLabel(reason, pineai.settings.language || 'fi') }}</strong>
-                        <span class="mono muted" style="font-size: 11px; display: block;">({{ reason }})</span>
+                <div *ngIf="comparability?.reasons?.length" class="notice">
+                    <strong>Comparability notes:</strong>
+                    <div class="chip-list" style="margin-top: 6px;">
+                        <span class="badge warning" *ngFor="let reason of comparability.reasons">
+                            {{ reason }}
+                        </span>
                     </div>
-                </div>
-                <div class="row" *ngIf="comparison.comparison_id">
-                    <span>Comparison ID</span>
-                    <span class="spacer"></span>
-                    <span class="mono break-all">{{ comparison.comparison_id }}</span>
                 </div>
             </mat-card-content>
         </mat-card>
 
-        <div *ngIf="comparison" class="taxonomy-grid">
-            <mat-card class="taxonomy-panel change">
+        <div *ngIf="comparison" class="grid taxonomy-grid">
+            <mat-card class="taxonomy-panel changes">
                 <mat-card-title>Observed changes</mat-card-title>
                 <mat-card-subtitle>
-                    Factual differences without a policy or risk conclusion.
+                    Raw structural before/after differences without severity or findings lifecycle.
                 </mat-card-subtitle>
                 <mat-card-content>
                     <div *ngIf="!taxonomy.observed_changes.length" class="muted">
@@ -153,10 +145,10 @@
                     </div>
                 </mat-card-content>
             </mat-card>
-            <mat-card class="taxonomy-panel deviation">
-                <mat-card-title>Deviations</mat-card-title>
+            <mat-card class="taxonomy-panel deviations">
+                <mat-card-title>Policy deviations</mat-card-title>
                 <mat-card-subtitle>
-                    Deterministic differences from active inventory or policy.
+                    Policy violations tied to active AssuranceProfile rules.
                 </mat-card-subtitle>
                 <mat-card-content>
                     <div *ngIf="!taxonomy.deviations.length" class="muted">
@@ -203,19 +195,27 @@
             <mat-card-subtitle>Observed identifiers are displayed as untrusted data.</mat-card-subtitle>
             <mat-card-content>
                 <div *ngIf="!accessPoints.length" class="empty-state">No access points resolved.</div>
-                <mat-list *ngIf="accessPoints.length">
-                    <mat-list-item *ngFor="let ap of accessPoints">
-                        <mat-icon mat-list-icon>router</mat-icon>
-                        <div mat-line>
-                            <span class="untrusted">{{ ssid(ap) }}</span>
-                        </div>
-                        <div mat-line class="mono">
-                            {{ id(ap) || 'No stable ID' }} · channel {{ ap.channel || '—' }}
-                        </div>
-                        <span class="badge">{{ ap.encryption_code !== undefined ?
-                            ap.encryption_code : (ap.encryption || 'unknown') }}</span>
-                    </mat-list-item>
-                </mat-list>
+                <cdk-virtual-scroll-viewport
+                    *ngIf="accessPoints.length"
+                    class="ap-viewport"
+                    [itemSize]="72"
+                    minBufferPx="288"
+                    maxBufferPx="576"
+                    style="height: 360px;">
+                    <mat-list>
+                        <mat-list-item *cdkVirtualFor="let ap of accessPoints; trackBy: trackByBssid">
+                            <mat-icon mat-list-icon>router</mat-icon>
+                            <div mat-line>
+                                <span class="untrusted">{{ ssid(ap) }}</span>
+                            </div>
+                            <div mat-line class="mono">
+                                {{ id(ap) || 'No stable ID' }} · channel {{ ap.channel || '—' }}
+                            </div>
+                            <span class="badge">{{ ap.encryption_code !== undefined ?
+                                ap.encryption_code : (ap.encryption || 'unknown') }}</span>
+                        </mat-list-item>
+                    </mat-list>
+                </cdk-virtual-scroll-viewport>
             </mat-card-content>
         </mat-card>
 

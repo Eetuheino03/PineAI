@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, OnChanges, SimpleChanges } from '@angular/core';
 import { PineAIService } from '../services/PineAI.service';
 
 @Component({
@@ -10,6 +10,9 @@ export class AssetsChangesComponent {
     busy = false;
     errorMessage = '';
     successMessage = '';
+
+    cachedDiffGroups: Array<{name: string, items: any[]}> = [];
+    private lastDiffRef: any = null;
 
     constructor(public pineai: PineAIService) {}
 
@@ -58,6 +61,14 @@ export class AssetsChangesComponent {
         return this.pineai.resultTaxonomy(this.comparison);
     }
 
+    get comparability(): any {
+        return this.pineai.comparability(this.comparison);
+    }
+
+    get comparabilityLabel(): string {
+        return this.pineai.comparabilityLabel(this.comparison);
+    }
+
     itemTitle(value: any): string {
         return value
             ? value.title || value.rule_id || value.change_type ||
@@ -82,7 +93,16 @@ export class AssetsChangesComponent {
         return value.ssid || value.name || 'Unknown';
     }
 
+    trackByBssid(index: number, item: any): string {
+        return item ? (item.bssid || item.ap_id || index) : index;
+    }
+
     groups(): Array<{name: string, items: any[]}> {
+        const currentDiff = this.diff;
+        if (this.lastDiffRef === currentDiff) {
+            return this.cachedDiffGroups;
+        }
+        this.lastDiffRef = currentDiff;
         const groups: Array<{name: string, items: any[]}> = [];
         const walk = (prefix: string, value: any): void => {
             if (Array.isArray(value) && value.length) {
@@ -95,40 +115,48 @@ export class AssetsChangesComponent {
                 });
             }
         };
-        walk('', this.diff);
+        walk('', currentDiff);
+        this.cachedDiffGroups = groups;
         return groups;
     }
 
     async resolve(): Promise<void> {
-        await this.run(() => this.pineai.resolveSelectedScan(), 'Assets resolved.');
-    }
-
-    async compare(): Promise<void> {
-        await this.run(
-            () => this.pineai.compareSelectedScan(),
-            'Read-only comparison complete. Finding lifecycle was not changed.'
-        );
-    }
-
-    async analyze(): Promise<void> {
-        await this.run(
-            () => this.pineai.analyzeSelectedScan(),
-            'Comparison saved and finding lifecycle updated.'
-        );
-    }
-
-    private async run(operation: () => Promise<any>, message: string): Promise<void> {
         this.busy = true;
         this.errorMessage = '';
         this.successMessage = '';
         try {
-            await operation();
-            this.successMessage = message;
+            await this.pineai.resolveSelectedScan();
+            this.successMessage = 'Selected scan resolved successfully.';
         } catch (error) {
-            const failure = this.pineai.error(error);
-            this.errorMessage = failure.code === 'revision_conflict'
-                ? 'revision_conflict: Assessment state changed and was refreshed. Review before retrying.'
-                : `${failure.code}: ${failure.message}`;
+            this.errorMessage = this.pineai.errorText(error);
+        } finally {
+            this.busy = false;
+        }
+    }
+
+    async compare(): Promise<void> {
+        this.busy = true;
+        this.errorMessage = '';
+        this.successMessage = '';
+        try {
+            await this.pineai.compareSelectedScan();
+            this.successMessage = 'Comparison preview generated.';
+        } catch (error) {
+            this.errorMessage = this.pineai.errorText(error);
+        } finally {
+            this.busy = false;
+        }
+    }
+
+    async analyze(): Promise<void> {
+        this.busy = true;
+        this.errorMessage = '';
+        this.successMessage = '';
+        try {
+            await this.pineai.analyzeSelectedScan();
+            this.successMessage = 'Analysis saved successfully.';
+        } catch (error) {
+            this.errorMessage = this.pineai.errorText(error);
         } finally {
             this.busy = false;
         }

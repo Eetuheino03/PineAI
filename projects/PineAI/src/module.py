@@ -35,18 +35,31 @@ def _configuration_failure(failure):
     )
 
 
-def _service():
-    # Keep Mark VII cold-start quick: import the analysis graph only when an
-    # assurance action is actually requested.
-    from pineai_backend.assurance_service import AssuranceService
+_STORE = None
+_SERVICE = None
 
-    return AssuranceService()
+
+def _reset_singletons():
+    """Reset process singletons for test isolation."""
+    global _STORE, _SERVICE
+    _STORE = None
+    _SERVICE = None
 
 
 def _store():
-    from pineai_backend.customer_store import CustomerAuditStore
+    global _STORE
+    if _STORE is None:
+        from pineai_backend.customer_store import CustomerAuditStore
+        _STORE = CustomerAuditStore()
+    return _STORE
 
-    return CustomerAuditStore()
+
+def _service():
+    global _SERVICE
+    if _SERVICE is None:
+        from pineai_backend.assurance_service import AssuranceService
+        _SERVICE = AssuranceService(store=_store())
+    return _SERVICE
 
 
 def _settings_response(status):
@@ -173,9 +186,10 @@ def assurance_capabilities(_request: Request):
 @module.handles_action("platform_capabilities")
 def platform_capabilities(_request: Request):
     from pineai_backend.errors import BackendError
+    from pineai_backend.platform import platform_capabilities as get_platform_capabilities
 
     try:
-        return _service().platform_capabilities()
+        return get_platform_capabilities()
     except BackendError as failure:
         return _backend_failure(failure)
 
@@ -185,9 +199,12 @@ def list_measurement_profiles(request: Request):
     from pineai_backend.errors import BackendError
 
     try:
-        return _service().list_measurement_profiles(
-            getattr(request, "include_archived", False)
-        )
+        return {
+            "schema_version": "1.0",
+            "measurement_profiles": _store().list_measurement_profiles(
+                getattr(request, "include_archived", False)
+            ),
+        }
     except BackendError as failure:
         return _backend_failure(failure)
 
@@ -366,9 +383,12 @@ def list_baseline_versions(request: Request):
     from pineai_backend.errors import BackendError
 
     try:
-        return _service().list_baseline_versions(
-            getattr(request, "assessment_id", None)
-        )
+        return {
+            "schema_version": "1.0",
+            "baseline_versions": _store().list_baseline_versions(
+                getattr(request, "assessment_id", None)
+            ),
+        }
     except BackendError as failure:
         return _backend_failure(failure)
 
@@ -445,9 +465,12 @@ def list_assurance_profile_versions(request: Request):
     from pineai_backend.errors import BackendError
 
     try:
-        return _service().list_assurance_profile_versions(
-            getattr(request, "assessment_id", None)
-        )
+        return {
+            "schema_version": "1.0",
+            "assurance_profile_versions": _store().list_assurance_profile_versions(
+                getattr(request, "assessment_id", None)
+            ),
+        }
     except BackendError as failure:
         return _backend_failure(failure)
 
