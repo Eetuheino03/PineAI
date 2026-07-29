@@ -184,7 +184,6 @@ def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path=
     if socket_path is None:
         socket_path = os.environ.get("PINEAI_SOCKET_PATH", "/tmp/pineai.sock")
 
-    cold_start_ms = []
     actions_to_measure = [
         "health",
         "platform_capabilities",
@@ -198,6 +197,7 @@ def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path=
         config_dir = os.path.join(tmpdir, "config")
         env = os.environ.copy()
         env["PINEAI_CONFIG_DIR"] = config_dir
+        env["PINEAI_SOCKET_PATH"] = socket_path
 
         # Launch main daemon for action benchmarks
         proc = subprocess.Popen(
@@ -211,13 +211,14 @@ def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path=
             connected_socket = None
             for _ in range(50):
                 if os.path.exists(socket_path):
+                    candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    candidate.settimeout(1.0)
                     try:
-                        candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                        candidate.settimeout(1.0)
                         candidate.connect(socket_path)
                         connected_socket = candidate
                         break
                     except OSError:
+                        candidate.close()
                         time.sleep(0.05)
                 else:
                     time.sleep(0.05)
@@ -229,10 +230,10 @@ def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path=
                     "pineai_version": "0.6.3",
                     "iterations": iterations,
                     "socket_path": socket_path,
-                    "service_initialization_ms": {"runs": [], "p50": 0.0, "p95": 0.0, "max": 0.0},
+                    "service_initialization_ms": None,
                     "actions": {},
                     "rss_mib": {"idle": 0.0, "steady": 0.0, "peak": 0.0},
-                    "cache": {"items": 0, "accounted_bytes": 0, "hits": 0, "misses": 0, "evictions": 0},
+                    "cache": None,
                     "violations": ["Could not connect to Mark VII UDS socket"],
                     "passed": False,
                 }
@@ -288,25 +289,14 @@ def run_mark_vii_socket_benchmark(iterations=50, cold_start_runs=3, socket_path=
                 "pineai_version": "0.6.3",
                 "iterations": iterations,
                 "socket_path": socket_path,
-                "service_initialization_ms": {
-                    "runs": [round(x, 3) for x in cold_start_ms],
-                    "p50": round(calculate_percentile(cold_start_ms, 50), 3),
-                    "p95": round(calculate_percentile(cold_start_ms, 95), 3),
-                    "max": round(max(cold_start_ms) if cold_start_ms else 0.0, 3),
-                },
+                "service_initialization_ms": None,
                 "actions": action_metrics,
                 "rss_mib": {
                     "idle": round(idle_rss, 2),
                     "steady": round(steady_rss, 2),
                     "peak": round(peak_rss, 2),
                 },
-                "cache": {
-                    "items": 0,
-                    "accounted_bytes": 0,
-                    "hits": 0,
-                    "misses": 0,
-                    "evictions": 0,
-                },
+                "cache": None,
                 "violations": [] if all_actions_passed else ["One or more socket actions failed or returned error"],
                 "passed": all_actions_passed,
             }

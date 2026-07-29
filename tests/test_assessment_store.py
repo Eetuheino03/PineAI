@@ -713,6 +713,21 @@ class AssessmentStoreTests(unittest.TestCase):
                 store.get(created["assessment_id"])
             self.assertEqual(cm.exception.code, "storage_error")
 
+    def test_lru_cache_aggregate_byte_budget_eviction(self):
+        from pineai_backend.assessment_store import CACHE_MAX_SERIALIZED_BYTES
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            # Create 20 files of ~230 KiB each (total ~4.5 MiB > 4 MiB limit)
+            for i in range(20):
+                p = Path(directory) / f"file_{i}.json"
+                store._write_json(p, {"payload": "y" * (230 * 1024)})
+                store._read_json(p, "missing", "missing")
+
+            self.assertLessEqual(store._mtime_cache_total_bytes, CACHE_MAX_SERIALIZED_BYTES)
+            self.assertGreater(store._mtime_cache_evictions, 0)
+            computed_sum = sum(entry["size"] for entry in store._mtime_cache.values())
+            self.assertEqual(store._mtime_cache_total_bytes, computed_sum)
+
 
 if __name__ == "__main__":
     unittest.main()
