@@ -15,7 +15,7 @@ AI is optional and never controls this sequence.
 - **Overview** — runtime health, active assessment and baseline, latest
   comparison, open finding counts, and the next deterministic workflow step.
 - **Recon** — saved Hak5 Recon scans, metadata, load state, and resolver
-  preview. There are no start or stop controls in `0.6.1`.
+  preview. There are no start or stop controls in `0.6.3`.
 - **Assessments** — create, edit, archive, and select one wireless environment.
 - **Baselines** — create immutable versions, inspect them, and explicitly
   activate one with revision checking.
@@ -255,10 +255,10 @@ never required for the offline workflow.
 
 ## Physical Mark VII smoke test
 
-After installing the `0.6.1` archive:
+After installing the `0.6.3` archive:
 
 1. Confirm the module loads with AI unconfigured.
-2. Confirm backend version `0.6.1` and assurance schema version `1.1`.
+2. Confirm backend version `0.6.3` and assurance schema version `1.1`.
 3. List and load a saved Recon scan.
 4. Resolve it and create an assessment baseline.
 5. Confirm the baseline requires a separate activation.
