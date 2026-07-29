@@ -2,15 +2,13 @@ import { Component, OnInit } from '@angular/core';
 import { PineAIService } from '../services/PineAI.service';
 
 @Component({
-    selector: 'lib-PineAI',
+    selector: 'lib-pine-ai',
     templateUrl: './PineAI.component.html',
     styleUrls: ['./PineAI.component.css']
 })
 export class PineAIComponent implements OnInit {
     startupError = '';
     mode: 'guided' | 'expert' = 'guided';
-
-    constructor(public pineai: PineAIService) {}
 
     async ngOnInit(): Promise<void> {
         await this.initialize();

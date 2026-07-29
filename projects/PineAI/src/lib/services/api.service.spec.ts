@@ -16,7 +16,7 @@ describe('ApiService', () => {
         });
         service = TestBed.inject(ApiService);
         http = TestBed.inject(HttpTestingController);
-        window['_app_base'] = '';
+        (window as any)._app_base = '';
     });
 
     afterEach(() => {
