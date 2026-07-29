@@ -24,6 +24,15 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 
+REQUIRED_ACTIONS = [
+    "health",
+    "platform_capabilities",
+    "list_assessments",
+    "list_measurement_profiles",
+    "assurance_capabilities",
+]
+
+
 def setup_pineapple_stub():
     """Inject pineapple.modules stub for offline / workstation benchmarking."""
     if "pineapple.modules" not in sys.modules:
@@ -112,14 +121,19 @@ def validate_action_response(action_name: str, payload: any) -> tuple:
     if action_name == "health":
         if payload.get("status") != "ok" or payload.get("module") != "PineAI":
             return False, "health missing status='ok' or module='PineAI'"
-        if not payload.get("version") or not payload.get("backend_version"):
-            return False, "health missing version fields"
+        ver = payload.get("version")
+        b_ver = payload.get("backend_version")
+        if not isinstance(ver, str) or len(ver) == 0:
+            return False, "health missing non-empty string version"
+        if not isinstance(b_ver, str) or len(b_ver) == 0:
+            return False, "health missing non-empty string backend_version"
 
     elif action_name == "platform_capabilities":
         if "schema_version" not in payload:
             return False, "platform_capabilities missing schema_version"
-        if "status" not in payload or not isinstance(payload.get("status"), str):
-            return False, "platform_capabilities missing or invalid status"
+        status = payload.get("status")
+        if status not in {"ready", "degraded", "blocked"}:
+            return False, f"platform_capabilities status '{status}' not in ['ready', 'degraded', 'blocked']"
         if not isinstance(payload.get("storage"), dict):
             return False, "platform_capabilities missing storage dict"
         if not isinstance(payload.get("identity"), dict):
@@ -144,8 +158,15 @@ def validate_action_response(action_name: str, payload: any) -> tuple:
             return False, "assurance_capabilities schema_version is not '1.2'"
         if payload.get("product_mode") != "customer_audit_foundation":
             return False, "assurance_capabilities product_mode is not 'customer_audit_foundation'"
-        if not isinstance(payload.get("module_actions"), list):
+        b_ver = payload.get("backend_version")
+        if not isinstance(b_ver, str) or len(b_ver) == 0:
+            return False, "assurance_capabilities missing non-empty string backend_version"
+        mod_actions = payload.get("module_actions")
+        if not isinstance(mod_actions, list):
             return False, "assurance_capabilities missing module_actions list"
+        missing_req = set(REQUIRED_ACTIONS) - set(mod_actions)
+        if missing_req:
+            return False, f"assurance_capabilities module_actions missing required actions: {missing_req}"
         if not isinstance(payload.get("result_types"), dict):
             return False, "assurance_capabilities result_types is not a dict"
         if not isinstance(payload.get("report_scopes"), list):
@@ -157,12 +178,27 @@ def validate_action_response(action_name: str, payload: any) -> tuple:
 
 
 def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
+    if iterations < 1 or cold_start_runs < 1:
+        return {
+            "schema_version": "1.0",
+            "mode": "local-adapter",
+            "pineai_version": "0.6.3",
+            "iterations": iterations,
+            "service_initialization_ms": None,
+            "actions": {},
+            "rss_mib": None,
+            "cache": None,
+            "violations": ["iterations and cold_start_runs must be >= 1"],
+            "passed": False,
+        }
+
     setup_pineapple_stub()
     old_config_dir = os.environ.get("PINEAI_CONFIG_DIR")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        config_dir = os.path.join(tmpdir, "config")
-        os.environ["PINEAI_CONFIG_DIR"] = config_dir
-        try:
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = os.path.join(tmpdir, "config")
+            os.environ["PINEAI_CONFIG_DIR"] = config_dir
+
             import module
             module._reset_singletons()
 
@@ -176,18 +212,10 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
             module._reset_singletons()
             idle_rss = get_process_rss_mib(os.getpid())
 
-            actions_to_measure = [
-                "health",
-                "platform_capabilities",
-                "list_assessments",
-                "list_measurement_profiles",
-                "assurance_capabilities",
-            ]
-
             action_metrics = {}
             violations = []
 
-            for action_name in actions_to_measure:
+            for action_name in REQUIRED_ACTIONS:
                 handler = module.module._actions.get(action_name)
                 if not handler:
                     violations.append(f"Required action handler missing: {action_name}")
@@ -196,7 +224,7 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
                         "p50_ms": 0.0,
                         "p95_ms": 0.0,
                         "max_ms": 0.0,
-                        "attempts": 0,
+                        "attempts": iterations,
                         "successful_samples": 0,
                         "failed_samples": iterations,
                         "last_error": f"Handler missing in module.module._actions: {action_name}"
@@ -272,15 +300,38 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
                 "violations": violations,
                 "passed": len(violations) == 0,
             }
-        finally:
-            if old_config_dir is None:
-                os.environ.pop("PINEAI_CONFIG_DIR", None)
-            else:
-                os.environ["PINEAI_CONFIG_DIR"] = old_config_dir
+    finally:
+        try:
+            if "module" in sys.modules and hasattr(sys.modules["module"], "_reset_singletons"):
+                sys.modules["module"]._reset_singletons()
+        except Exception:
+            pass
+        if old_config_dir is None:
+            os.environ.pop("PINEAI_CONFIG_DIR", None)
+        else:
+            os.environ["PINEAI_CONFIG_DIR"] = old_config_dir
 
 
 def run_mark_vii_socket_benchmark(iterations=50, socket_path=None, timeout_seconds=2.0):
     """Run native Hak5 Unix-domain socket benchmark on Mark VII device (attach-only mode)."""
+    if iterations < 1:
+        return {
+            "schema_version": "1.0",
+            "mode": "mark-vii-socket",
+            "pineai_version": "0.6.3",
+            "iterations": iterations,
+            "socket_path": socket_path,
+            "connection_mode": "attach",
+            "service_initialization_ms": None,
+            "actions": {},
+            "rss_mib": None,
+            "cache": None,
+            "protocol_validated": False,
+            "hardware_validated": False,
+            "violations": ["iterations must be >= 1"],
+            "passed": False,
+        }
+
     if not socket_path:
         socket_path = os.environ.get("PINEAI_SOCKET_PATH")
 
@@ -305,13 +356,6 @@ def run_mark_vii_socket_benchmark(iterations=50, socket_path=None, timeout_secon
     timeout_seconds = max(0.5, min(10.0, float(timeout_seconds)))
     max_response_bytes = 524_288  # 512 KiB transport buffer safety limit
 
-    actions_to_measure = [
-        "health",
-        "platform_capabilities",
-        "list_assessments",
-        "list_measurement_profiles",
-        "assurance_capabilities",
-    ]
     action_metrics = {}
     violations = []
     all_actions_passed = True
@@ -334,7 +378,7 @@ def run_mark_vii_socket_benchmark(iterations=50, socket_path=None, timeout_secon
             "passed": False,
         }
 
-    for action_name in actions_to_measure:
+    for action_name in REQUIRED_ACTIONS:
         durations = []
         first_ms = 0.0
         successful_samples = 0
@@ -353,24 +397,35 @@ def run_mark_vii_socket_benchmark(iterations=50, socket_path=None, timeout_secon
 
                 response_data = b""
                 stream_ok = True
+                framing_complete = False
+
                 while True:
-                    chunk = sock.recv(4096)
-                    if not chunk:
-                        if not response_data:
+                    try:
+                        chunk = sock.recv(4096)
+                        if not chunk:
                             stream_ok = False
-                            last_error = "Connection closed before receiving data"
-                        break
-                    response_data += chunk
-                    if len(response_data) > max_response_bytes:
+                            last_error = "Connection closed before newline frame terminator"
+                            break
+                        response_data += chunk
+                        if len(response_data) > max_response_bytes:
+                            stream_ok = False
+                            last_error = f"Response exceeded transport safety limit ({max_response_bytes} bytes)"
+                            break
+                        if b"\n" in response_data:
+                            framing_complete = True
+                            break
+                    except socket.timeout:
                         stream_ok = False
-                        last_error = f"Response exceeded transport safety limit ({max_response_bytes} bytes)"
+                        last_error = f"Socket request timed out ({timeout_seconds}s)"
                         break
-                    if b"\n" in response_data:
+                    except OSError as ex:
+                        stream_ok = False
+                        last_error = f"Socket OS error: {ex}"
                         break
 
                 dt_ms = (time.monotonic_ns() - t0) / 1e6
 
-                if stream_ok and response_data:
+                if stream_ok and framing_complete and response_data:
                     line = response_data.split(b"\n", 1)[0].decode("utf-8").strip()
                     if not line:
                         failed_samples += 1
@@ -460,6 +515,9 @@ def main():
         "--json", action="store_true", help="Output JSON only to stdout"
     )
     args = parser.parse_args()
+
+    if args.iterations < 1 or args.cold_start_runs < 1:
+        parser.error("iterations and cold_start_runs must be >= 1")
 
     if args.mode == "local-adapter":
         results = run_local_adapter_benchmark(args.iterations, args.cold_start_runs)

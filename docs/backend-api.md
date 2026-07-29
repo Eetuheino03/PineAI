@@ -46,7 +46,7 @@ Returns runtime state without secrets or stored identifiers:
   "module": "PineAI",
   "version": "0.6.3",
   "backend_version": "0.6.3",
-  "product_mode": "baseline_and_drift",
+  "product_mode": "customer_audit_foundation",
   "offline_complete": true,
   "model": "gpt-5.6-terra",
   "api_key_configured": false,
