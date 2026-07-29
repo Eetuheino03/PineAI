@@ -132,18 +132,19 @@ The v0.6.1 single-scan baselines and comparisons stay readable. Legacy
 findings are shown as read-only history and are not retrospectively
 reclassified without the inventory and policy that existed at the time.
 
+## v0.6.3 release closure checkpoint
+
+- Target release: `v0.6.3` pre-release / release candidate
+- Primary objective: Complete release closure sprint for Customer Audit Foundation (harness hardening, local adapter correctness gate, attach-only UDS socket mode, synthetic harness tests, documentation synchronization, and physical Mark VII smoke test specification).
+- Product position: Portable offline wireless change auditing for WiFi Pineapple Mark VII.
+- Writer contracts: assessment `1.1`; snapshot/comparison `1.2`; customer analysis `1.2`; assurance capabilities `1.2`; report fact `1.1`; consensus, measurement profile, AssuranceProfile, occurrence, and finding contracts are independently versioned.
+- Physical Mark VII validation remains explicitly pending for the exact `PineAI-0.6.3.tar.gz` artifact.
+
 ## Release handoff
 
-The verified `PineAI-0.6.1.tar.gz` artifact and its matching SHA-256 sidecar
-are published as a GitHub pre-release. Keep that exact release marked as a
-pre-release until the exact asset passes the physical Mark VII smoke test.
-Do not rebuild or replace the assets during hardware validation.
+The verified `PineAI-0.6.3.tar.gz` artifact and its matching SHA-256 sidecar will be published as a GitHub pre-release upon completion of release verification. Keep that exact release marked as a pre-release until the exact asset passes the physical Mark VII hardware smoke test. Do not rebuild or replace the assets during hardware validation.
 
 ## Next task
 
-When the Mark VII is connected again, install that exact v0.6.1 release package
-after backing up the existing module and `/root/.PineAI`, then verify module
-initialization, offline health, saved Recon listing, baseline creation and
-activation, comparison, findings, and offline JSON/HTML report export. Record
-the result here. If successful, promote the same GitHub release from
-pre-release to stable without rebuilding its assets.
+When the Mark VII is connected, install that exact v0.6.3 release package after backing up the existing module and `/root/.PineAI`, then execute the 18-point physical smoke test (offline health, Recon scan resolution, consensus baseline activation, inventory/policy activation, finding notes, evidence viewing, script-free HTML report export, 15–30 min longevity observation, backup/restore verification). Record the result here. If successful, promote the GitHub release from pre-release to stable without rebuilding its assets.
+

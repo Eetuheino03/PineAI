@@ -8,10 +8,10 @@ module version:
 
 ```sh
 if [ -d /pineapple/modules/PineAI ]; then
-    cp -a /pineapple/modules/PineAI /root/PineAI.module.backup-before-0.6.1
+    cp -a /pineapple/modules/PineAI /root/PineAI.module.backup-before-0.6.3
 fi
 if [ -d /root/.PineAI ]; then
-    cp -a /root/.PineAI /root/.PineAI.backup-before-0.6.1
+    cp -a /root/.PineAI /root/.PineAI.backup-before-0.6.3
 fi
 ```
 
