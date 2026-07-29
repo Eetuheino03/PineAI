@@ -7,7 +7,7 @@ public service classes are resolved only when an action needs them.
 """
 
 __all__ = ["AssuranceService", "BackendError"]
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 
 
 def __getattr__(name):

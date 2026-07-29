@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { PineAIService } from '../services/PineAI.service';
 import { Finding } from '../models';
 
@@ -7,7 +7,7 @@ import { Finding } from '../models';
     templateUrl: './findings.component.html',
     styleUrls: ['./shared.css']
 })
-export class FindingsComponent implements OnInit {
+export class FindingsComponent implements OnInit, OnDestroy {
     statusFilter = 'active';
     severityFilter = 'all';
     searchQuery = '';
@@ -16,11 +16,19 @@ export class FindingsComponent implements OnInit {
     notes: {[findingId: string]: string} = {};
     selectedFinding: Finding | null = null;
     filteredFindings: Finding[] = [];
+    private searchDebounceTimer: any = null;
 
     constructor(public pineai: PineAIService) {}
 
     async ngOnInit(): Promise<void> {
         this.applyFilters();
+    }
+
+    ngOnDestroy(): void {
+        if (this.searchDebounceTimer) {
+            clearTimeout(this.searchDebounceTimer);
+            this.searchDebounceTimer = null;
+        }
     }
 
     applyFilters(): void {
@@ -45,16 +53,24 @@ export class FindingsComponent implements OnInit {
             const stillVisible = this.filteredFindings.find(
                 (item) => item.finding_id === this.selectedFinding.finding_id
             );
-            if (!stillVisible) {
-                this.selectedFinding = this.filteredFindings[0] || null;
-            }
-        } else if (this.filteredFindings.length > 0) {
-            this.selectedFinding = this.filteredFindings[0];
+            this.selectedFinding = stillVisible || this.filteredFindings[0] || null;
+        } else {
+            this.selectedFinding = this.filteredFindings[0] || null;
         }
     }
 
     onFilterChange(): void {
         this.applyFilters();
+    }
+
+    onSearchChange(): void {
+        if (this.searchDebounceTimer) {
+            clearTimeout(this.searchDebounceTimer);
+        }
+        this.searchDebounceTimer = setTimeout(() => {
+            this.applyFilters();
+            this.searchDebounceTimer = null;
+        }, 200);
     }
 
     selectFinding(finding: Finding): void {

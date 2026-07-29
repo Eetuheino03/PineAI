@@ -386,6 +386,25 @@ table {
         border-left: 0;
         border-top: 1px solid #d8e0e4;
     }
+
+    .findings-split-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.findings-split-grid {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 16px;
+}
+
+.finding-summary-card {
+    height: 520px;
+    overflow: hidden;
+}
+
+.finding-summary-viewport {
+    height: 460px;
 }
 
 @media (min-width: 721px) and (max-width: 980px) {

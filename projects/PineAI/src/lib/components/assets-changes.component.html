@@ -79,13 +79,6 @@
                 </div>
                 <div class="row">
                     <span
-                        *ngIf="comparability?.comparison_quality_score !== undefined && comparability?.comparison_quality_score !== null"
-                        class="badge"
-                        [class.complete]="(comparability?.comparison_quality_score || 0) >= 0.75"
-                        [class.medium]="(comparability?.comparison_quality_score || 0) < 0.75">
-                        Quality: {{ ((comparability?.comparison_quality_score || 0) * 100) | number:'1.0-1' }}%
-                    </span>
-                    <span
                         class="badge"
                         [ngClass]="comparabilityLabel">
                         {{ comparabilityLabel }}
@@ -93,23 +86,23 @@
                 </div>
             </div>
             <mat-card-content class="stack" style="margin-top: 12px;">
-                <div *ngIf="comparability?.quality_factors" class="grid three">
+                <div *ngIf="comparability" class="grid three">
                     <div class="quality-factor">
-                        <div class="metric-label">Duration Score</div>
+                        <div class="metric-label">Duration</div>
                         <div class="metric-small">
-                            {{ comparability?.quality_factors?.duration_score !== null && comparability?.quality_factors?.duration_score !== undefined ? (((comparability?.quality_factors?.duration_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
+                            {{ comparability?.duration?.baseline_seconds || '—' }}s baseline / {{ comparability?.duration?.current_seconds || '—' }}s current
                         </div>
                     </div>
                     <div class="quality-factor">
-                        <div class="metric-label">Coverage Score</div>
+                        <div class="metric-label">Coverage</div>
                         <div class="metric-small">
-                            {{ comparability?.quality_factors?.coverage_score !== null && comparability?.quality_factors?.coverage_score !== undefined ? (((comparability?.quality_factors?.coverage_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
+                            baseline {{ (comparability?.coverage?.baseline_bands || []).join(', ') || '—' }} / current {{ (comparability?.coverage?.current_bands || []).join(', ') || '—' }}
                         </div>
                     </div>
                     <div class="quality-factor">
-                        <div class="metric-label">Location Score</div>
+                        <div class="metric-label">Baseline AP Detection</div>
                         <div class="metric-small">
-                            {{ comparability?.quality_factors?.location_score !== null && comparability?.quality_factors?.location_score !== undefined ? (((comparability?.quality_factors?.location_score || 0) * 100) | number:'1.0-0') + '%' : 'Unknown' }}
+                            {{ comparability?.baseline_detection?.reobserved_eligible_aps !== undefined ? comparability?.baseline_detection?.reobserved_eligible_aps : '—' }} / {{ comparability?.baseline_detection?.eligible_baseline_aps !== undefined ? comparability?.baseline_detection?.eligible_baseline_aps : '—' }} eligible APs
                         </div>
                     </div>
                 </div>
@@ -118,7 +111,8 @@
                     <strong>Comparability notes:</strong>
                     <div class="chip-list" style="margin-top: 6px;">
                         <span class="badge warning" *ngFor="let reason of comparability.reasons">
-                            {{ reason }}
+                            {{ pineai.reasonLabel(reason, pineai.settings?.language || 'en') }}
+                            <small class="mono">({{ reason }})</small>
                         </span>
                     </div>
                 </div>
@@ -126,7 +120,7 @@
         </mat-card>
 
         <div *ngIf="comparison" class="grid taxonomy-grid">
-            <mat-card class="taxonomy-panel changes">
+            <mat-card class="taxonomy-panel change">
                 <mat-card-title>Observed changes</mat-card-title>
                 <mat-card-subtitle>
                     Raw structural before/after differences without severity or findings lifecycle.
@@ -145,7 +139,7 @@
                     </div>
                 </mat-card-content>
             </mat-card>
-            <mat-card class="taxonomy-panel deviations">
+            <mat-card class="taxonomy-panel deviation">
                 <mat-card-title>Policy deviations</mat-card-title>
                 <mat-card-subtitle>
                     Policy violations tied to active AssuranceProfile rules.

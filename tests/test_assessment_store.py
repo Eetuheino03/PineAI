@@ -646,6 +646,19 @@ class AssessmentStoreTests(unittest.TestCase):
                     stat.S_IMODE(path.stat().st_mode), expected, str(path)
                 )
 
+    def test_lru_cache_deep_copy_and_invalidation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            created = store.create(assessment_value())
+            get1 = store.get(created["assessment_id"])
+            get2 = store.get(created["assessment_id"])
+            self.assertEqual(get1, get2)
+            self.assertIsNot(get1, get2)
+            get1["name"] = "Mutated Name"
+            get3 = store.get(created["assessment_id"])
+            self.assertEqual(get3["name"], created["name"])
+            self.assertGreater(store._mtime_cache_hits, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

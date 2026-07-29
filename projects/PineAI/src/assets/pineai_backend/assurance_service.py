@@ -950,6 +950,7 @@ class AssuranceService:
     ) -> Optional[Dict[str, Any]]:
         if ai_analysis is None:
             return None
+        from .ai_analysis import validate_ai_analysis
         if not isinstance(ai_analysis, dict):
             raise BackendError(
                 "invalid_ai_output", "ai_analysis must be an object"

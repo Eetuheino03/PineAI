@@ -1,3 +1,6 @@
+export type ResourceLoadState =
+    'not_loaded' | 'loading' | 'loaded' | 'failed';
+
 export interface PineAISettings {
     schema_version?: string;
     model?: string;
