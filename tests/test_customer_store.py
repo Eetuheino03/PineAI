@@ -219,20 +219,58 @@ class IdentityAndCustomerStoreTests(unittest.TestCase):
     def test_update_finding_accepts_note(self):
         with tempfile.TemporaryDirectory() as directory:
             store = CustomerAuditStore(directory)
-            store.create_measurement_profile(measurement_profile())
             assessment = store.create(
                 {"name": "Note Test", "location": "Lab", "notes": "Test notes"}
             )
-            # Verify update_finding accepts note parameter without raising TypeError
-            with self.assertRaises(BackendError) as raised:
-                store.update_finding(
-                    assessment["assessment_id"],
-                    assessment["revision"],
-                    "nonexistent_finding",
-                    "acknowledged",
-                    note="Audit note for testing",
-                )
-            self.assertEqual(raised.exception.code, "invalid_finding")
+            finding = {
+                "finding_id": "finding_111122223333",
+                "rule_id": "open_ssid_detected",
+                "title": "Open SSID",
+                "severity": "high",
+                "confidence": 0.9,
+                "subject_id": "ap_111122223333",
+                "summary": "Unencrypted open AP.",
+                "evidence_ids": ["evidence_111122223333"],
+                "details": {"result_type": "security_finding"},
+                "status": "open",
+                "currently_observed": True,
+                "first_seen_at": "2026-07-29T12:00:00Z",
+                "last_seen_at": "2026-07-29T12:00:00Z",
+                "last_seen_comparison_id": "comparison_1111222233334444",
+                "occurrence_count": 1,
+                "status_updated_at": "2026-07-29T12:00:00Z",
+            }
+            # Save finding directly to store
+            path = (
+                Path(directory)
+                / "assessments"
+                / assessment["assessment_id"]
+                / "findings.json"
+            )
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.1",
+                        "updated_at": "2026-07-29T12:00:00Z",
+                        "findings": [finding],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            res = store.update_finding(
+                assessment["assessment_id"],
+                assessment["revision"],
+                finding["finding_id"],
+                "acknowledged",
+                note="Auditor verified physical AP placement.",
+            )
+            self.assertEqual(res["finding"]["status"], "acknowledged")
+            # Verify note is present in returned audit event
+            self.assertIn("event", res)
+            self.assertEqual(res["event"]["data"]["note"], "Auditor verified physical AP placement.")
+            # Verify note is NOT stored in the mutable finding record itself
+            findings = store.list_findings(assessment["assessment_id"])
+            self.assertNotIn("note", findings[0])
 
 
 if __name__ == "__main__":

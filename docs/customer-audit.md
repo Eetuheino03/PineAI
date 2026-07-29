@@ -1,6 +1,6 @@
 # Customer Audit Foundation workflow
 
-PineAI `0.6.2` uses saved Hak5 Recon observations to create repeatable,
+PineAI `0.6.3` uses saved Hak5 Recon observations to create repeatable,
 evidence-backed wireless change audits. It never starts or stops a radio.
 
 ## Guided workflow

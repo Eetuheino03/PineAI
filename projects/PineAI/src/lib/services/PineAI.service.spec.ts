@@ -330,4 +330,37 @@ describe('PineAIService Baseline & Drift', () => {
                 item_id: 'finding_1'
             }));
     });
+
+    it('shares a single initialization promise for concurrent initialize calls', async () => {
+        api.moduleRequest.and.callFake((payload: any) => {
+            if (payload.action === 'health') {
+                return Promise.resolve({status: 'ok', version: '0.6.3'});
+            }
+            if (payload.action === 'assurance_capabilities') {
+                return Promise.resolve({schema_version: '1.0'});
+            }
+            return Promise.resolve({});
+        });
+
+        const p1 = service.initialize();
+        const p2 = service.initialize();
+
+        await Promise.all([p1, p2]);
+        expect(service.initialized).toBeTrue();
+    });
+
+    it('tracks explicit measurementProfilesState load state', async () => {
+        api.moduleRequest.and.returnValue(Promise.resolve({measurement_profiles: []}));
+
+        expect(service.measurementProfilesState).toBe('not_loaded');
+        const loadPromise = service.ensureMeasurementProfilesLoaded();
+        expect(service.measurementProfilesState).toBe('loading');
+
+        await loadPromise;
+        expect(service.measurementProfilesState).toBe('loaded');
+
+        // Subsequent call does not refetch
+        await service.ensureMeasurementProfilesLoaded();
+        expect(api.moduleRequest.calls.count()).toBe(1);
+    });
 });

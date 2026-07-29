@@ -90,19 +90,19 @@
                     <div class="quality-factor">
                         <div class="metric-label">Duration</div>
                         <div class="metric-small">
-                            {{ comparability?.duration?.baseline_seconds || '—' }}s baseline / {{ comparability?.duration?.current_seconds || '—' }}s current
+                            {{ comparability?.quality_factors?.duration?.baseline_seconds || comparability?.duration?.baseline_seconds || '—' }}s baseline / {{ comparability?.quality_factors?.duration?.current_seconds || comparability?.duration?.current_seconds || '—' }}s current
                         </div>
                     </div>
                     <div class="quality-factor">
                         <div class="metric-label">Coverage</div>
                         <div class="metric-small">
-                            baseline {{ (comparability?.coverage?.baseline_bands || []).join(', ') || '—' }} / current {{ (comparability?.coverage?.current_bands || []).join(', ') || '—' }}
+                            baseline {{ (comparability?.quality_factors?.coverage?.baseline_bands || comparability?.coverage?.baseline_bands || []).join(', ') || '—' }} / current {{ (comparability?.quality_factors?.coverage?.current_bands || comparability?.coverage?.current_bands || []).join(', ') || '—' }}
                         </div>
                     </div>
                     <div class="quality-factor">
                         <div class="metric-label">Baseline AP Detection</div>
                         <div class="metric-small">
-                            {{ comparability?.baseline_detection?.reobserved_eligible_aps !== undefined ? comparability?.baseline_detection?.reobserved_eligible_aps : '—' }} / {{ comparability?.baseline_detection?.eligible_baseline_aps !== undefined ? comparability?.baseline_detection?.eligible_baseline_aps : '—' }} eligible APs
+                            {{ comparability?.quality_factors?.baseline_detection?.reobserved_access_points !== undefined ? comparability?.quality_factors?.baseline_detection?.reobserved_access_points : (comparability?.baseline_detection?.reobserved_eligible_aps !== undefined ? comparability?.baseline_detection?.reobserved_eligible_aps : '—') }} / {{ comparability?.quality_factors?.baseline_detection?.eligible_access_points !== undefined ? comparability?.quality_factors?.baseline_detection?.eligible_access_points : (comparability?.baseline_detection?.eligible_baseline_aps !== undefined ? comparability?.baseline_detection?.eligible_baseline_aps : '—') }} eligible APs
                         </div>
                     </div>
                 </div>

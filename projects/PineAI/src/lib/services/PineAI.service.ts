@@ -65,8 +65,12 @@ export class PineAIService {
     activity: ActivityEntry[] = [];
     panelErrors: PanelErrorMap = {};
 
+    measurementProfilesState: ResourceLoadState = 'not_loaded';
+    reconState: ResourceLoadState = 'not_loaded';
+
     private measurementProfilesPromise: Promise<any> | null = null;
     private reconPromise: Promise<any> | null = null;
+    private initializationPromise: Promise<void> | null = null;
     private cachedCapabilitySummary: CapabilitySummary | null = null;
     initializing = false;
     initialized = false;
@@ -169,14 +173,27 @@ export class PineAIService {
         });
     }
 
-    async initialize(): Promise<void> {
-        if (this.initializing) {
-            return;
+    initialize(): Promise<void> {
+        if (this.initialized) {
+            return Promise.resolve();
         }
+        if (this.initializationPromise) {
+            return this.initializationPromise;
+        }
+
         this.initializing = true;
+        this.initializationPromise = this.initializeInternal()
+            .finally(() => {
+                this.initializationPromise = null;
+                this.initializing = false;
+            });
+
+        return this.initializationPromise;
+    }
+
+    private async initializeInternal(): Promise<void> {
         this.initialized = false;
         try {
-            // Bootstrap Phase: fetch health, settings, platform capabilities, and assessments.
             await this.refreshHealth();
             await Promise.all([
                 this.settle('settings', () => this.refreshSettings()),
@@ -193,38 +210,48 @@ export class PineAIService {
             const failure = this.error(error);
             this.log('error', 'Backend initialization failed', `${failure.code}: ${failure.message}`);
             throw error;
-        } finally {
-            this.initializing = false;
         }
     }
 
     async refreshPlatformOnlyCapabilities(): Promise<any> {
-        this.platformCapabilities = await this.module<any>('platform_capabilities').catch(() => null);
+        this.platformCapabilities = await this.module<any>('platform_capabilities');
         this.updateCapabilitySummary();
         return this.platformCapabilities;
     }
 
-    async ensureMeasurementProfilesLoaded(): Promise<void> {
-        if (this.measurementProfiles && this.measurementProfiles.length > 0) {
-            return;
+    async ensureMeasurementProfilesLoaded(force: boolean = false): Promise<void> {
+        if (!force && this.measurementProfilesState === 'loaded') {
+            return Promise.resolve();
         }
         if (!this.measurementProfilesPromise) {
+            this.measurementProfilesState = 'loading';
             this.measurementProfilesPromise = this.settle('measurement_profiles', () =>
                 this.refreshMeasurementProfiles()
-            ).finally(() => {
+            ).then(() => {
+                this.measurementProfilesState = 'loaded';
+            }).catch((err) => {
+                this.measurementProfilesState = 'failed';
+                throw err;
+            }).finally(() => {
                 this.measurementProfilesPromise = null;
             });
         }
         return this.measurementProfilesPromise;
     }
 
-    async ensureReconLoaded(): Promise<void> {
-        if (this.scans && this.scans.length > 0) {
-            return;
+    async ensureReconLoaded(force: boolean = false): Promise<void> {
+        if (!force && this.reconState === 'loaded') {
+            return Promise.resolve();
         }
         if (!this.reconPromise) {
+            this.reconState = 'loading';
             this.reconPromise = this.settle('recon', async () => {
                 await Promise.all([this.refreshReconStatus(), this.refreshScans()]);
+            }).then(() => {
+                this.reconState = 'loaded';
+            }).catch((err) => {
+                this.reconState = 'failed';
+                throw err;
             }).finally(() => {
                 this.reconPromise = null;
             });

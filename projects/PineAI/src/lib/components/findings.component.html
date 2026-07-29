@@ -32,7 +32,7 @@
                         <input
                             matInput
                             [(ngModel)]="searchQuery"
-                            (ngModelChange)="onFilterChange()"
+                            (ngModelChange)="onSearchChange()"
                             placeholder="Rule, title or target ID">
                         <mat-icon matSuffix *ngIf="!searchQuery">search</mat-icon>
                         <button

@@ -659,6 +659,25 @@ class AssessmentStoreTests(unittest.TestCase):
             self.assertEqual(get3["name"], created["name"])
             self.assertGreater(store._mtime_cache_hits, 0)
 
+    def test_lru_cache_item_count_eviction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            for i in range(70):
+                created = store.create({"name": f"Assessment {i}", "location": "Lab", "notes": "notes"})
+                store.get(created["assessment_id"])
+            self.assertLessEqual(len(store._mtime_cache), 64)
+            self.assertGreater(store._mtime_cache_evictions, 0)
+
+    def test_lru_cache_path_invalidation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            created = store.create(assessment_value())
+            store.get(created["assessment_id"])
+            self.assertGreater(len(store._mtime_cache), 0)
+            store.update(created["assessment_id"], created["revision"], {"name": "Updated Name"})
+            updated = store.get(created["assessment_id"])
+            self.assertEqual(updated["name"], "Updated Name")
+
 
 if __name__ == "__main__":
     unittest.main()

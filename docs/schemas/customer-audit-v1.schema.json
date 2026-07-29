@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/Eetuheino03/PineAI/customer-audit-v1.schema.json",
   "title": "PineAI Customer Audit Foundation contracts",
-  "description": "Public v0.6.2 manifest for the Customer Audit Foundation. Legacy Baseline & Drift actions retain their contracts in baseline-drift-v1.schema.json; new customer-audit actions are defined locally.",
+  "description": "Public v0.6.3 manifest for the Customer Audit Foundation. Legacy Baseline & Drift actions retain their contracts in baseline-drift-v1.schema.json; new customer-audit actions are defined locally.",
   "type": "object",
   "anyOf": [
     { "$ref": "#/definitions/platformCapabilitiesResponse" },
