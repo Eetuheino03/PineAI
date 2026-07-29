@@ -10,6 +10,8 @@ export class PineAIComponent implements OnInit {
     startupError = '';
     mode: 'guided' | 'expert' = 'guided';
 
+    constructor(public pineai: PineAIService) {}
+
     async ngOnInit(): Promise<void> {
         await this.initialize();
     }

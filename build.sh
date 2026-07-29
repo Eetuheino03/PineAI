@@ -41,7 +41,8 @@ build_module() {
         fi
         echo "[*] Using prebuilt Angular bundles"
     else
-        if ! "$PWD/node_modules/.bin/ng" build --prod > /dev/null 2>&1; then
+        export NODE_OPTIONS="--openssl-legacy-provider ${NODE_OPTIONS:-}"
+        if ! ./node_modules/.bin/ng build --prod > /dev/null 2>&1 && ! npx ng build --prod > /dev/null 2>&1; then
             echo "[!] Angular Build Failed: Run './node_modules/.bin/ng build --prod' to inspect the error."
             exit 1
         fi
