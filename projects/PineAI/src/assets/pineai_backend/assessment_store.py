@@ -4,12 +4,14 @@ The store accepts only PineAI's normalized assurance documents.  It never
 accepts or persists a raw Hak5 Recon response.
 """
 
+import collections
 import copy
 import datetime
 import hashlib
 import json
 import os
 import re
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -512,24 +514,39 @@ def _validate_finding_core(value: Any) -> Dict[str, Any]:
     return finding
 
 
+CACHE_MAX_ITEMS = 64
+CACHE_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024
+CACHE_MAX_ITEM_BYTES = 256 * 1024
+
+
 class AssessmentStore:
     """Store assessments, immutable baselines, comparisons, and findings."""
 
     def __init__(self, config_dir: Optional[str] = None):
         self.directory = resolve_config_dir(config_dir) / "assessments"
-        self._mtime_cache = {}
+        self._mtime_cache = collections.OrderedDict()
+        self._mtime_cache_lock = threading.RLock()
+        self._mtime_cache_total_bytes = 0
+        self._mtime_cache_hits = 0
+        self._mtime_cache_misses = 0
+        self._mtime_cache_evictions = 0
 
     def _invalidate_cache(self, path: Optional[Path] = None) -> None:
-        if path is None:
-            self._mtime_cache.clear()
-        else:
-            try:
-                resolved_str = str(path.resolve())
-                keys = [k for k in self._mtime_cache if k[0] == resolved_str]
-                for k in keys:
-                    self._mtime_cache.pop(k, None)
-            except OSError:
+        with self._mtime_cache_lock:
+            if path is None:
                 self._mtime_cache.clear()
+                self._mtime_cache_total_bytes = 0
+            else:
+                try:
+                    resolved_str = str(path.resolve())
+                    keys = [k for k in self._mtime_cache if k[0] == resolved_str]
+                    for k in keys:
+                        entry = self._mtime_cache.pop(k, None)
+                        if entry:
+                            self._mtime_cache_total_bytes -= entry.get("size", 0)
+                except OSError:
+                    self._mtime_cache.clear()
+                    self._mtime_cache_total_bytes = 0
 
     def _ensure_private_directory(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
@@ -614,20 +631,54 @@ class AssessmentStore:
         self, path: Path, missing_code: str, missing_message: str
     ) -> Any:
         try:
-            stat = path.stat()
+            stat_before = path.stat()
             cache_key = (
                 str(path.resolve()),
-                stat.st_mtime_ns,
-                stat.st_size,
-                getattr(stat, "st_ino", 0),
+                stat_before.st_mtime_ns,
+                stat_before.st_size,
+                getattr(stat_before, "st_ino", 0),
             )
-            if cache_key in self._mtime_cache:
-                return copy.deepcopy(self._mtime_cache[cache_key])
-            value = json.loads(path.read_text(encoding="utf-8"))
-            if stat.st_size <= 256 * 1024:
-                if len(self._mtime_cache) > 200:
-                    self._mtime_cache.clear()
-                self._mtime_cache[cache_key] = value
+            with self._mtime_cache_lock:
+                if cache_key in self._mtime_cache:
+                    self._mtime_cache.move_to_end(cache_key)
+                    self._mtime_cache_hits += 1
+                    return copy.deepcopy(self._mtime_cache[cache_key]["value"])
+                self._mtime_cache_misses += 1
+
+            content = path.read_text(encoding="utf-8")
+            stat_after = path.stat()
+            if (
+                stat_before.st_mtime_ns != stat_after.st_mtime_ns
+                or stat_before.st_size != stat_after.st_size
+                or getattr(stat_before, "st_ino", 0) != getattr(stat_after, "st_ino", 0)
+            ):
+                return json.loads(content)
+
+            value = json.loads(content)
+            item_bytes = stat_after.st_size
+            if item_bytes <= CACHE_MAX_ITEM_BYTES and item_bytes <= CACHE_MAX_SERIALIZED_BYTES:
+                with self._mtime_cache_lock:
+                    resolved_str = str(path.resolve())
+                    old_keys = [k for k in self._mtime_cache if k[0] == resolved_str]
+                    for k in old_keys:
+                        old_entry = self._mtime_cache.pop(k, None)
+                        if old_entry:
+                            self._mtime_cache_total_bytes -= old_entry.get("size", 0)
+
+                    self._mtime_cache[cache_key] = {
+                        "value": value,
+                        "size": item_bytes,
+                    }
+                    self._mtime_cache_total_bytes += item_bytes
+
+                    while (
+                        len(self._mtime_cache) > CACHE_MAX_ITEMS
+                        or self._mtime_cache_total_bytes > CACHE_MAX_SERIALIZED_BYTES
+                    ) and self._mtime_cache:
+                        _, evicted = self._mtime_cache.popitem(last=False)
+                        self._mtime_cache_total_bytes -= evicted.get("size", 0)
+                        self._mtime_cache_evictions += 1
+
             return copy.deepcopy(value)
         except FileNotFoundError:
             raise BackendError(missing_code, missing_message)

@@ -213,8 +213,26 @@ class IdentityAndCustomerStoreTests(unittest.TestCase):
                     "acknowledged",
                 )
             self.assertEqual(
-                raised.exception.code, "legacy_finding_read_only"
+                raised.exception.code, "read_only_finding"
             )
+
+    def test_update_finding_accepts_note(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = CustomerAuditStore(directory)
+            profile = store.create_measurement_profile(measurement_profile())
+            assessment = store.create(
+                {"name": "Note Test", "location": "Lab", "notes": "Test notes"}
+            )
+            # Verify update_finding accepts note parameter without raising TypeError
+            with self.assertRaises(BackendError) as raised:
+                store.update_finding(
+                    assessment["assessment_id"],
+                    assessment["revision"],
+                    "nonexistent_finding",
+                    "acknowledged",
+                    note="Audit note for testing",
+                )
+            self.assertEqual(raised.exception.code, "invalid_finding")
 
 
 if __name__ == "__main__":

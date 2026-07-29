@@ -22,10 +22,21 @@ jobs:
       - run: npm ci
       - name: Install Python test dependencies
         run: python -m pip install -r requirements-dev.txt
+      - name: Run Python static checks
+        run: ruff check projects/PineAI/src tests scripts
+      - name: Run Angular lint
+        run: npm run lint
       - name: Run backend tests
         run: python -m unittest discover -s tests -v
       - name: Run Angular frontend tests
         run: npm test -- --watch=false --browsers=ChromeHeadlessCI --progress=false
+      - name: Validate local benchmark harness
+        run: |
+          python scripts/benchmark_backend.py \
+            --mode local-adapter \
+            --iterations 5 \
+            --json > benchmark.json
+          python -m json.tool benchmark.json > /dev/null
       - name: Compile Python sources
         run: python -m compileall -q projects/PineAI/src/module.py projects/PineAI/src/assets
       - name: Resolve module version

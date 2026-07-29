@@ -98,7 +98,7 @@ class ModuleAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with mock.patch.dict(os.environ, {"PINEAI_CONFIG_DIR": directory}):
                 response = loaded.health(FakeRequest())
-        self.assertEqual(response["version"], "0.6.2")
+        self.assertEqual(response["version"], "0.6.3")
         self.assertEqual(response["product_mode"], "customer_audit_foundation")
         self.assertTrue(response["offline_complete"])
         self.assertFalse(response["recon_control"])
@@ -240,27 +240,34 @@ class ModuleAdapterTests(unittest.TestCase):
                 findings = loaded.list_findings(finding_request)["findings"]
                 self.assertEqual(findings, [])
 
-                report_request = FakeRequest()
-                report_request.assessment_id = assessment["assessment_id"]
-                report_request.comparison_id = analysis["comparison"][
-                    "comparison_id"
-                ]
-                report_request.format = "html"
-                report_request.ai_analysis = None
-                report = loaded.generate_report_action(report_request)
+                prepare_req = FakeRequest()
+                prepare_req.assessment_id = assessment["assessment_id"]
+                prepare_req.scope = {
+                    "type": "comparison",
+                    "comparison_id": analysis["comparison"]["comparison_id"],
+                }
+                prepare_res = loaded.module.actions["prepare_report"](prepare_req)
+                self.assertIn("scope_digest", prepare_res)
 
                 report_request = FakeRequest()
                 report_request.assessment_id = assessment["assessment_id"]
-                report_request.comparison_id = analysis["comparison"][
-                    "comparison_id"
-                ]
+                report_request.comparison_id = analysis["comparison"]["comparison_id"]
+                report_request.scope = prepare_res["scope"]
+                report_request.scope_digest = prepare_res["scope_digest"]
                 report_request.format = "html"
                 report_request.ai_analysis = None
+
                 report = loaded.generate_report_action(report_request)
                 self.assertEqual(report["format"], "html")
-                self.assertIn(
-                    "Deterministic authority", report["content"]
-                )
+                self.assertIn("scope_digest", report)
+                self.assertNotIn("content", report)
+
+                # Direct call without scope or digest should fail
+                invalid_req = FakeRequest()
+                invalid_req.assessment_id = assessment["assessment_id"]
+                invalid_req.format = "html"
+                res = loaded.generate_report_action(invalid_req)
+                self.assertEqual(res[0]["error"]["code"], "invalid_report_scope")
 
     def test_adapter_cold_start_does_not_import_analysis_graph(self):
         service_modules = {
@@ -280,7 +287,7 @@ class ModuleAdapterTests(unittest.TestCase):
         try:
             loaded = self.load_module()
             loaded._reset_singletons()
-            self.assertEqual(loaded.__version__, "0.6.2")
+            self.assertEqual(loaded.__version__, "0.6.3")
             self.assertTrue(service_modules.isdisjoint(sys.modules))
 
             # Metadata actions should use store directly without loading reports or AI analysis

@@ -80,9 +80,9 @@
             No findings match the selected filters.
         </div>
 
-        <div *ngIf="filteredFindings.length" class="grid findings-split-grid" style="display: grid; grid-template-columns: 320px 1fr; gap: 16px;">
+        <div *ngIf="filteredFindings.length" class="findings-split-grid">
             <!-- Left Pane: Virtualized Summary List -->
-            <mat-card style="height: 520px; overflow: hidden;">
+            <mat-card class="finding-summary-card">
                 <mat-card-title style="font-size: 14px; padding: 12px 16px 0;">
                     Finding List ({{ filteredFindings.length }})
                 </mat-card-title>
@@ -90,8 +90,7 @@
                     class="finding-summary-viewport"
                     [itemSize]="64"
                     minBufferPx="256"
-                    maxBufferPx="512"
-                    style="height: 460px;">
+                    maxBufferPx="512">
                     <mat-nav-list>
                         <mat-list-item
                             *cdkVirtualFor="let finding of filteredFindings; trackBy: trackByFindingId"

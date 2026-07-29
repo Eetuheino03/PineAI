@@ -233,6 +233,7 @@ class CustomerAuditStore(AssessmentStore):
         expected_revision: Any,
         finding_id: str,
         status: str,
+        note: str = "",
     ) -> Dict[str, Any]:
         """Prevent retrospective reclassification of legacy findings."""
         matches = [
@@ -244,11 +245,15 @@ class CustomerAuditStore(AssessmentStore):
             "result_type"
         ) not in ("policy_deviation", "security_finding"):
             raise BackendError(
-                "legacy_finding_read_only",
-                "legacy findings are preserved as read-only history",
+                "read_only_finding",
+                "legacy finding is read-only and cannot be updated",
             )
         return super().update_finding(
-            assessment_id, expected_revision, finding_id, status
+            assessment_id,
+            expected_revision,
+            finding_id,
+            status,
+            note=note,
         )
 
     def _ensure_assessment_directories(self, assessment_id: str) -> Path:

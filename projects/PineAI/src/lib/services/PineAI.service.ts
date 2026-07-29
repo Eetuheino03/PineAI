@@ -19,6 +19,7 @@ import {
     ReconScan,
     ReconStatus,
     ReportScope,
+    ResourceLoadState,
     ReportScopePreview,
     ResultTaxonomy
 } from '../models';
@@ -131,12 +132,16 @@ export class PineAIService {
     setPanelError(panel: string, error: any): void {
         this.panelErrors[panel] = this.error(error);
         this.panelErrors = Object.assign({}, this.panelErrors);
+        this.cachedCapabilitySummary = null;
+        this.updateCapabilitySummary();
     }
 
     clearPanelError(panel: string): void {
         if (this.panelErrors[panel]) {
             delete this.panelErrors[panel];
             this.panelErrors = Object.assign({}, this.panelErrors);
+            this.cachedCapabilitySummary = null;
+            this.updateCapabilitySummary();
         }
     }
 

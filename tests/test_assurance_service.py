@@ -41,7 +41,7 @@ class AssuranceServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             capabilities = AssuranceService(config_dir=directory).capabilities()
         self.assertEqual(capabilities["backend_version"], __version__)
-        self.assertEqual(__version__, "0.6.2")
+        self.assertEqual(__version__, "0.6.3")
 
     def active_service(self, directory):
         service = AssuranceService(config_dir=directory)

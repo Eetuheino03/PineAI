@@ -4,6 +4,7 @@
 
 import logging
 import os
+import re
 import sys
 
 from pineapple.modules import Module, Request
@@ -657,11 +658,52 @@ def prepare_report_action(request: Request):
         return _backend_failure(failure)
 
 
+def _validate_public_generate_report_request(request: Request) -> None:
+    from pineai_backend.errors import BackendError
+
+    scope = getattr(request, "scope", None)
+    if not isinstance(scope, dict):
+        raise BackendError(
+            "invalid_report_scope",
+            "generate_report action requires explicit scope object",
+        )
+    scope_type = scope.get("type")
+    if scope_type not in ("comparison", "assessment_current", "assessment_history"):
+        raise BackendError(
+            "invalid_report_scope",
+            "scope.type must be comparison, assessment_current, or assessment_history",
+        )
+    if scope_type == "comparison" and not scope.get("comparison_id"):
+        raise BackendError(
+            "invalid_report_scope",
+            "comparison scope requires scope.comparison_id",
+        )
+    top_comp_id = getattr(request, "comparison_id", None)
+    if top_comp_id and scope.get("comparison_id") and top_comp_id != scope.get("comparison_id"):
+        raise BackendError(
+            "invalid_report_scope",
+            "top-level comparison_id does not match scope.comparison_id",
+        )
+    scope_digest = getattr(request, "scope_digest", None)
+    if not isinstance(scope_digest, str) or len(scope_digest) != 64 or not re.match(r"^[0-9a-fA-F]{64}$", scope_digest):
+        raise BackendError(
+            "invalid_report_scope",
+            "generate_report action requires explicit non-empty scope_digest SHA-256 string",
+        )
+    fmt = getattr(request, "format", None)
+    if fmt not in ("json", "html"):
+        raise BackendError(
+            "invalid_report_format",
+            "format must be json or html",
+        )
+
+
 @module.handles_action("generate_report")
 def generate_report_action(request: Request):
     from pineai_backend.errors import BackendError
 
     try:
+        _validate_public_generate_report_request(request)
         return _service().generate_report(
             getattr(request, "assessment_id", None),
             getattr(request, "comparison_id", None),
