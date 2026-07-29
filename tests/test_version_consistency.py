@@ -8,7 +8,7 @@ SRC_DIR = ROOT / "projects" / "PineAI" / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-import pineai_backend
+import pineai_backend  # noqa: E402
 
 
 class VersionConsistencyTests(unittest.TestCase):

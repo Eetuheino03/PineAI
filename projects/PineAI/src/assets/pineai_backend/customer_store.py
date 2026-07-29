@@ -5,7 +5,6 @@ immutable documents. New multi-document mutations use a recoverable journal.
 """
 
 import datetime
-import hashlib
 import json
 import os
 import re

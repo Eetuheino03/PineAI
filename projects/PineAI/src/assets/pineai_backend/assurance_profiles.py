@@ -7,7 +7,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .errors import BackendError
 

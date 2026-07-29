@@ -20,7 +20,7 @@ import tarfile
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, Dict, Iterable, List, Optional, Tuple
+from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 
 from .config import resolve_config_dir
 from .errors import BackendError

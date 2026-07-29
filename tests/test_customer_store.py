@@ -219,7 +219,7 @@ class IdentityAndCustomerStoreTests(unittest.TestCase):
     def test_update_finding_accepts_note(self):
         with tempfile.TemporaryDirectory() as directory:
             store = CustomerAuditStore(directory)
-            profile = store.create_measurement_profile(measurement_profile())
+            store.create_measurement_profile(measurement_profile())
             assessment = store.create(
                 {"name": "Note Test", "location": "Lab", "notes": "Test notes"}
             )

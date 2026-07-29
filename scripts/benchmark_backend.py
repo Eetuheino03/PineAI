@@ -119,7 +119,7 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
             first_ms = 0.0
             for i in range(iterations):
                 t0 = time.monotonic_ns()
-                res = handler(FakeRequest())
+                handler(FakeRequest())
                 dt_ms = (time.monotonic_ns() - t0) / 1e6
                 if i == 0:
                     first_ms = dt_ms

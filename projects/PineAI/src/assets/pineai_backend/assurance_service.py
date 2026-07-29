@@ -6,8 +6,6 @@ from . import __version__
 from .assurance import (
     ASSURANCE_SCHEMA_VERSION,
     assurance_capabilities,
-    compare_snapshots,
-    evaluate_finding_rules,
     resolve_assets,
 )
 from .customer_store import CustomerAuditStore

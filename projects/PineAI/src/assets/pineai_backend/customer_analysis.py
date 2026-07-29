@@ -3,7 +3,7 @@
 import hashlib
 import hmac
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from .assurance import compare_snapshots
 from .errors import BackendError
