@@ -1,4 +1,4 @@
-# PineAI v0.6.2 Customer Audit Foundation architecture
+# PineAI v0.6.3 Customer Audit Foundation architecture
 
 PineAI is a portable, offline-first wireless change-audit layer for the WiFi
 Pineapple Mark VII. It analyzes saved Hak5 Recon observations. It is not an

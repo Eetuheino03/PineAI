@@ -1,6 +1,6 @@
 # Baseline & Drift backend API
 
-This document defines the PineAI `0.6.1` module contract. The corresponding
+This document defines the PineAI `0.6.3` module contract. The corresponding
 machine-readable definitions are in
 [`baseline-drift-v1.schema.json`](schemas/baseline-drift-v1.schema.json).
 
@@ -44,8 +44,8 @@ Returns runtime state without secrets or stored identifiers:
 {
   "status": "ok",
   "module": "PineAI",
-  "version": "0.6.1",
-  "backend_version": "0.6.1",
+  "version": "0.6.3",
+  "backend_version": "0.6.3",
   "product_mode": "baseline_and_drift",
   "offline_complete": true,
   "model": "gpt-5.6-terra",
@@ -61,8 +61,8 @@ Returns runtime state without secrets or stored identifiers:
 Takes no action-specific fields. It returns the comparability and finding
 states, the authoritative eight-rule registry, storage limits, authoritative
 field names, public module actions, the non-authoritative AI role, and
-`offline_complete:true`. It reports `schema_version:"1.1"` and
-`backend_version:"0.6.1"`.
+`offline_complete:true`. It reports `schema_version:"1.2"` and
+`backend_version:"0.6.3"`.
 
 Clients should render registry metadata but must continue to treat returned
 finding severity and confidence as authoritative per-analysis values.
@@ -178,7 +178,7 @@ Request:
 ```
 
 The response is archived assessment metadata with the new event in `events`.
-Archiving is irreversible through the `0.6.1` public API. Archived assessments
+Archiving is irreversible through the `0.6.3` public API. Archived assessments
 remain readable. They cannot create or activate baselines, compare or persist
 new Recon analyses, or update finding state. Existing stored comparisons remain
 available for deterministic JSON/HTML report export and optional read-only AI
@@ -634,7 +634,7 @@ For Baseline & Drift, editable settings are:
 ```
 
 The API key is accepted only in the request body, stored in a `0600` file, and
-never echoed. Runtime band allowlists are not used by `0.6.1`.
+never echoed. Runtime band allowlists are not used by `0.6.3`.
 
 ## Error codes
 

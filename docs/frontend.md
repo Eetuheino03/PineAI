@@ -268,6 +268,6 @@ After installing the `0.6.3` archive:
 9. Confirm all deterministic operations still work with no network access.
 10. Verify assessment directories are `0700` and files are `0600`.
 
-This physical smoke test is pending for `v0.6.1`. Until it is completed, the
+This physical smoke test is pending for `v0.6.3`. Until it is completed, the
 GitHub release remains a pre-release and must not be described as
 hardware-verified.
