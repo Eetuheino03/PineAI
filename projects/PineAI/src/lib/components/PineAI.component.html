@@ -70,11 +70,11 @@
         </div>
 
         <lib-pineai-guided-assessment
-            *ngIf="mode === 'guided'">
+            [hidden]="mode !== 'guided'">
         </lib-pineai-guided-assessment>
 
         <mat-tab-group
-            *ngIf="mode === 'expert'"
+            [hidden]="mode !== 'expert'"
             class="pineai-tabs"
             dynamicHeight
             animationDuration="150ms">

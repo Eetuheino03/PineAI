@@ -161,7 +161,7 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
             "mode": "local-adapter",
             "pineai_version": "0.6.3",
             "iterations": iterations,
-            "startup_ms": {
+            "service_initialization_ms": {
                 "runs": [round(x, 3) for x in cold_start_ms],
                 "p50": round(calculate_percentile(cold_start_ms, 50), 3),
                 "p95": round(calculate_percentile(cold_start_ms, 95), 3),

@@ -71,7 +71,7 @@ GET /api/recon/scans/:scan_id
 
 The Angular frontend uses the already-authenticated Hak5 session and passes
 the loaded JSON to the PineAI module backend. PineAI does not store the
-Pineapple root password and `0.6.1` does not start or stop a Recon scan.
+Pineapple root password and does not start or stop a Recon scan.
 
 The recommended sequence is:
 
@@ -157,7 +157,7 @@ Backups contain assessments, profiles, configuration, and the
 pseudonymization key. They never contain `openai.key`, are not encrypted, and
 must be handled as sensitive material.
 
-Legacy engagement data is neither migrated nor read by `0.6.1`. It is left
+Legacy engagement data is neither migrated nor read by `0.6.3`. It is left
 untouched so an operator can recover or remove it separately.
 
 ## Upstream contribution

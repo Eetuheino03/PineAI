@@ -225,16 +225,21 @@ export class PineAIService {
         }
         if (!this.measurementProfilesPromise) {
             this.measurementProfilesState = 'loading';
-            this.measurementProfilesPromise = this.settle('measurement_profiles', () =>
-                this.refreshMeasurementProfiles()
-            ).then(() => {
-                this.measurementProfilesState = 'loaded';
-            }).catch((err) => {
-                this.measurementProfilesState = 'failed';
-                throw err;
-            }).finally(() => {
-                this.measurementProfilesPromise = null;
-            });
+            this.measurementProfilesPromise = this.refreshMeasurementProfiles()
+                .then(() => {
+                    this.clearPanelError('measurement_profiles');
+                    this.measurementProfilesState = 'loaded';
+                })
+                .catch((error) => {
+                    this.setPanelError('measurement_profiles', error);
+                    this.measurementProfilesState = 'failed';
+                    const failure = this.error(error);
+                    this.log('warning', 'measurement_profiles unavailable',
+                        `${failure.code}: ${failure.message}`);
+                })
+                .finally(() => {
+                    this.measurementProfilesPromise = null;
+                });
         }
         return this.measurementProfilesPromise;
     }
@@ -245,16 +250,24 @@ export class PineAIService {
         }
         if (!this.reconPromise) {
             this.reconState = 'loading';
-            this.reconPromise = this.settle('recon', async () => {
-                await Promise.all([this.refreshReconStatus(), this.refreshScans()]);
-            }).then(() => {
-                this.reconState = 'loaded';
-            }).catch((err) => {
-                this.reconState = 'failed';
-                throw err;
-            }).finally(() => {
-                this.reconPromise = null;
-            });
+            this.reconPromise = Promise.all([
+                    this.refreshReconStatus(),
+                    this.refreshScans()
+                ])
+                .then(() => {
+                    this.clearPanelError('recon');
+                    this.reconState = 'loaded';
+                })
+                .catch((error) => {
+                    this.setPanelError('recon', error);
+                    this.reconState = 'failed';
+                    const failure = this.error(error);
+                    this.log('warning', 'recon unavailable',
+                        `${failure.code}: ${failure.message}`);
+                })
+                .finally(() => {
+                    this.reconPromise = null;
+                });
         }
         return this.reconPromise;
     }
@@ -272,16 +285,30 @@ export class PineAIService {
     }
 
     async refreshCapabilities(): Promise<any> {
+        let platformError: any = null;
+        let assuranceError: any = null;
         const platformPromise = this.module<any>('platform_capabilities')
-            .catch(() => null);
+            .catch((err) => { platformError = err; return null; });
         const assurancePromise = this.module<any>('assurance_capabilities')
-            .catch(() => null);
+            .catch((err) => { assuranceError = err; return null; });
         const values = await Promise.all([
             platformPromise,
             assurancePromise
         ]);
         this.platformCapabilities = values[0];
         this.capabilities = values[1] || values[0];
+        if (platformError && !this.platformCapabilities) {
+            this.setPanelError('platform_capabilities', platformError);
+            const failure = this.error(platformError);
+            this.log('warning', 'platform_capabilities unavailable',
+                `${failure.code}: ${failure.message}`);
+        }
+        if (assuranceError && !this.capabilities) {
+            this.setPanelError('assurance_capabilities', assuranceError);
+            const failure = this.error(assuranceError);
+            this.log('warning', 'assurance_capabilities unavailable',
+                `${failure.code}: ${failure.message}`);
+        }
         this.updateCapabilitySummary();
         if (!this.capabilities && !this.platformCapabilities) {
             throw {

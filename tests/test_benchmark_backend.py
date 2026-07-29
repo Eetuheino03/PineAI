@@ -22,7 +22,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertEqual(results["schema_version"], "1.0")
         self.assertEqual(results["mode"], "local-adapter")
         self.assertTrue(results["passed"])
-        self.assertIn("startup_ms", results)
+        self.assertIn("service_initialization_ms", results)
         self.assertIn("actions", results)
         self.assertIn("health", results["actions"])
         self.assertIn("rss_mib", results)

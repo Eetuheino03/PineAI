@@ -363,4 +363,24 @@ describe('PineAIService Baseline & Drift', () => {
         await service.ensureMeasurementProfilesLoaded();
         expect(api.moduleRequest.calls.count()).toBe(1);
     });
+
+    it('sets measurementProfilesState to failed on error and retries on next call', async () => {
+        let callCount = 0;
+        api.moduleRequest.and.callFake(() => {
+            callCount++;
+            if (callCount === 1) {
+                return Promise.reject({code: 'offline', message: 'Unavailable'});
+            }
+            return Promise.resolve({measurement_profiles: []});
+        });
+
+        await service.ensureMeasurementProfilesLoaded();
+        expect(service.measurementProfilesState).toBe('failed');
+        expect(service.panelErrors['measurement_profiles']).toBeDefined();
+        expect(service.panelErrors['measurement_profiles'].code).toBe('offline');
+
+        // Second call should retry because state is 'failed', not 'loaded'
+        await service.ensureMeasurementProfilesLoaded();
+        expect(service.measurementProfilesState).toBe('loaded');
+    });
 });
