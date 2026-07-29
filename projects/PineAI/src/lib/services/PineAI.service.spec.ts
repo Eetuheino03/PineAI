@@ -31,6 +31,7 @@ describe('PineAIService Baseline & Drift', () => {
         }));
 
         await service.initialize();
+        await service.ensureReconLoaded();
 
         expect(service.initialized).toBeTrue();
         expect(service.panelErrors.settings.code).toBe('offline');

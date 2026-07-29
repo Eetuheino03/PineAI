@@ -4,6 +4,7 @@ The store accepts only PineAI's normalized assurance documents.  It never
 accepts or persists a raw Hak5 Recon response.
 """
 
+import copy
 import datetime
 import hashlib
 import json
@@ -516,6 +517,19 @@ class AssessmentStore:
 
     def __init__(self, config_dir: Optional[str] = None):
         self.directory = resolve_config_dir(config_dir) / "assessments"
+        self._mtime_cache = {}
+
+    def _invalidate_cache(self, path: Optional[Path] = None) -> None:
+        if path is None:
+            self._mtime_cache.clear()
+        else:
+            try:
+                resolved_str = str(path.resolve())
+                keys = [k for k in self._mtime_cache if k[0] == resolved_str]
+                for k in keys:
+                    self._mtime_cache.pop(k, None)
+            except OSError:
+                self._mtime_cache.clear()
 
     def _ensure_private_directory(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
@@ -600,16 +614,30 @@ class AssessmentStore:
         self, path: Path, missing_code: str, missing_message: str
     ) -> Any:
         try:
+            stat = path.stat()
+            cache_key = (
+                str(path.resolve()),
+                stat.st_mtime_ns,
+                stat.st_size,
+                getattr(stat, "st_ino", 0),
+            )
+            if cache_key in self._mtime_cache:
+                return copy.deepcopy(self._mtime_cache[cache_key])
             value = json.loads(path.read_text(encoding="utf-8"))
+            if stat.st_size <= 256 * 1024:
+                if len(self._mtime_cache) > 200:
+                    self._mtime_cache.clear()
+                self._mtime_cache[cache_key] = value
+            return copy.deepcopy(value)
         except FileNotFoundError:
             raise BackendError(missing_code, missing_message)
         except (OSError, ValueError):
             raise BackendError(
                 "storage_error", "stored assessment data could not be read"
             )
-        return value
 
     def _write_json(self, path: Path, value: Any) -> None:
+        self._invalidate_cache(path)
         payload = json.dumps(
             value, ensure_ascii=False, indent=2, sort_keys=True
         ).encode("utf-8") + b"\n"

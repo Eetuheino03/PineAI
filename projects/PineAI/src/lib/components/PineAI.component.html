@@ -79,31 +79,49 @@
             dynamicHeight
             animationDuration="150ms">
             <mat-tab label="Overview">
-                <lib-pineai-overview></lib-pineai-overview>
+                <ng-template matTabContent>
+                    <lib-pineai-overview></lib-pineai-overview>
+                </ng-template>
             </mat-tab>
             <mat-tab label="Recon">
-                <lib-pineai-recon></lib-pineai-recon>
+                <ng-template matTabContent>
+                    <lib-pineai-recon></lib-pineai-recon>
+                </ng-template>
             </mat-tab>
             <mat-tab label="Assessments">
-                <lib-pineai-assessments></lib-pineai-assessments>
+                <ng-template matTabContent>
+                    <lib-pineai-assessments></lib-pineai-assessments>
+                </ng-template>
             </mat-tab>
             <mat-tab label="Baselines">
-                <lib-pineai-baselines></lib-pineai-baselines>
+                <ng-template matTabContent>
+                    <lib-pineai-baselines></lib-pineai-baselines>
+                </ng-template>
             </mat-tab>
             <mat-tab label="Assets &amp; Changes">
-                <lib-pineai-assets-changes></lib-pineai-assets-changes>
+                <ng-template matTabContent>
+                    <lib-pineai-assets-changes></lib-pineai-assets-changes>
+                </ng-template>
             </mat-tab>
             <mat-tab label="Findings">
-                <lib-pineai-findings></lib-pineai-findings>
+                <ng-template matTabContent>
+                    <lib-pineai-findings></lib-pineai-findings>
+                </ng-template>
             </mat-tab>
             <mat-tab label="Reports">
-                <lib-pineai-reports></lib-pineai-reports>
+                <ng-template matTabContent>
+                    <lib-pineai-reports></lib-pineai-reports>
+                </ng-template>
             </mat-tab>
             <mat-tab label="Activity">
-                <lib-pineai-activity></lib-pineai-activity>
+                <ng-template matTabContent>
+                    <lib-pineai-activity></lib-pineai-activity>
+                </ng-template>
             </mat-tab>
             <mat-tab label="Settings">
-                <lib-pineai-settings></lib-pineai-settings>
+                <ng-template matTabContent>
+                    <lib-pineai-settings></lib-pineai-settings>
+                </ng-template>
             </mat-tab>
         </mat-tab-group>
     </div>

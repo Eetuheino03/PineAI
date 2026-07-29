@@ -248,6 +248,15 @@ class ModuleAdapterTests(unittest.TestCase):
                 report_request.format = "html"
                 report_request.ai_analysis = None
                 report = loaded.generate_report_action(report_request)
+
+                report_request = FakeRequest()
+                report_request.assessment_id = assessment["assessment_id"]
+                report_request.comparison_id = analysis["comparison"][
+                    "comparison_id"
+                ]
+                report_request.format = "html"
+                report_request.ai_analysis = None
+                report = loaded.generate_report_action(report_request)
                 self.assertEqual(report["format"], "html")
                 self.assertIn(
                     "Deterministic authority", report["content"]
@@ -270,8 +279,18 @@ class ModuleAdapterTests(unittest.TestCase):
             sys.modules.pop(name, None)
         try:
             loaded = self.load_module()
+            loaded._reset_singletons()
             self.assertEqual(loaded.__version__, "0.6.2")
             self.assertTrue(service_modules.isdisjoint(sys.modules))
+
+            # Metadata actions should use store directly without loading reports or AI analysis
+            with tempfile.TemporaryDirectory() as directory:
+                with mock.patch.dict(os.environ, {"PINEAI_CONFIG_DIR": directory}):
+                    loaded.list_measurement_profiles(FakeRequest())
+                    loaded.platform_capabilities(FakeRequest())
+            self.assertNotIn("pineai_backend.reports", sys.modules)
+            self.assertNotIn("pineai_backend.ai_analysis", sys.modules)
+            self.assertNotIn("pineai_backend.customer_analysis", sys.modules)
         finally:
             for name in list(sys.modules):
                 if name == "pineai_backend" or name.startswith("pineai_backend."):

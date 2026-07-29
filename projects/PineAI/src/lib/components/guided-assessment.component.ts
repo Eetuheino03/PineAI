@@ -79,12 +79,23 @@ export class GuidedAssessmentComponent {
 
     selectStepIndex(index: number): void {
         if (index >= 0 && index < this.steps.length) {
-            this.pineai.workflow.setCurrentStep(this.steps[index]);
+            const step = this.steps[index];
+            this.pineai.workflow.setCurrentStep(step);
+            this.ensureStepData(step);
         }
     }
 
     go(step: WorkflowStepKey): void {
         this.pineai.workflow.setCurrentStep(step);
+        this.ensureStepData(step);
+    }
+
+    private ensureStepData(step: WorkflowStepKey): void {
+        if (step === 'measurement_profile') {
+            this.pineai.ensureMeasurementProfilesLoaded();
+        } else if (step === 'recon_scans') {
+            this.pineai.ensureReconLoaded();
+        }
     }
 
     async selectAssessment(): Promise<void> {

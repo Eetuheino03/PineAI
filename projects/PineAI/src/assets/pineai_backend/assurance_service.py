@@ -3,7 +3,6 @@
 from typing import Any, Dict, List, Optional
 
 from . import __version__
-from .ai_analysis import AssuranceAIService, validate_ai_analysis
 from .assurance import (
     ASSURANCE_SCHEMA_VERSION,
     assurance_capabilities,
@@ -19,11 +18,6 @@ from .config import (
     load_settings,
 )
 from .errors import BackendError
-from .reports import (
-    build_fact_model,
-    generate_report,
-    prepare_report_manifest,
-)
 
 
 BACKEND_VERSION = __version__
@@ -60,7 +54,7 @@ class AssuranceService:
         self,
         config_dir: Optional[str] = None,
         store: Optional[CustomerAuditStore] = None,
-        ai_service: Optional[AssuranceAIService] = None,
+        ai_service: Optional[Any] = None,
     ):
         self.config_dir = config_dir
         if store is None or not hasattr(
@@ -69,7 +63,14 @@ class AssuranceService:
             self.store = CustomerAuditStore(config_dir)
         else:
             self.store = store
-        self.ai_service = ai_service or AssuranceAIService(config_dir)
+        self._ai_service = ai_service
+
+    @property
+    def ai_service(self):
+        if self._ai_service is None:
+            from .ai_analysis import AssuranceAIService
+            self._ai_service = AssuranceAIService(self.config_dir)
+        return self._ai_service
 
     def _secret(self) -> bytes:
         try:
@@ -978,6 +979,8 @@ class AssuranceService:
         privacy_profile: Any = "local_full",
         comparison_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        from .reports import build_fact_model, prepare_report_manifest
+
         (
             scope_type,
             assessment,
@@ -1022,6 +1025,12 @@ class AssuranceService:
         privacy_profile: Any = "local_full",
         scope_digest: Any = None,
     ) -> Dict[str, Any]:
+        from .reports import (
+            build_fact_model,
+            generate_report as build_report,
+            prepare_report_manifest,
+        )
+
         legacy_inline = scope is None
         if scope is None:
             # Backward-compatible direct caller shape. The public v0.6.2
@@ -1060,7 +1069,7 @@ class AssuranceService:
                 "report_scope_changed",
                 "report facts changed after preparation; prepare again",
             )
-        report = generate_report(
+        report = build_report(
             assessment,
             baseline,
             comparison,

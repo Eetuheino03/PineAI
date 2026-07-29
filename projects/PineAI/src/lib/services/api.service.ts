@@ -7,11 +7,22 @@ import {Router} from '@angular/router';
 })
 export class ApiService {
     public static totalRequests = 0;
+    emptyResponse = {error: 'Request returned empty response'};
 
     constructor(private http: HttpClient,
                 private router: Router) {}
 
-    emptyResponse = {error: 'Request returned empty response'};
+    static extractBaseHref(): string {
+        // Duplicated from injector because we have to be able to support
+        // a static method here
+        const win = window as any;
+        if (win._app_base) {
+            if (win._app_base.endsWith('/')) {
+                return win._app_base.slice(0, -1);
+            }
+        }
+        return win._app_base || '';
+    }
 
     unauth(): void {
         localStorage.removeItem('authToken');
@@ -34,18 +45,7 @@ export class ApiService {
         }
     }
 
-    static extractBaseHref(): string {
-        // Duplicated from injector because we have to be able to support
-        // a static method here
-        if (window['_app_base']) {
-            if (window['_app_base'].endsWith('/')) {
-                return window['_app_base'].slice(0, -1)
-            }
-        }
-        return window['_app_base'] || '';
-    }
-
-    request(payload: any, callback: (any) => void) {
+    request(payload: any, callback: (res: any) => void) {
         this.setBusy();
         let resp;
 
@@ -109,7 +109,7 @@ export class ApiService {
         });
     }
 
-    APIGet(path: string, callback: (any) => void): any {
+    APIGet(path: string, callback: (res: any) => void): any {
         ApiService.totalRequests++;
 
         let resp;
@@ -136,7 +136,7 @@ export class ApiService {
         return await this.http.get(`${ApiService.extractBaseHref()}${path}`).toPromise();
     }
 
-    APIPut(path: string, body: any, callback: (any) => void): any {
+    APIPut(path: string, body: any, callback: (res: any) => void): any {
         ApiService.totalRequests++;
 
         let resp;
@@ -161,7 +161,7 @@ export class ApiService {
         return await this.http.put(`${ApiService.extractBaseHref()}/${path}`, body).toPromise();
     }
 
-    APIPost(path: string, body: any, callback: (any) => void): any {
+    APIPost(path: string, body: any, callback: (res: any) => void): any {
         ApiService.totalRequests++;
 
         let resp;
@@ -186,12 +186,12 @@ export class ApiService {
         return await this.http.post(`${ApiService.extractBaseHref()}/${path}`, body).toPromise();
     }
 
-    APIDelete(path: string, body: any, callback: (any) => void): any {
+    APIDelete(path: string, body: any, callback: (res: any) => void): any {
         ApiService.totalRequests++;
 
         const opts = {
             headers: null,
-            body: body
+            body
         };
 
         let resp;
