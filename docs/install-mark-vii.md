@@ -1,8 +1,8 @@
-# Install PineAI 0.6.1 on a WiFi Pineapple Mark VII
+# Install PineAI 0.6.3 on a WiFi Pineapple Mark VII
 
 ## Before installation
 
-PineAI `0.6.1` reads saved Recon scans and does not start, stop, or reconfigure
+PineAI `0.6.3` reads saved Recon scans and does not start, stop, or reconfigure
 the radios. Back up any existing PineAI data before replacing an earlier
 module version:
 
@@ -23,25 +23,25 @@ read by Baseline & Drift.
 Download both release assets into the same directory:
 
 ```text
-PineAI-0.6.1.tar.gz
-PineAI-0.6.1.tar.gz.sha256
+PineAI-0.6.3.tar.gz
+PineAI-0.6.3.tar.gz.sha256
 ```
 
 Verify them before upload:
 
 ```sh
-sha256sum -c PineAI-0.6.1.tar.gz.sha256
+sha256sum -c PineAI-0.6.3.tar.gz.sha256
 ```
 
 The expected result is:
 
 ```text
-PineAI-0.6.1.tar.gz: OK
+PineAI-0.6.3.tar.gz: OK
 ```
 
 ## Install
 
-Upload `PineAI-0.6.1.tar.gz` with the WiFi Pineapple module installation
+Upload `PineAI-0.6.3.tar.gz` with the WiFi Pineapple module installation
 interface. For development installation, extract or copy the packaged
 `PineAI/` directory to:
 
@@ -59,7 +59,7 @@ The package already records root ownership and these runtime modes:
 
 ## First run
 
-1. Open PineAI and confirm the toolbar reports backend `0.6.1`.
+1. Open PineAI and confirm the toolbar reports backend `0.6.3`.
 2. Leave OpenAI unconfigured; the complete assurance workflow must initialize
    as **Offline ready**.
 3. Open **Recon**, refresh saved scans, and load one existing scan.
@@ -93,6 +93,6 @@ If the module does not start, inspect the Pineapple module/backend log and run:
 
 The command returns only safe configuration state and never the API key.
 
-The `v0.6.1` GitHub release remains marked as a pre-release until these
+The `v0.6.3` GitHub release remains marked as a pre-release until these
 physical checks are completed and recorded. Automated verification does not
 replace this device smoke test.
