@@ -376,8 +376,8 @@ describe('PineAIService Baseline & Drift', () => {
 
         await service.ensureMeasurementProfilesLoaded();
         expect(service.measurementProfilesState).toBe('failed');
-        expect(service.panelErrors['measurement_profiles']).toBeDefined();
-        expect(service.panelErrors['measurement_profiles'].code).toBe('offline');
+        expect(service.panelErrors.measurement_profiles).toBeDefined();
+        expect(service.panelErrors.measurement_profiles.code).toBe('offline');
 
         // Second call should retry because state is 'failed', not 'loaded'
         await service.ensureMeasurementProfilesLoaded();
