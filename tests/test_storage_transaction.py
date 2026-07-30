@@ -208,6 +208,54 @@ class StorageTransactionTests(unittest.TestCase):
             self.assertEqual(rec1, [])
             self.assertEqual(rec2, [])
 
+    def test_symlink_escape_rejection(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            outside = root.parent / "outside_target.json"
+            symlink_target = root / "symlink_doc.json"
+
+            # Create symlink pointing outside
+            try:
+                symlink_target.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlinks not supported on this platform/user permissions")
+
+            txn = PrivateTransaction(root)
+            with self.assertRaises(BackendError) as raised:
+                txn.add_json("symlink_doc.json", {"val": 123})
+            self.assertEqual(raised.exception.code, "invalid_transaction")
+
+    def test_already_matching_targets_recovery(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            # Pre-create matching file on target
+            target_file = root / "existing.json"
+            payload = json.dumps({"val": 999}, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+            target_file.write_bytes(payload)
+
+            written_calls = []
+
+            def fault_injector(stage, index):
+                if stage == "target_written":
+                    written_calls.append(index)
+                if stage == "prepared":
+                    raise RuntimeError("crash after prepared")
+
+            txn = PrivateTransaction(root, fault_injector=fault_injector)
+            txn.add_json("existing.json", {"val": 999})
+
+            with self.assertRaises(RuntimeError):
+                txn.commit()
+
+            # Target already matched so target_written was NOT triggered during commit
+            self.assertEqual(written_calls, [])
+
+            # Recovery rolls forward idempotently
+            recovered = recover_private_transactions(root)
+            self.assertEqual(len(recovered), 1)
+            self.assertEqual(json.loads(target_file.read_text()), {"val": 999})
+
 
 if __name__ == "__main__":
     unittest.main()

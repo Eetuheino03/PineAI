@@ -44,7 +44,7 @@ def _private_directory(path: Path) -> None:
         pass
 
 
-def _safe_relative_path(value: str) -> Path:
+def _safe_relative_path(value: str, root: Optional[Path] = None) -> Path:
     path = Path(value)
     if (
         not value
@@ -55,6 +55,19 @@ def _safe_relative_path(value: str) -> Path:
         raise BackendError(
             "invalid_transaction", "transaction target path is invalid"
         )
+    if root is not None:
+        try:
+            root_resolved = root.resolve()
+            target_resolved = (root / path).resolve()
+            target_resolved.relative_to(root_resolved)
+        except (ValueError, OSError) as error:
+            raise BackendError(
+                "invalid_transaction", "transaction target path escapes root"
+            ) from error
+        if (root / path).is_symlink():
+            raise BackendError(
+                "invalid_transaction", "transaction target path is a symlink"
+            )
     return path
 
 
@@ -78,7 +91,7 @@ class PrivateTransaction:
 
     def add_bytes(self, relative_path: str, payload: bytes) -> None:
         """Add a private byte document, used for append-only JSONL snapshots."""
-        path = _safe_relative_path(relative_path)
+        path = _safe_relative_path(relative_path, root=self.root)
         normalized = path.as_posix()
         if any(existing == normalized for existing, _ in self._entries):
             raise BackendError(
@@ -171,6 +184,8 @@ class PrivateTransaction:
                 fault_injector(stage, index)
 
         journal = cls._read_journal(directory)
+        root_resolved = root.resolve()
+
         for index, entry in enumerate(journal["entries"]):
             if not isinstance(entry, dict):
                 raise BackendError(
@@ -178,7 +193,7 @@ class PrivateTransaction:
                     "a storage transaction entry is invalid",
                 )
             try:
-                relative = _safe_relative_path(str(entry.get("target", "")))
+                relative = _safe_relative_path(str(entry.get("target", "")), root=root)
                 staged_relative = _safe_relative_path(str(entry.get("staged", "")))
             except BackendError as error:
                 raise BackendError(
@@ -187,6 +202,19 @@ class PrivateTransaction:
                 ) from error
 
             target = root / relative
+            try:
+                target_resolved = target.resolve()
+                if target.is_symlink() or not str(target_resolved).startswith(str(root_resolved)):
+                    raise BackendError(
+                        "transaction_recovery_failed",
+                        "transaction target path escapes root",
+                    )
+            except OSError as error:
+                raise BackendError(
+                    "transaction_recovery_failed",
+                    "transaction target path is invalid",
+                ) from error
+
             staged = directory / staged_relative
             expected = entry.get("sha256")
             if not isinstance(expected, str) or len(expected) != 64:
@@ -196,14 +224,16 @@ class PrivateTransaction:
                 )
 
             target_matches = False
-            if target.exists():
+            if target.exists() and not target.is_symlink():
                 try:
                     target_matches = _sha256(target.read_bytes()) == expected
                 except OSError:
                     target_matches = False
+
             if target_matches:
-                _trigger("target_written", index)
+                # Target already matches; skip writing and do not trigger target_written
                 continue
+
             if not staged.exists():
                 raise BackendError(
                     "transaction_recovery_failed",

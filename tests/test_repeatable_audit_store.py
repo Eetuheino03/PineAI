@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "projects" / "PineAI" / "src" / "assets"
 sys.path.insert(0, str(ASSETS))
 
+from pineai_backend.assessment_store import _canonical_digest  # noqa: E402
 from pineai_backend.backup import create_backup, restore_backup_staging  # noqa: E402
 from pineai_backend.config import ensure_pseudonymization_key  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
@@ -61,12 +62,31 @@ def setup_test_artifacts(directory, aid, snapshot_id="snapshot_0000000000000001"
     (base / "snapshots").mkdir(parents=True, exist_ok=True)
     (base / "comparisons").mkdir(parents=True, exist_ok=True)
     (base / "occurrences").mkdir(parents=True, exist_ok=True)
+
+    snap_doc = {"snapshot_id": snapshot_id, "data": "sample snapshot payload"}
+    snap_bytes = json.dumps(snap_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    snap_digest = _canonical_digest(snap_doc)
+
+    comp_doc = {"comparison_id": comparison_id, "data": "sample comparison payload"}
+    comp_bytes = json.dumps(comp_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    comp_digest = _canonical_digest(comp_doc)
+
+    occ_doc = {"occurrence_set_id": occurrence_set_id, "occurrences": []}
+    occ_bytes = json.dumps(occ_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    occ_digest = _canonical_digest(occ_doc)
+
     if snapshot_id:
-        (base / "snapshots" / f"{snapshot_id}.json").write_text("{}", encoding="utf-8")
+        (base / "snapshots" / f"{snapshot_id}.json").write_bytes(snap_bytes)
     if comparison_id:
-        (base / "comparisons" / f"{comparison_id}.json").write_text("{}", encoding="utf-8")
+        (base / "comparisons" / f"{comparison_id}.json").write_bytes(comp_bytes)
     if occurrence_set_id:
-        (base / "occurrences" / f"{occurrence_set_id}.json").write_text("{}", encoding="utf-8")
+        (base / "occurrences" / f"{occurrence_set_id}.json").write_bytes(occ_bytes)
+
+    return {
+        "snapshot_digest": snap_digest,
+        "comparison_digest": comp_digest,
+        "occurrence_digest": occ_digest,
+    }
 
 
 class RepeatableAuditStoreTests(unittest.TestCase):
@@ -151,7 +171,7 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             self.assertNotIn("measurements", run)
             self.assertNotIn("ready_to_start", run)
 
-            setup_test_artifacts(directory, aid)
+            digests = setup_test_artifacts(directory, aid)
             start_res = store.start_audit_run(aid, 5, run["audit_run_id"], run["revision"])
             validate_schema(start_res, "startAuditRunResponse")
             self.assertEqual(start_res["audit_run"]["status"], "in_progress")
@@ -161,7 +181,7 @@ class RepeatableAuditStoreTests(unittest.TestCase):
                 "status": "resolved",
                 "source_recon_id": "recon_1",
                 "snapshot_id": "snapshot_0000000000000001",
-                "snapshot_digest": "a" * 64,
+                "snapshot_digest": digests["snapshot_digest"],
                 "measurement_profile_id": "mprofile_00000000-0000-4000-8000-000000000001",
                 "measurement_profile_version_id": "mprofile_r0001",
                 "measurement_profile_digest": "b" * 64,
@@ -185,7 +205,7 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             comp_outcome = {
                 "status": "completed",
                 "comparison_id": "comparison_0000000000000001",
-                "comparison_digest": "f" * 64,
+                "comparison_digest": digests["comparison_digest"],
                 "occurrence_set_id": "occurrence_0000000000000001",
                 "evidence_ids": ["evidence_000000000001"],
                 "completed_at": "2026-07-30T10:05:00Z",
@@ -259,7 +279,7 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             ar_res = store.create_audit_run(aid, 4, "Run 1", vid, [mp_id])
             run_id = ar_res["audit_run"]["audit_run_id"]
 
-            setup_test_artifacts(directory, aid)
+            digests = setup_test_artifacts(directory, aid)
             store.start_audit_run(aid, 5, run_id, 1)
 
             # Raw recon keys rejected
@@ -274,14 +294,14 @@ class RepeatableAuditStoreTests(unittest.TestCase):
                 "status": "resolved",
                 "source_recon_id": "recon_1",
                 "snapshot_id": "snapshot_0000000000000001",
-                "snapshot_digest": "a" * 64,
+                "snapshot_digest": digests["snapshot_digest"],
                 "measurement_profile_id": "mprofile_00000000-0000-4000-8000-000000000001",
                 "measurement_profile_version_id": "mprofile_r0001",
                 "measurement_profile_digest": "b" * 64,
                 "baseline_version_id": "baseline_v0001",
                 "baseline_type": "single_scan",
-                "baseline_snapshot_id": "snapshot_0000000000000002",
-                "baseline_snapshot_digest": "c" * 64,
+                "baseline_snapshot_id": "snapshot_0000000000000001",
+                "baseline_snapshot_digest": digests["snapshot_digest"],
                 "baseline_record_digest": "d" * 64,
                 "assurance_profile_version_id": vid,
                 "assurance_profile_digest": "e" * 64,
@@ -295,7 +315,7 @@ class RepeatableAuditStoreTests(unittest.TestCase):
                 store.save_audit_measurement_comparison(aid, 7, run_id, 3, mp_id, {
                     "status": "completed",
                     "comparison_id": "comparison_0000000000000001",
-                    "comparison_digest": "f" * 64,
+                    "comparison_digest": digests["comparison_digest"],
                     "occurrence_set_id": "occurrence_0000000000000001",
                     "evidence_ids": too_many,
                     "completed_at": "2026-07-30T10:05:00Z",
@@ -307,7 +327,7 @@ class RepeatableAuditStoreTests(unittest.TestCase):
                 store.save_audit_measurement_comparison(aid, 7, run_id, 3, mp_id, {
                     "status": "completed",
                     "comparison_id": "comparison_0000000000000001",
-                    "comparison_digest": "f" * 64,
+                    "comparison_digest": digests["comparison_digest"],
                     "occurrence_set_id": "occurrence_0000000000000001",
                     "evidence_ids": ["evidence_000000000001", "evidence_000000000001"],
                     "completed_at": "2026-07-30T10:05:00Z",
@@ -319,7 +339,7 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             comp_res = store.save_audit_measurement_comparison(aid, 7, run_id, 3, mp_id, {
                 "status": "completed",
                 "comparison_id": "comparison_0000000000000001",
-                "comparison_digest": "f" * 64,
+                "comparison_digest": digests["comparison_digest"],
                 "occurrence_set_id": "occurrence_0000000000000001",
                 "evidence_ids": exactly_100,
                 "completed_at": "2026-07-30T10:05:00Z",
@@ -379,6 +399,101 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             runs_res = restored_store.list_audit_runs(aid)
             self.assertEqual(len(runs_res["audit_runs"]), 1)
             self.assertEqual(runs_res["audit_runs"][0]["audit_run"]["title"], "Run 1")
+
+    def test_artifact_validation_and_digest_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ensure_pseudonymization_key(directory)
+            store = RepeatableAuditStore(directory)
+            assessment = store.create({"name": "Artifact Verification Test", "location": "Lab", "notes": ""})
+            aid = assessment["assessment_id"]
+
+            ap_res = store.create_assurance_profile_version(aid, 1, sample_assurance_profile())
+            vid = ap_res["assurance_profile_version"]["assurance_profile_version_id"]
+            store.activate_assurance_profile_version(aid, 2, vid)
+
+            mp_res = store.create_measurement_point(aid, 3, sample_context(), "Point A")
+            mp_id = mp_res["measurement_point"]["measurement_point_id"]
+
+            ar_res = store.create_audit_run(aid, 4, "Run 1", vid, [mp_id])
+            run_id = ar_res["audit_run"]["audit_run_id"]
+            store.start_audit_run(aid, 5, run_id, 1)
+
+            # Missing snapshot file -> snapshot_not_found
+            with self.assertRaises(BackendError) as raised:
+                store.resolve_audit_measurement(aid, 6, run_id, 2, mp_id, {
+                    "status": "resolved",
+                    "snapshot_id": "snapshot_0000000000000099",
+                    "snapshot_digest": "a" * 64,
+                    "measurement_profile_id": "mprofile_00000000-0000-4000-8000-000000000001",
+                    "measurement_profile_version_id": "mprofile_r0001",
+                    "measurement_profile_digest": "b" * 64,
+                    "baseline_version_id": "baseline_v0001",
+                    "baseline_type": "consensus",
+                    "baseline_model_id": "bmodel_0000000000000001",
+                    "baseline_model_digest": "c" * 64,
+                    "baseline_record_digest": "d" * 64,
+                    "assurance_profile_version_id": vid,
+                    "assurance_profile_digest": "e" * 64,
+                    "comparability_status": "comparable",
+                    "resolved_at": "2026-07-30T10:00:00Z",
+                })
+            self.assertEqual(raised.exception.code, "snapshot_not_found")
+
+            # Create snapshot artifact with wrong digest -> invalid_snapshot
+            snap_path = Path(directory) / "assessments" / aid / "snapshots" / "snapshot_0000000000000001.json"
+            snap_path.parent.mkdir(parents=True, exist_ok=True)
+            snap_path.write_text(json.dumps({"snapshot_id": "snapshot_0000000000000001"}), encoding="utf-8")
+
+            with self.assertRaises(BackendError) as raised:
+                store.resolve_audit_measurement(aid, 6, run_id, 2, mp_id, {
+                    "status": "resolved",
+                    "snapshot_id": "snapshot_0000000000000001",
+                    "snapshot_digest": "0" * 64,  # wrong digest
+                    "measurement_profile_id": "mprofile_00000000-0000-4000-8000-000000000001",
+                    "measurement_profile_version_id": "mprofile_r0001",
+                    "measurement_profile_digest": "b" * 64,
+                    "baseline_version_id": "baseline_v0001",
+                    "baseline_type": "consensus",
+                    "baseline_model_id": "bmodel_0000000000000001",
+                    "baseline_model_digest": "c" * 64,
+                    "baseline_record_digest": "d" * 64,
+                    "assurance_profile_version_id": vid,
+                    "assurance_profile_digest": "e" * 64,
+                    "comparability_status": "comparable",
+                    "resolved_at": "2026-07-30T10:00:00Z",
+                })
+            self.assertEqual(raised.exception.code, "invalid_snapshot")
+
+    def test_closure_reserve_late_status_field(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ensure_pseudonymization_key(directory)
+            store = RepeatableAuditStore(directory)
+            assessment = store.create({"name": "Closure Reserve Test", "location": "Lab", "notes": ""})
+            aid = assessment["assessment_id"]
+
+            ap_res = store.create_assurance_profile_version(aid, 1, sample_assurance_profile())
+            vid = ap_res["assurance_profile_version"]["assurance_profile_version_id"]
+            store.activate_assurance_profile_version(aid, 2, vid)
+
+            mp_res = store.create_measurement_point(aid, 3, sample_context(), "Point A")
+            mp_id = mp_res["measurement_point"]["measurement_point_id"]
+
+            ar_res = store.create_audit_run(aid, 4, "Run Late Status", vid, [mp_id])
+            ar_id = ar_res["audit_run"]["audit_run_id"]
+
+            # Overwrite ar_<id>.json so "status": "draft" is padded past 512 bytes
+            run_path = Path(directory) / "assessments" / aid / "audit_runs" / f"{ar_id}.json"
+            data = json.loads(run_path.read_text(encoding="utf-8"))
+            data["padding"] = "X" * 1024  # push status field down
+            run_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+            # Remove manifest file to force recalculation from disk
+            manifest_path = Path(directory) / "assessments" / aid / "audit_runs_manifest.json"
+            if manifest_path.exists():
+                manifest_path.unlink()
+
+            capacity = store.get_assessment_capacity(aid)
+            self.assertEqual(capacity["event_reserved_for_run_closure"], 1)
 
 
 if __name__ == "__main__":
