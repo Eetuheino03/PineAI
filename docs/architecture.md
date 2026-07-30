@@ -297,4 +297,6 @@ authoritative analysis, lifecycle, evidence, and reporting remain local.
 PineAI v0.7.0 introduces multi-point offline wireless change auditing (`MeasurementPoint` and `AuditRun`).
 * **Contract Specification**: `docs/repeatable-audits-api-v1.md`
 * **JSON Schemas**: `docs/schemas/repeatable-audits-v1.schema.json` and `docs/schemas/audit-run-report-v1.schema.json`
+* **Capacity & Storage Bounds**: Assessment-wide snapshot/comparison pools (100 each), 128MB RAM hardware constraints, dynamic event closure reserve, and 3 discriminated failed measurement branches.
+* **Transaction Recovery**: Standardized recovery hooks (`staged`, `prepared`, `target_written`, `committed`, `before_cleanup`, `cleanup_failed`) and abandoned pre-prepare transaction cleanup.
 * **Hardware Validation Gate**: Physical Mark VII validation for `v0.6.3` remains pending. Contract design for `v0.7.0` is frozen as a pre-implementation specification by user authorization.
