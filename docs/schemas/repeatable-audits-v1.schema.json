@@ -98,6 +98,37 @@
       "pattern": "^assurance_v[0-9]{4}$"
     },
 
+    "assessmentCapacity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshot_limit",
+        "snapshot_used",
+        "snapshot_available",
+        "comparison_limit",
+        "comparison_used",
+        "comparison_available",
+        "event_limit",
+        "event_used",
+        "event_available",
+        "event_reserved_for_run_closure",
+        "event_available_for_non_terminal"
+      ],
+      "properties": {
+        "snapshot_limit": { "type": "integer", "minimum": 1 },
+        "snapshot_used": { "type": "integer", "minimum": 0 },
+        "snapshot_available": { "type": "integer", "minimum": 0 },
+        "comparison_limit": { "type": "integer", "minimum": 1 },
+        "comparison_used": { "type": "integer", "minimum": 0 },
+        "comparison_available": { "type": "integer", "minimum": 0 },
+        "event_limit": { "type": "integer", "minimum": 1 },
+        "event_used": { "type": "integer", "minimum": 0 },
+        "event_available": { "type": "integer", "minimum": 0 },
+        "event_reserved_for_run_closure": { "type": "integer", "minimum": 0 },
+        "event_available_for_non_terminal": { "type": "integer", "minimum": 0 }
+      }
+    },
+
     "createExpectedMeasurementContext": {
       "type": "object",
       "additionalProperties": false,
@@ -111,19 +142,23 @@
         "scan_time"
       ],
       "properties": {
-        "location_id": { "type": "string", "minLength": 1 },
-        "scan_profile_id": { "type": "string", "minLength": 1 },
-        "radio_profile_id": { "type": "string", "minLength": 1 },
-        "interface": { "type": "string", "minLength": 1 },
+        "location_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "scan_profile_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "radio_profile_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "interface": { "type": "string", "minLength": 1, "maxLength": 64 },
         "declared_bands": {
           "type": "array",
           "items": { "type": "string", "enum": ["2.4", "5"] },
-          "minItems": 1
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true
         },
         "declared_channels": {
           "type": "array",
           "items": { "type": "integer", "minimum": 1, "maximum": 196 },
-          "minItems": 1
+          "minItems": 1,
+          "maxItems": 200,
+          "uniqueItems": true
         },
         "scan_time": {
           "type": "integer",
@@ -147,20 +182,24 @@
         "scan_time"
       ],
       "properties": {
-        "location_id": { "type": "string", "minLength": 1 },
+        "location_id": { "type": "string", "minLength": 1, "maxLength": 128 },
         "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
-        "scan_profile_id": { "type": "string", "minLength": 1 },
-        "radio_profile_id": { "type": "string", "minLength": 1 },
-        "interface": { "type": "string", "minLength": 1 },
+        "scan_profile_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "radio_profile_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "interface": { "type": "string", "minLength": 1, "maxLength": 64 },
         "declared_bands": {
           "type": "array",
           "items": { "type": "string", "enum": ["2.4", "5"] },
-          "minItems": 1
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true
         },
         "declared_channels": {
           "type": "array",
           "items": { "type": "integer", "minimum": 1, "maximum": 196 },
-          "minItems": 1
+          "minItems": 1,
+          "maxItems": 200,
+          "uniqueItems": true
         },
         "scan_time": {
           "type": "integer",
@@ -223,7 +262,9 @@
         "measurement_point_ids": {
           "type": "array",
           "items": { "$ref": "#/$defs/measurementPointId" },
-          "minItems": 1
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
         },
         "revision": { "type": "integer", "minimum": 1 }
       }
@@ -276,7 +317,7 @@
         "audit_run_id": { "$ref": "#/$defs/auditRunId" },
         "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
         "status": { "type": "string", "const": "resolved" },
-        "source_recon_id": { "type": ["string", "null"] },
+        "source_recon_id": { "type": ["string", "null"], "maxLength": 128 },
         "snapshot_id": { "$ref": "#/$defs/snapshotId" },
         "snapshot_digest": { "$ref": "#/$defs/digest64" },
         "measurement_profile_id": { "$ref": "#/$defs/mprofileId" },
@@ -322,7 +363,7 @@
         "audit_run_id": { "$ref": "#/$defs/auditRunId" },
         "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
         "status": { "type": "string", "const": "resolved" },
-        "source_recon_id": { "type": ["string", "null"] },
+        "source_recon_id": { "type": ["string", "null"], "maxLength": 128 },
         "snapshot_id": { "$ref": "#/$defs/snapshotId" },
         "snapshot_digest": { "$ref": "#/$defs/digest64" },
         "measurement_profile_id": { "$ref": "#/$defs/mprofileId" },
@@ -372,7 +413,7 @@
         "audit_run_id": { "$ref": "#/$defs/auditRunId" },
         "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
         "status": { "type": "string", "const": "completed" },
-        "source_recon_id": { "type": ["string", "null"] },
+        "source_recon_id": { "type": ["string", "null"], "maxLength": 128 },
         "snapshot_id": { "$ref": "#/$defs/snapshotId" },
         "snapshot_digest": { "$ref": "#/$defs/digest64" },
         "measurement_profile_id": { "$ref": "#/$defs/mprofileId" },
@@ -391,7 +432,9 @@
         "occurrence_set_id": { "$ref": "#/$defs/occurrenceSetId" },
         "evidence_ids": {
           "type": "array",
-          "items": { "$ref": "#/$defs/evidenceId" }
+          "items": { "$ref": "#/$defs/evidenceId" },
+          "maxItems": 100,
+          "uniqueItems": true
         },
         "completed_at": { "type": "string", "format": "date-time" }
       }
@@ -429,7 +472,7 @@
         "audit_run_id": { "$ref": "#/$defs/auditRunId" },
         "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
         "status": { "type": "string", "const": "completed" },
-        "source_recon_id": { "type": ["string", "null"] },
+        "source_recon_id": { "type": ["string", "null"], "maxLength": 128 },
         "snapshot_id": { "$ref": "#/$defs/snapshotId" },
         "snapshot_digest": { "$ref": "#/$defs/digest64" },
         "measurement_profile_id": { "$ref": "#/$defs/mprofileId" },
@@ -448,13 +491,15 @@
         "occurrence_set_id": { "$ref": "#/$defs/occurrenceSetId" },
         "evidence_ids": {
           "type": "array",
-          "items": { "$ref": "#/$defs/evidenceId" }
+          "items": { "$ref": "#/$defs/evidenceId" },
+          "maxItems": 100,
+          "uniqueItems": true
         },
         "completed_at": { "type": "string", "format": "date-time" }
       }
     },
 
-    "auditRunMeasurementFailed": {
+    "auditRunMeasurementFailedResolution": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -473,13 +518,123 @@
         "audit_run_id": { "$ref": "#/$defs/auditRunId" },
         "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
         "status": { "type": "string", "const": "failed" },
-        "failed_stage": { "type": "string", "enum": ["resolution", "comparison"] },
-        "error_code": { "type": "string", "minLength": 1 },
-        "error_message": { "type": "string" },
+        "failed_stage": { "type": "string", "const": "resolution" },
+        "error_code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "error_message": { "type": "string", "maxLength": 1024 },
         "failed_at": { "type": "string", "format": "date-time" },
-        "retry_target": { "type": "string", "enum": ["pending", "resolved"] },
+        "retry_target": { "type": "string", "const": "pending" }
+      }
+    },
+
+    "auditRunMeasurementFailedComparisonConsensus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "measurement_id",
+        "audit_run_id",
+        "measurement_point_id",
+        "status",
+        "failed_stage",
+        "retry_target",
+        "snapshot_id",
+        "snapshot_digest",
+        "measurement_profile_id",
+        "measurement_profile_version_id",
+        "measurement_profile_digest",
+        "baseline_version_id",
+        "baseline_type",
+        "baseline_model_id",
+        "baseline_model_digest",
+        "baseline_record_digest",
+        "assurance_profile_version_id",
+        "assurance_profile_digest",
+        "comparability_status",
+        "resolved_at",
+        "error_code",
+        "error_message",
+        "failed_at"
+      ],
+      "properties": {
+        "measurement_id": { "$ref": "#/$defs/auditRunMeasurementId" },
+        "audit_run_id": { "$ref": "#/$defs/auditRunId" },
+        "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
+        "status": { "type": "string", "const": "failed" },
+        "failed_stage": { "type": "string", "const": "comparison" },
+        "retry_target": { "type": "string", "const": "resolved" },
+        "source_recon_id": { "type": ["string", "null"], "maxLength": 128 },
         "snapshot_id": { "$ref": "#/$defs/snapshotId" },
-        "snapshot_digest": { "$ref": "#/$defs/digest64" }
+        "snapshot_digest": { "$ref": "#/$defs/digest64" },
+        "measurement_profile_id": { "$ref": "#/$defs/mprofileId" },
+        "measurement_profile_version_id": { "$ref": "#/$defs/mprofileVersionId" },
+        "measurement_profile_digest": { "$ref": "#/$defs/digest64" },
+        "baseline_version_id": { "$ref": "#/$defs/baselineVersionId" },
+        "baseline_type": { "type": "string", "const": "consensus" },
+        "baseline_model_id": { "$ref": "#/$defs/baselineModelId" },
+        "baseline_model_digest": { "$ref": "#/$defs/digest64" },
+        "baseline_record_digest": { "$ref": "#/$defs/digest64" },
+        "assurance_profile_version_id": { "$ref": "#/$defs/assuranceVersionId" },
+        "assurance_profile_digest": { "$ref": "#/$defs/digest64" },
+        "comparability_status": { "type": "string", "enum": ["comparable", "partially_comparable", "not_comparable"] },
+        "resolved_at": { "type": "string", "format": "date-time" },
+        "error_code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "error_message": { "type": "string", "maxLength": 1024 },
+        "failed_at": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "auditRunMeasurementFailedComparisonSingleScan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "measurement_id",
+        "audit_run_id",
+        "measurement_point_id",
+        "status",
+        "failed_stage",
+        "retry_target",
+        "snapshot_id",
+        "snapshot_digest",
+        "measurement_profile_id",
+        "measurement_profile_version_id",
+        "measurement_profile_digest",
+        "baseline_version_id",
+        "baseline_type",
+        "baseline_snapshot_id",
+        "baseline_snapshot_digest",
+        "baseline_record_digest",
+        "assurance_profile_version_id",
+        "assurance_profile_digest",
+        "comparability_status",
+        "resolved_at",
+        "error_code",
+        "error_message",
+        "failed_at"
+      ],
+      "properties": {
+        "measurement_id": { "$ref": "#/$defs/auditRunMeasurementId" },
+        "audit_run_id": { "$ref": "#/$defs/auditRunId" },
+        "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
+        "status": { "type": "string", "const": "failed" },
+        "failed_stage": { "type": "string", "const": "comparison" },
+        "retry_target": { "type": "string", "const": "resolved" },
+        "source_recon_id": { "type": ["string", "null"], "maxLength": 128 },
+        "snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "snapshot_digest": { "$ref": "#/$defs/digest64" },
+        "measurement_profile_id": { "$ref": "#/$defs/mprofileId" },
+        "measurement_profile_version_id": { "$ref": "#/$defs/mprofileVersionId" },
+        "measurement_profile_digest": { "$ref": "#/$defs/digest64" },
+        "baseline_version_id": { "$ref": "#/$defs/baselineVersionId" },
+        "baseline_type": { "type": "string", "const": "single_scan" },
+        "baseline_snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "baseline_snapshot_digest": { "$ref": "#/$defs/digest64" },
+        "baseline_record_digest": { "$ref": "#/$defs/digest64" },
+        "assurance_profile_version_id": { "$ref": "#/$defs/assuranceVersionId" },
+        "assurance_profile_digest": { "$ref": "#/$defs/digest64" },
+        "comparability_status": { "type": "string", "enum": ["comparable", "partially_comparable", "not_comparable"] },
+        "resolved_at": { "type": "string", "format": "date-time" },
+        "error_code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "error_message": { "type": "string", "maxLength": 1024 },
+        "failed_at": { "type": "string", "format": "date-time" }
       }
     },
 
@@ -490,7 +645,9 @@
         { "$ref": "#/$defs/auditRunMeasurementResolvedSingleScan" },
         { "$ref": "#/$defs/auditRunMeasurementCompletedConsensus" },
         { "$ref": "#/$defs/auditRunMeasurementCompletedSingleScan" },
-        { "$ref": "#/$defs/auditRunMeasurementFailed" }
+        { "$ref": "#/$defs/auditRunMeasurementFailedResolution" },
+        { "$ref": "#/$defs/auditRunMeasurementFailedComparisonConsensus" },
+        { "$ref": "#/$defs/auditRunMeasurementFailedComparisonSingleScan" }
       ]
     },
 
@@ -646,7 +803,9 @@
         "measurement_point_ids": {
           "type": "array",
           "items": { "$ref": "#/$defs/measurementPointId" },
-          "minItems": 1
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
         },
         "expected_assessment_revision": { "type": "integer", "minimum": 1 }
       }
@@ -655,11 +814,12 @@
     "createAuditRunResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "audit_run", "ready_to_start"],
+      "required": ["schema_version", "audit_run", "ready_to_start", "assessment_capacity"],
       "properties": {
         "schema_version": { "type": "string", "const": "1.0" },
         "audit_run": { "$ref": "#/$defs/auditRun" },
-        "ready_to_start": { "type": "boolean" }
+        "ready_to_start": { "type": "boolean" },
+        "assessment_capacity": { "$ref": "#/$defs/assessmentCapacity" }
       }
     },
 
@@ -677,7 +837,7 @@
     "listAuditRunsResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "audit_runs", "total", "limit", "offset", "has_more"],
+      "required": ["schema_version", "audit_runs", "total", "limit", "offset", "has_more", "assessment_capacity"],
       "properties": {
         "schema_version": { "type": "string", "const": "1.0" },
         "audit_runs": {
@@ -695,7 +855,8 @@
         "total": { "type": "integer", "minimum": 0 },
         "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
         "offset": { "type": "integer", "minimum": 0 },
-        "has_more": { "type": "boolean" }
+        "has_more": { "type": "boolean" },
+        "assessment_capacity": { "$ref": "#/$defs/assessmentCapacity" }
       }
     },
 
@@ -712,7 +873,7 @@
     "getAuditRunResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "audit_run", "ready_to_start", "measurements"],
+      "required": ["schema_version", "audit_run", "ready_to_start", "measurements", "assessment_capacity"],
       "properties": {
         "schema_version": { "type": "string", "const": "1.0" },
         "audit_run": { "$ref": "#/$defs/auditRun" },
@@ -720,7 +881,8 @@
         "measurements": {
           "type": "array",
           "items": { "$ref": "#/$defs/auditRunMeasurement" }
-        }
+        },
+        "assessment_capacity": { "$ref": "#/$defs/assessmentCapacity" }
       }
     },
 
@@ -807,9 +969,18 @@
     "resolveAuditMeasurementResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "measurement"],
+      "required": [
+        "schema_version",
+        "assessment_revision",
+        "assessment_capacity",
+        "audit_run",
+        "measurement"
+      ],
       "properties": {
         "schema_version": { "type": "string", "const": "1.0" },
+        "assessment_revision": { "type": "integer", "minimum": 1 },
+        "assessment_capacity": { "$ref": "#/$defs/assessmentCapacity" },
+        "audit_run": { "$ref": "#/$defs/auditRun" },
         "measurement": { "$ref": "#/$defs/auditRunMeasurement" }
       }
     },
@@ -836,9 +1007,18 @@
     "retryAuditMeasurementResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "measurement"],
+      "required": [
+        "schema_version",
+        "assessment_revision",
+        "assessment_capacity",
+        "audit_run",
+        "measurement"
+      ],
       "properties": {
         "schema_version": { "type": "string", "const": "1.0" },
+        "assessment_revision": { "type": "integer", "minimum": 1 },
+        "assessment_capacity": { "$ref": "#/$defs/assessmentCapacity" },
+        "audit_run": { "$ref": "#/$defs/auditRun" },
         "measurement": { "$ref": "#/$defs/auditRunMeasurement" }
       }
     },
@@ -865,9 +1045,18 @@
     "saveAuditMeasurementComparisonResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "measurement"],
+      "required": [
+        "schema_version",
+        "assessment_revision",
+        "assessment_capacity",
+        "audit_run",
+        "measurement"
+      ],
       "properties": {
         "schema_version": { "type": "string", "const": "1.0" },
+        "assessment_revision": { "type": "integer", "minimum": 1 },
+        "assessment_capacity": { "$ref": "#/$defs/assessmentCapacity" },
+        "audit_run": { "$ref": "#/$defs/auditRun" },
         "measurement": { "$ref": "#/$defs/auditRunMeasurement" }
       }
     },
