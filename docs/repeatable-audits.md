@@ -94,7 +94,8 @@ pending ──(resolve_audit_measurement)──► resolved ──(save_comparis
 * **Hardware Target**: 128 MB RAM, MIPS single-core CPU, slow SPI/SD storage.
 * **Shared Assessment Pools**:
   * `MAX_SNAPSHOTS = 100`, `MAX_COMPARISONS = 100`, `MAX_OCCURRENCES = 100`.
-  * `MAX_MEASUREMENT_POINTS_PER_ASSESSMENT = 64` active points (up to 44 total points fit under `256 KB` document limit, 90 under `512 KB`).
+  * `MAX_ACTIVE_MEASUREMENT_POINTS = 64` (archived points do not count toward the active 64-point limit).
+  * `MAX_TOTAL_MEASUREMENT_POINT_RECORDS = 90` (all active and archived records count toward the 90 total-record limit; creation fails with `storage_limit_exceeded` if either the 90 total-record limit or `MAX_MEASUREMENT_POINTS_DOCUMENT_BYTES = 512 * 1024` (512 KB) limit is reached; 90 maximum-sized valid records fit under 512 KB with at least 20% headroom).
   * `MAX_AUDIT_RUNS_PER_ASSESSMENT = 128` (max 64 points per run).
   * `MAX_EVIDENCE_IDS_PER_AUDIT_MEASUREMENT = 100`.
 * **Dynamic Closure Reserve**:

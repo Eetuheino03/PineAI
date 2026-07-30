@@ -50,7 +50,7 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
         }
         self.validate_def(create_req, "createMeasurementPointRequest")
 
-    def test_assessment_capacity_response_object(self):
+    def test_assessment_capacity_object(self):
         capacity = {
             "snapshot_limit": 100,
             "snapshot_used": 42,
@@ -77,25 +77,6 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
             "measurement_point_ids": ["mp_a1b2c3d4e5f67890"],
             "revision": 1,
         }
-        pending_measurement = {
-            "measurement_id": "arm_0123456789abcdef",
-            "audit_run_id": "ar_0123456789abcdef",
-            "measurement_point_id": "mp_a1b2c3d4e5f67890",
-            "status": "pending",
-            "created_at": "2026-07-30T09:00:00Z",
-        }
-
-        # Response envelope with revisions & capacity
-        resolve_resp = {
-            "schema_version": "1.0",
-            "assessment_revision": 12,
-            "assessment_capacity": capacity,
-            "audit_run": audit_run_sample,
-            "measurement": pending_measurement,
-        }
-        self.validate_def(resolve_resp, "resolveAuditMeasurementResponse")
-        self.validate_def(resolve_resp, "retryAuditMeasurementResponse")
-        self.validate_def(resolve_resp, "saveAuditMeasurementComparisonResponse")
 
         create_resp = {
             "schema_version": "1.0",
@@ -105,9 +86,143 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
         }
         self.validate_def(create_resp, "createAuditRunResponse")
 
-    def test_three_failed_measurement_discriminated_branches(self):
-        # 1. Failed Resolution branch
-        failed_res = {
+    def _sample_capacity(self):
+        return {
+            "snapshot_limit": 100,
+            "snapshot_used": 42,
+            "snapshot_available": 58,
+            "comparison_limit": 100,
+            "comparison_used": 40,
+            "comparison_available": 60,
+            "event_limit": 5000,
+            "event_used": 281,
+            "event_available": 4719,
+            "event_reserved_for_run_closure": 4,
+            "event_available_for_non_terminal": 4715,
+        }
+
+    def _sample_audit_run(self):
+        return {
+            "audit_run_id": "ar_0123456789abcdef",
+            "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "title": "Audit 1",
+            "status": "in_progress",
+            "created_at": "2026-07-30T09:00:00Z",
+            "pinned_assurance_profile_version_id": "assurance_v0001",
+            "pinned_assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_point_ids": ["mp_a1b2c3d4e5f67890"],
+            "revision": 2,
+        }
+
+    def _sample_pending(self):
+        return {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "pending",
+            "created_at": "2026-07-30T09:00:00Z",
+        }
+
+    def _sample_resolved_consensus(self):
+        return {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "resolved",
+            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "measurement_profile_version_id": "mprofile_r0001",
+            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_version_id": "baseline_v0001",
+            "baseline_type": "consensus",
+            "baseline_model_id": "bmodel_1122334455667788",
+            "baseline_model_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "comparability_status": "comparable",
+            "resolved_at": "2026-07-30T10:00:00Z",
+        }
+
+    def _sample_resolved_single_scan(self):
+        return {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "resolved",
+            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "measurement_profile_version_id": "mprofile_r0001",
+            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_version_id": "baseline_v0001",
+            "baseline_type": "single_scan",
+            "baseline_snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "baseline_snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "comparability_status": "comparable",
+            "resolved_at": "2026-07-30T10:00:00Z",
+        }
+
+    def _sample_completed_consensus(self):
+        ev_100 = [f"evidence_{i:012x}" for i in range(100)]
+        return {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "completed",
+            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "measurement_profile_version_id": "mprofile_r0001",
+            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_version_id": "baseline_v0001",
+            "baseline_type": "consensus",
+            "baseline_model_id": "bmodel_1122334455667788",
+            "baseline_model_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "comparability_status": "comparable",
+            "comparison_id": "comparison_0123456789abcdef",
+            "comparison_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "occurrence_set_id": "occurrence_fedcba9876543210",
+            "evidence_ids": ev_100,
+            "completed_at": "2026-07-30T09:15:00Z",
+        }
+
+    def _sample_completed_single_scan(self):
+        ev_100 = [f"evidence_{i:012x}" for i in range(100)]
+        return {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "completed",
+            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "measurement_profile_version_id": "mprofile_r0001",
+            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_version_id": "baseline_v0001",
+            "baseline_type": "single_scan",
+            "baseline_snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "baseline_snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "comparability_status": "comparable",
+            "comparison_id": "comparison_0123456789abcdef",
+            "comparison_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "occurrence_set_id": "occurrence_fedcba9876543210",
+            "evidence_ids": ev_100,
+            "completed_at": "2026-07-30T09:15:00Z",
+        }
+
+    def _sample_failed_resolution(self):
+        return {
             "measurement_id": "arm_0123456789abcdef",
             "audit_run_id": "ar_0123456789abcdef",
             "measurement_point_id": "mp_a1b2c3d4e5f67890",
@@ -118,11 +233,9 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
             "failed_at": "2026-07-30T10:00:00Z",
             "retry_target": "pending",
         }
-        self.validate_def(failed_res, "auditRunMeasurementFailedResolution")
-        self.validate_def(failed_res, "auditRunMeasurement")
 
-        # 2. Failed Comparison Consensus branch
-        failed_comp_consensus = {
+    def _sample_failed_comparison_consensus(self):
+        return {
             "measurement_id": "arm_0123456789abcdef",
             "audit_run_id": "ar_0123456789abcdef",
             "measurement_point_id": "mp_a1b2c3d4e5f67890",
@@ -147,11 +260,9 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
             "error_message": "Comparison execution error",
             "failed_at": "2026-07-30T10:05:00Z",
         }
-        self.validate_def(failed_comp_consensus, "auditRunMeasurementFailedComparisonConsensus")
-        self.validate_def(failed_comp_consensus, "auditRunMeasurement")
 
-        # 3. Failed Comparison Single Scan branch
-        failed_comp_single = {
+    def _sample_failed_comparison_single_scan(self):
+        return {
             "measurement_id": "arm_0123456789abcdef",
             "audit_run_id": "ar_0123456789abcdef",
             "measurement_point_id": "mp_a1b2c3d4e5f67890",
@@ -176,46 +287,151 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
             "error_message": "Comparison execution error",
             "failed_at": "2026-07-30T10:05:00Z",
         }
-        self.validate_def(failed_comp_single, "auditRunMeasurementFailedComparisonSingleScan")
-        self.validate_def(failed_comp_single, "auditRunMeasurement")
 
-        # Negative checks:
-        # Failed resolution prohibiting snapshot/profile fields
-        failed_res_bad = dict(failed_res, snapshot_id="snapshot_a1b2c3d4e5f67890")
-        with self.assertRaises(self.jsonschema.ValidationError):
-            self.validate_def(failed_res_bad, "auditRunMeasurementFailedResolution")
+    def test_action_specific_response_outcomes(self):
+        capacity = self._sample_capacity()
+        run = self._sample_audit_run()
 
-        # Failed comparison consensus prohibiting single scan fields
-        failed_comp_bad_mix = dict(failed_comp_consensus, baseline_snapshot_id="snapshot_a1b2c3d4e5f67890")
+        def make_resp(m):
+            return {
+                "schema_version": "1.0",
+                "assessment_revision": 12,
+                "assessment_capacity": capacity,
+                "audit_run": run,
+                "measurement": m,
+            }
+
+        # 1. Resolve response:
+        # Accepted: resolved consensus, resolved single scan, failed resolution
+        self.validate_def(make_resp(self._sample_resolved_consensus()), "resolveAuditMeasurementResponse")
+        self.validate_def(make_resp(self._sample_resolved_single_scan()), "resolveAuditMeasurementResponse")
+        self.validate_def(make_resp(self._sample_failed_resolution()), "resolveAuditMeasurementResponse")
+
+        # Rejected by resolve outcome: pending, completed
         with self.assertRaises(self.jsonschema.ValidationError):
-            self.validate_def(failed_comp_bad_mix, "auditRunMeasurementFailedComparisonConsensus")
+            self.validate_def(make_resp(self._sample_pending()), "resolveAuditMeasurementResponse")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(make_resp(self._sample_completed_consensus()), "resolveAuditMeasurementResponse")
+
+        # 2. Retry response:
+        # Accepted: pending, resolved consensus, resolved single scan
+        self.validate_def(make_resp(self._sample_pending()), "retryAuditMeasurementResponse")
+        self.validate_def(make_resp(self._sample_resolved_consensus()), "retryAuditMeasurementResponse")
+        self.validate_def(make_resp(self._sample_resolved_single_scan()), "retryAuditMeasurementResponse")
+
+        # Rejected by retry outcome: completed, failed
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(make_resp(self._sample_completed_consensus()), "retryAuditMeasurementResponse")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(make_resp(self._sample_failed_resolution()), "retryAuditMeasurementResponse")
+
+        # 3. Save comparison response:
+        # Accepted: completed consensus, completed single scan, failed comparison consensus, failed comparison single scan
+        self.validate_def(make_resp(self._sample_completed_consensus()), "saveAuditMeasurementComparisonResponse")
+        self.validate_def(make_resp(self._sample_completed_single_scan()), "saveAuditMeasurementComparisonResponse")
+        self.validate_def(make_resp(self._sample_failed_comparison_consensus()), "saveAuditMeasurementComparisonResponse")
+        self.validate_def(make_resp(self._sample_failed_comparison_single_scan()), "saveAuditMeasurementComparisonResponse")
+
+        # Rejected by comparison outcome: pending, resolved
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(make_resp(self._sample_pending()), "saveAuditMeasurementComparisonResponse")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(make_resp(self._sample_resolved_consensus()), "saveAuditMeasurementComparisonResponse")
+
+    def test_full_eight_measurement_union_branches_positive(self):
+        # Proves all 8 branches validate against both their specific definition and the auditRunMeasurement union
+        self.validate_def(self._sample_pending(), "auditRunMeasurementPending")
+        self.validate_def(self._sample_pending(), "auditRunMeasurement")
+
+        self.validate_def(self._sample_resolved_consensus(), "auditRunMeasurementResolvedConsensus")
+        self.validate_def(self._sample_resolved_consensus(), "auditRunMeasurement")
+
+        self.validate_def(self._sample_resolved_single_scan(), "auditRunMeasurementResolvedSingleScan")
+        self.validate_def(self._sample_resolved_single_scan(), "auditRunMeasurement")
+
+        self.validate_def(self._sample_completed_consensus(), "auditRunMeasurementCompletedConsensus")
+        self.validate_def(self._sample_completed_consensus(), "auditRunMeasurement")
+
+        self.validate_def(self._sample_completed_single_scan(), "auditRunMeasurementCompletedSingleScan")
+        self.validate_def(self._sample_completed_single_scan(), "auditRunMeasurement")
+
+        self.validate_def(self._sample_failed_resolution(), "auditRunMeasurementFailedResolution")
+        self.validate_def(self._sample_failed_resolution(), "auditRunMeasurement")
+
+        self.validate_def(self._sample_failed_comparison_consensus(), "auditRunMeasurementFailedComparisonConsensus")
+        self.validate_def(self._sample_failed_comparison_consensus(), "auditRunMeasurement")
+
+        self.validate_def(self._sample_failed_comparison_single_scan(), "auditRunMeasurementFailedComparisonSingleScan")
+        self.validate_def(self._sample_failed_comparison_single_scan(), "auditRunMeasurement")
+
+    def test_full_measurement_union_negative_checks(self):
+        # 1. resolved consensus rejects single-scan baseline fields
+        bad_res_cons = dict(self._sample_resolved_consensus(), baseline_snapshot_id="snapshot_a1b2c3d4e5f67890")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_res_cons, "auditRunMeasurementResolvedConsensus")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_res_cons, "auditRunMeasurement")
+
+        # 2. resolved single scan rejects consensus fields
+        bad_res_single = dict(self._sample_resolved_single_scan(), baseline_model_id="bmodel_1122334455667788")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_res_single, "auditRunMeasurementResolvedSingleScan")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_res_single, "auditRunMeasurement")
+
+        # 3. completed consensus rejects single-scan fields
+        bad_comp_cons = dict(self._sample_completed_consensus(), baseline_snapshot_id="snapshot_a1b2c3d4e5f67890")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_comp_cons, "auditRunMeasurementCompletedConsensus")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_comp_cons, "auditRunMeasurement")
+
+        # 4. completed single scan rejects consensus fields
+        bad_comp_single = dict(self._sample_completed_single_scan(), baseline_model_id="bmodel_1122334455667788")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_comp_single, "auditRunMeasurementCompletedSingleScan")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_comp_single, "auditRunMeasurement")
+
+        # 5. pending rejects resolved/completed/failure fields
+        bad_pending = dict(self._sample_pending(), snapshot_id="snapshot_a1b2c3d4e5f67890")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_pending, "auditRunMeasurementPending")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_pending, "auditRunMeasurement")
+
+        # 6. failed resolution rejects snapshot and contract-pin fields
+        bad_failed_res = dict(self._sample_failed_resolution(), snapshot_id="snapshot_a1b2c3d4e5f67890")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_failed_res, "auditRunMeasurementFailedResolution")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_failed_res, "auditRunMeasurement")
+
+        # 7. failed comparison branches reject completed-result fields
+        bad_failed_comp_cons = dict(
+            self._sample_failed_comparison_consensus(),
+            comparison_id="comparison_0123456789abcdef",
+            occurrence_set_id="occurrence_fedcba9876543210",
+            evidence_ids=["evidence_000000000001"],
+        )
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_failed_comp_cons, "auditRunMeasurementFailedComparisonConsensus")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_failed_comp_cons, "auditRunMeasurement")
+
+        bad_failed_comp_single = dict(
+            self._sample_failed_comparison_single_scan(),
+            comparison_id="comparison_0123456789abcdef",
+            occurrence_set_id="occurrence_fedcba9876543210",
+            evidence_ids=["evidence_000000000001"],
+        )
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_failed_comp_single, "auditRunMeasurementFailedComparisonSingleScan")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_failed_comp_single, "auditRunMeasurement")
 
     def test_evidence_ids_bounds(self):
-        ev_100 = [f"evidence_{i:012x}" for i in range(100)]
-        consensus_100 = {
-            "measurement_id": "arm_0123456789abcdef",
-            "audit_run_id": "ar_0123456789abcdef",
-            "measurement_point_id": "mp_a1b2c3d4e5f67890",
-            "status": "completed",
-            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
-            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-            "measurement_profile_version_id": "mprofile_r0001",
-            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "baseline_version_id": "baseline_v0001",
-            "baseline_type": "consensus",
-            "baseline_model_id": "bmodel_1122334455667788",
-            "baseline_model_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "assurance_profile_version_id": "assurance_v0001",
-            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "comparability_status": "comparable",
-            "comparison_id": "comparison_0123456789abcdef",
-            "comparison_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "occurrence_set_id": "occurrence_fedcba9876543210",
-            "evidence_ids": ev_100,
-            "completed_at": "2026-07-30T09:15:00Z",
-        }
+        consensus_100 = self._sample_completed_consensus()
         self.validate_def(consensus_100, "auditRunMeasurementCompletedConsensus")
 
         ev_101 = [f"evidence_{i:012x}" for i in range(101)]
@@ -249,7 +465,7 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
         ev_100 = [f"evidence_{i:012x}" for i in range(100)]
         measurements = []
         for i in range(64):
-            measurements.append({
+            m = {
                 "measurement_id": f"arm_{i:016x}",
                 "audit_run_id": "ar_0123456789abcdef",
                 "measurement_point_id": f"mp_{i:016x}",
@@ -273,7 +489,9 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
                 "occurrence_set_id": f"occurrence_{i:016x}",
                 "evidence_ids": ev_100,
                 "completed_at": "2026-07-30T09:15:00Z",
-            })
+            }
+            self.validate_def(m, "auditRunMeasurementCompletedConsensus")
+            measurements.append(m)
 
         audit_run_doc = {
             "schema_version": "1.0",
@@ -300,7 +518,7 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
 
     def test_measurement_points_persistence_envelope_size(self):
         def make_mp(i):
-            return {
+            mp = {
                 "measurement_point_id": f"mp_{i:016x}",
                 "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
                 "name": "N" * 128,
@@ -312,7 +530,7 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
                     "radio_profile_id": "R" * 128,
                     "interface": "I" * 64,
                     "declared_bands": ["2.4", "5"],
-                    "declared_channels": list(range(1, 197)) + [197, 198, 199, 200],
+                    "declared_channels": list(range(1, 197)),
                     "scan_time": 3600,
                 },
                 "status": "archived",
@@ -320,23 +538,11 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
                 "archived_at": "2026-07-30T09:05:00Z",
                 "revision": 99,
             }
+            # Validate each generated MeasurementPoint against the schema before serialization
+            self.validate_def(mp, "measurementPoint")
+            return mp
 
-        # Test 44 maximum-sized records fit under 256 KB with >20% headroom
-        doc_44 = {
-            "schema_version": "1.0",
-            "storage_writer_version": "1.0",
-            "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-            "updated_at": "2026-07-30T10:00:00Z",
-            "measurement_points": [make_mp(i) for i in range(44)],
-        }
-        b_44 = json.dumps(doc_44, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
-        size_44 = len(b_44)
-        limit_256 = 256 * 1024
-        headroom_256 = (limit_256 - size_44) / limit_256 * 100
-        self.assertLess(size_44, limit_256)
-        self.assertGreaterEqual(headroom_256, 20.0)
-
-        # Test 90 maximum-sized records fit under 512 KB with >20% headroom
+        # Test 90 maximum-sized records fit under 512 KB with at least 20% headroom
         doc_90 = {
             "schema_version": "1.0",
             "storage_writer_version": "1.0",
@@ -368,6 +574,24 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
         }
         with self.assertRaises(self.jsonschema.ValidationError):
             self.validate_def(bad_loc, "createMeasurementPointRequest")
+
+        # Test channels > 196 rejected
+        bad_chan = {
+            "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "name": "Point Alpha",
+            "expected_measurement_context": {
+                "location_id": "loc_1",
+                "scan_profile_id": "prof_1",
+                "radio_profile_id": "radio_1",
+                "interface": "wlan0",
+                "declared_bands": ["2.4"],
+                "declared_channels": [197],
+                "scan_time": 300,
+            },
+            "expected_assessment_revision": 1,
+        }
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(bad_chan, "createMeasurementPointRequest")
 
 
 if __name__ == "__main__":

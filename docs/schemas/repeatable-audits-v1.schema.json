@@ -157,7 +157,7 @@
           "type": "array",
           "items": { "type": "integer", "minimum": 1, "maximum": 196 },
           "minItems": 1,
-          "maxItems": 200,
+          "maxItems": 196,
           "uniqueItems": true
         },
         "scan_time": {
@@ -198,7 +198,7 @@
           "type": "array",
           "items": { "type": "integer", "minimum": 1, "maximum": 196 },
           "minItems": 1,
-          "maxItems": 200,
+          "maxItems": 196,
           "uniqueItems": true
         },
         "scan_time": {
@@ -651,6 +651,31 @@
       ]
     },
 
+    "resolveAuditMeasurementOutcome": {
+      "oneOf": [
+        { "$ref": "#/$defs/auditRunMeasurementResolvedConsensus" },
+        { "$ref": "#/$defs/auditRunMeasurementResolvedSingleScan" },
+        { "$ref": "#/$defs/auditRunMeasurementFailedResolution" }
+      ]
+    },
+
+    "retryAuditMeasurementOutcome": {
+      "oneOf": [
+        { "$ref": "#/$defs/auditRunMeasurementPending" },
+        { "$ref": "#/$defs/auditRunMeasurementResolvedConsensus" },
+        { "$ref": "#/$defs/auditRunMeasurementResolvedSingleScan" }
+      ]
+    },
+
+    "saveAuditMeasurementComparisonOutcome": {
+      "oneOf": [
+        { "$ref": "#/$defs/auditRunMeasurementCompletedConsensus" },
+        { "$ref": "#/$defs/auditRunMeasurementCompletedSingleScan" },
+        { "$ref": "#/$defs/auditRunMeasurementFailedComparisonConsensus" },
+        { "$ref": "#/$defs/auditRunMeasurementFailedComparisonSingleScan" }
+      ]
+    },
+
     "createMeasurementPointRequest": {
       "type": "object",
       "additionalProperties": false,
@@ -981,7 +1006,7 @@
         "assessment_revision": { "type": "integer", "minimum": 1 },
         "assessment_capacity": { "$ref": "#/$defs/assessmentCapacity" },
         "audit_run": { "$ref": "#/$defs/auditRun" },
-        "measurement": { "$ref": "#/$defs/auditRunMeasurement" }
+        "measurement": { "$ref": "#/$defs/resolveAuditMeasurementOutcome" }
       }
     },
 
@@ -1019,7 +1044,7 @@
         "assessment_revision": { "type": "integer", "minimum": 1 },
         "assessment_capacity": { "$ref": "#/$defs/assessmentCapacity" },
         "audit_run": { "$ref": "#/$defs/auditRun" },
-        "measurement": { "$ref": "#/$defs/auditRunMeasurement" }
+        "measurement": { "$ref": "#/$defs/retryAuditMeasurementOutcome" }
       }
     },
 
@@ -1057,7 +1082,7 @@
         "assessment_revision": { "type": "integer", "minimum": 1 },
         "assessment_capacity": { "$ref": "#/$defs/assessmentCapacity" },
         "audit_run": { "$ref": "#/$defs/auditRun" },
-        "measurement": { "$ref": "#/$defs/auditRunMeasurement" }
+        "measurement": { "$ref": "#/$defs/saveAuditMeasurementComparisonOutcome" }
       }
     },
 
