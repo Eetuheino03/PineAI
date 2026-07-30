@@ -19,7 +19,9 @@ from .assessment_store import (
     _ensure_no_raw_recon,
     _json_clone,
     _utc_now,
+    _validate_comparison,
     _validate_revision,
+    _validate_snapshot,
 )
 from .customer_store import (
     CustomerAuditStore,
@@ -445,15 +447,43 @@ def _validate_audit_run_measurement(m: Dict[str, Any]) -> None:
             raise BackendError("invalid_audit_run_transition", "unknown failed_stage")
 
 
-def _sanitize_measurement(m: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate measurement strictly and return a clean dict conforming to branch schema."""
-    _validate_audit_run_measurement(m)
+def _validate_persisted_measurement(m: Dict[str, Any]) -> None:
+    if not isinstance(m, dict):
+        raise BackendError("invalid_audit_run_measurement", "measurement must be an object")
+
+    status = m.get("status")
+    if status == "pending":
+        keys = set(m)
+        keys.discard("audit_measurement_id")
+        required = {"measurement_id", "audit_run_id", "measurement_point_id", "status", "created_at", "expected_measurement_context"}
+        if keys != required:
+            raise BackendError("invalid_audit_run_measurement", "persisted pending measurement keys mismatch")
+        _validate_iso_datetime(m["created_at"], "created_at")
+        _validate_expected_measurement_context(m["expected_measurement_context"], measurement_point_id=m["measurement_point_id"])
+    else:
+        _validate_audit_run_measurement(m)
+
+
+def _to_public_measurement(m: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(m, dict):
+        raise BackendError("invalid_audit_run_measurement", "measurement must be an object")
+
     m_copy = dict(m)
     if "audit_measurement_id" in m_copy and "measurement_id" not in m_copy:
         m_copy["measurement_id"] = m_copy.pop("audit_measurement_id")
     else:
         m_copy.pop("audit_measurement_id", None)
+
+    if m_copy.get("status") == "pending":
+        m_copy.pop("expected_measurement_context", None)
+
+    _validate_audit_run_measurement(m_copy)
     return m_copy
+
+
+def _sanitize_measurement(m: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate measurement strictly and return a clean dict conforming to public branch schema."""
+    return _to_public_measurement(m)
 
 
 def _validate_expected_measurement_context(
@@ -547,7 +577,12 @@ class RepeatableAuditStore(CustomerAuditStore):
         return run_bytes
 
     def _validate_artifact_reference(
-        self, assessment_id: str, artifact_type: str, artifact_id: str, expected_digest: Optional[str] = None
+        self,
+        assessment_id: str,
+        artifact_type: str,
+        artifact_id: str,
+        expected_digest: Optional[str] = None,
+        expected_comparison_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         base = self._ensure_assessment_directories(assessment_id)
         if artifact_type == "snapshot":
@@ -571,16 +606,32 @@ class RepeatableAuditStore(CustomerAuditStore):
         if not file_path.exists():
             raise BackendError(err_not_found, f"{artifact_type} {artifact_id} not found")
 
-        try:
-            data = json.loads(file_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise BackendError(err_invalid, f"{artifact_type} document is unreadable JSON") from error
+        data = self._read_json(file_path, err_invalid, f"{artifact_type} document is unreadable JSON")
 
         if not isinstance(data, dict) or len(data) == 0:
             raise BackendError(err_invalid, f"{artifact_type} document must be a non-empty object")
 
-        if id_key in data and data[id_key] != artifact_id:
+        if id_key not in data:
+            raise BackendError(err_invalid, f"{artifact_type} document missing required id field {id_key}")
+
+        if data[id_key] != artifact_id:
             raise BackendError(err_invalid, f"{artifact_type} internal id does not match {artifact_id}")
+
+        if artifact_type == "snapshot":
+            _validate_snapshot(data)
+        elif artifact_type == "comparison":
+            comp_copy = dict(data)
+            comp_copy.pop("comparison_id", None)
+            _validate_comparison(comp_copy)
+        elif artifact_type == "occurrence":
+            if "occurrences" not in data or not isinstance(data["occurrences"], list):
+                raise BackendError(err_invalid, "occurrence set occurrences must be a list")
+            for occ in data["occurrences"]:
+                if not isinstance(occ, dict):
+                    raise BackendError(err_invalid, "occurrence item must be an object")
+                if expected_comparison_id is not None and "comparison_id" in occ:
+                    if occ["comparison_id"] != expected_comparison_id:
+                        raise BackendError(err_invalid, "occurrence comparison_id does not match referenced comparison")
 
         if expected_digest is not None:
             digest = _canonical_digest(data)
@@ -1357,25 +1408,6 @@ class RepeatableAuditStore(CustomerAuditStore):
         status = outcome.get("status")
         failed_stage = outcome.get("failed_stage")
 
-        if status == "resolved":
-            btype = outcome.get("baseline_type")
-            snap_id = outcome.get("snapshot_id")
-            snap_digest = outcome.get("snapshot_digest")
-            if not snap_id:
-                raise BackendError("invalid_audit_run_measurement", "snapshot_id is required")
-            self._validate_artifact_reference(assessment_id, "snapshot", snap_id, expected_digest=snap_digest)
-
-            if btype == "single_scan":
-                base_snap_id = outcome.get("baseline_snapshot_id")
-                base_snap_digest = outcome.get("baseline_snapshot_digest")
-                if not base_snap_id:
-                    raise BackendError("invalid_audit_run_measurement", "baseline_snapshot_id is required")
-                self._validate_artifact_reference(assessment_id, "snapshot", base_snap_id, expected_digest=base_snap_digest)
-        elif status == "failed" and failed_stage == "resolution":
-            pass
-        else:
-            raise BackendError("invalid_audit_run_measurement", "resolve outcome must be resolved or failed resolution")
-
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_assessment_revision)
@@ -1388,6 +1420,25 @@ class RepeatableAuditStore(CustomerAuditStore):
                 raise BackendError("invalid_audit_run_transition", "audit run must be in_progress to resolve measurements")
             if audit_run.get("revision") != expected_audit_run_revision:
                 raise BackendError("revision_conflict", "audit run revision has changed")
+
+            if status == "resolved":
+                btype = outcome.get("baseline_type")
+                snap_id = outcome.get("snapshot_id")
+                snap_digest = outcome.get("snapshot_digest")
+                if not snap_id:
+                    raise BackendError("invalid_audit_run_measurement", "snapshot_id is required")
+                self._validate_artifact_reference(assessment_id, "snapshot", snap_id, expected_digest=snap_digest)
+
+                if btype == "single_scan":
+                    base_snap_id = outcome.get("baseline_snapshot_id")
+                    base_snap_digest = outcome.get("baseline_snapshot_digest")
+                    if not base_snap_id:
+                        raise BackendError("invalid_audit_run_measurement", "baseline_snapshot_id is required")
+                    self._validate_artifact_reference(assessment_id, "snapshot", base_snap_id, expected_digest=base_snap_digest)
+            elif status == "failed" and failed_stage == "resolution":
+                pass
+            else:
+                raise BackendError("invalid_audit_run_measurement", "resolve outcome must be resolved or failed resolution")
 
             measurements = audit_run.get("measurements", [])
             target_idx = -1
@@ -1454,12 +1505,9 @@ class RepeatableAuditStore(CustomerAuditStore):
         audit_run_id: str,
         expected_audit_run_revision: int,
         measurement_point_id: str,
-        outcome: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_audit_run_revision)
-        if outcome is not None:
-            _ensure_no_raw_recon(outcome)
 
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
@@ -1489,59 +1537,29 @@ class RepeatableAuditStore(CustomerAuditStore):
                 raise BackendError("invalid_audit_run_transition", "cannot retry measurement that is not in failed status")
 
             failed_stage = target_m.get("failed_stage")
-            expected_retry_target = target_m.get("retry_target")
-
-            if failed_stage == "resolution":
-                if expected_retry_target != "pending":
-                    raise BackendError("invalid_audit_run_transition", "invalid retry target for resolution failure")
-            elif failed_stage == "comparison":
-                if expected_retry_target != "resolved":
-                    raise BackendError("invalid_audit_run_transition", "invalid retry target for comparison failure")
-            else:
-                raise BackendError("invalid_audit_run_transition", "unknown failed_stage for measurement")
-
-            if outcome is not None and isinstance(outcome, dict):
-                provided_status = outcome.get("status")
-                if provided_status is not None and provided_status != expected_retry_target:
-                    raise BackendError(
-                        "invalid_audit_run_transition",
-                        "retry outcome status does not match retry target",
-                    )
-                if failed_stage == "comparison":
-                    for pin in RESOLVED_PINNED_FIELDS:
-                        if pin in outcome and outcome[pin] != target_m.get(pin):
-                            raise BackendError(
-                                "invalid_audit_run_measurement",
-                                "cannot replace immutable pinned fields during retry",
-                            )
-
-            updated_m = _json_clone(target_m, "invalid_audit_run_measurement", "measurement")
-            for k in ("error_code", "error_message", "failed_stage", "retry_target", "failed_at"):
-                updated_m.pop(k, None)
 
             if failed_stage == "resolution":
                 mp_obj = self._get_measurement_point_unlocked(assessment_id, measurement_point_id)
-                updated_m["status"] = "pending"
-                updated_m["created_at"] = _utc_now()
-                updated_m["expected_measurement_context"] = _json_clone(mp_obj["expected_measurement_context"], "invalid_measurement_point", "context")
-                for pin in RESOLVED_PINNED_FIELDS:
-                    updated_m.pop(pin, None)
-                for comp in COMPLETED_FIELDS:
-                    updated_m.pop(comp, None)
+                updated_m = {
+                    "measurement_id": target_m.get("measurement_id") or target_m.get("audit_measurement_id"),
+                    "audit_run_id": audit_run_id,
+                    "measurement_point_id": measurement_point_id,
+                    "status": "pending",
+                    "created_at": _utc_now(),
+                    "expected_measurement_context": _json_clone(mp_obj["expected_measurement_context"], "invalid_measurement_point", "context"),
+                }
             elif failed_stage == "comparison":
+                updated_m = _json_clone(target_m, "invalid_audit_run_measurement", "measurement")
+                for k in ("error_code", "error_message", "failed_stage", "retry_target", "failed_at", "comparison_id", "comparison_digest", "occurrence_set_id", "evidence_ids", "completed_at"):
+                    updated_m.pop(k, None)
                 updated_m["status"] = "resolved"
-                for comp in COMPLETED_FIELDS:
-                    updated_m.pop(comp, None)
+                updated_m["measurement_id"] = target_m.get("measurement_id") or target_m.get("audit_measurement_id")
+                updated_m["audit_run_id"] = audit_run_id
+                updated_m["measurement_point_id"] = measurement_point_id
+            else:
+                raise BackendError("invalid_audit_run_transition", "unknown failed_stage for measurement")
 
-            if outcome is not None and isinstance(outcome, dict):
-                updated_m.update(_json_clone(outcome, "invalid_audit_run_measurement", "outcome"))
-
-            mid = target_m.get("measurement_id") or target_m.get("audit_measurement_id")
-            updated_m["measurement_id"] = mid
-            updated_m["audit_run_id"] = audit_run_id
-            updated_m["measurement_point_id"] = measurement_point_id
-
-            _validate_audit_run_measurement(updated_m)
+            _validate_persisted_measurement(updated_m)
 
             updated_measurements = list(measurements)
             updated_measurements[target_idx] = updated_m
@@ -1552,13 +1570,13 @@ class RepeatableAuditStore(CustomerAuditStore):
 
             run_bytes = self._validate_audit_run_size(updated_run)
 
-            sanitized_m = _sanitize_measurement(updated_m)
+            public_m = _to_public_measurement(updated_m)
 
             event_obj, events_bytes = self._transaction_event(
                 assessment_id,
                 metadata,
                 "audit_measurement_retried",
-                {"measurement": sanitized_m},
+                {"measurement": public_m},
             )
 
             base = self._ensure_assessment_directories(assessment_id)
@@ -1573,7 +1591,7 @@ class RepeatableAuditStore(CustomerAuditStore):
                 "assessment_revision": metadata["revision"],
                 "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
                 "audit_run": _sanitize_audit_run(updated_run),
-                "measurement": sanitized_m,
+                "measurement": public_m,
             }
 
     def save_audit_measurement_comparison(

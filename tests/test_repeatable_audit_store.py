@@ -57,21 +57,141 @@ def sample_assurance_profile():
     }
 
 
+def make_valid_snapshot(snapshot_id="snapshot_0000000000000001", suffix="1"):
+    digest_char = suffix[-1]
+    digest = digest_char * 64
+    ap_id = "ap_aaaaaaaaaaaa"
+    net_id = "network_bbbbbbbbbbbb"
+    ev_id = "evidence_cccccccccccc"
+    snap = {
+        "schema_version": "1.0",
+        "snapshot_id": snapshot_id,
+        "snapshot_digest": digest,
+        "observed_at": "2026-07-27T12:00:00Z",
+        "scan_metadata": {
+            "scan_id": f"local-scan-{suffix}",
+            "date": "2026-07-27T12:00:00Z",
+            "source": "hak5_recon",
+            "label": "Fixture",
+            "scan_time": 180,
+            "coverage": ["2.4"],
+        },
+        "comparability_profile": {
+            "declared_coverage": ["2.4"],
+            "observed_coverage": ["2.4"],
+            "effective_coverage": ["2.4"],
+            "scan_time": 180,
+        },
+        "summary": {
+            "access_point_count": 1,
+            "network_count": 1,
+            "associated_client_count": 0,
+            "out_of_range_client_count": 0,
+            "unassociated_client_count": 0,
+            "input_bytes": 512,
+        },
+        "access_points": [
+            {
+                "asset_id": ap_id,
+                "network_id": net_id,
+                "evidence_id": ev_id,
+                "bssid": "AA:BB:CC:DD:EE:FF",
+                "ssid": "Factory-WiFi",
+                "hidden": False,
+                "encryption": 4,
+                "wps": False,
+                "channel": 6,
+                "band": "2.4",
+                "signal": -42,
+                "vendor": "Example",
+                "client_count": 0,
+                "data": 100,
+                "probes": 4,
+                "last_seen": 1000,
+            }
+        ],
+        "networks": [
+            {
+                "network_id": net_id,
+                "ssid": "Factory-WiFi",
+                "hidden": False,
+                "asset_ids": [ap_id],
+                "bssids": ["AA:BB:CC:DD:EE:FF"],
+                "channels": [6],
+                "encryption_codes": [4],
+                "vendors": ["Example"],
+                "client_count": 0,
+            }
+        ],
+        "evidence": [
+            {
+                "evidence_id": ev_id,
+                "snapshot_id": snapshot_id,
+                "evidence_type": "recon_access_point_observation",
+                "subject_id": ap_id,
+                "observed": {
+                    "network_id": net_id,
+                    "bssid": "AA:BB:CC:DD:EE:FF",
+                    "ssid": "Factory-WiFi",
+                    "hidden": False,
+                    "encryption": 4,
+                    "wps": False,
+                    "channel": 6,
+                    "signal": -42,
+                    "vendor": "Example",
+                    "client_count": 0,
+                },
+            }
+        ],
+    }
+    snap["snapshot_digest"] = _canonical_digest(snap)
+    return snap
+
+
+def make_valid_comparison(comparison_id="comparison_0000000000000001", baseline_snap_id="snapshot_0000000000000001", current_snap_id="snapshot_0000000000000001"):
+    return {
+        "schema_version": "1.0",
+        "comparison_id": comparison_id,
+        "baseline_snapshot_id": baseline_snap_id,
+        "current_snapshot_id": current_snap_id,
+        "comparability": {
+            "status": "comparable",
+            "absence_findings_allowed": True,
+            "reasons": [],
+            "baseline": {"coverage": ["2.4"], "scan_time": 180, "access_point_count": 1},
+            "current": {"coverage": ["2.4"], "scan_time": 180, "access_point_count": 1},
+        },
+        "access_points": {"matched": [], "added": [], "removed": []},
+        "networks": {"matched": [], "added": [], "removed": []},
+        "summary": {"matched_access_point_count": 0, "added_access_point_count": 0, "removed_access_point_count": 0, "matched_network_count": 0, "added_network_count": 0, "removed_network_count": 0},
+    }
+
+
 def setup_test_artifacts(directory, aid, snapshot_id="snapshot_0000000000000001", comparison_id="comparison_0000000000000001", occurrence_set_id="occurrence_0000000000000001"):
     base = Path(directory) / "assessments" / aid
     (base / "snapshots").mkdir(parents=True, exist_ok=True)
     (base / "comparisons").mkdir(parents=True, exist_ok=True)
     (base / "occurrences").mkdir(parents=True, exist_ok=True)
 
-    snap_doc = {"snapshot_id": snapshot_id, "data": "sample snapshot payload"}
+    snap_doc = make_valid_snapshot(snapshot_id)
     snap_bytes = json.dumps(snap_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     snap_digest = _canonical_digest(snap_doc)
 
-    comp_doc = {"comparison_id": comparison_id, "data": "sample comparison payload"}
+    comp_doc = make_valid_comparison(comparison_id, snapshot_id, snapshot_id)
     comp_bytes = json.dumps(comp_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     comp_digest = _canonical_digest(comp_doc)
 
-    occ_doc = {"occurrence_set_id": occurrence_set_id, "occurrences": []}
+    occ_doc = {
+        "occurrence_set_id": occurrence_set_id,
+        "occurrences": [
+            {
+                "occurrence_id": "occ_0000000000000001",
+                "comparison_id": comparison_id,
+                "rule_id": "open_ssid_detected",
+                "severity": "high",
+            }
+        ],
+    }
     occ_bytes = json.dumps(occ_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     occ_digest = _canonical_digest(occ_doc)
 
