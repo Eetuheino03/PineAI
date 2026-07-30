@@ -30,7 +30,7 @@ from .customer_store import (
     _text_list,
 )
 from .errors import BackendError
-from .storage_transaction import PrivateTransaction, recover_private_transactions, write_private_file
+from .storage_transaction import PrivateTransaction, recover_private_transactions
 
 
 REPEATABLE_AUDITS_SCHEMA_VERSION = "1.0"
@@ -71,16 +71,86 @@ def _generate_arm_id() -> str:
     return "arm_{0}".format(uuid.uuid4().hex[:16])
 
 
-def _validate_iso_datetime(value: Any, param_name: str) -> str:
+_RFC3339_PATTERN = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?"
+    r"(Z|[+-]\d{2}:\d{2})$"
+)
+
+
+def _validate_rfc3339(
+    value: Any,
+    param_name: str,
+    error_code: str = "invalid_audit_run_measurement",
+) -> str:
+    """Validate a strict RFC 3339 date-time string.
+
+    Accepted forms:
+        YYYY-MM-DDTHH:MM:SSZ
+        YYYY-MM-DDTHH:MM:SS.fractionZ
+        YYYY-MM-DDTHH:MM:SS+/-HH:MM
+        YYYY-MM-DDTHH:MM:SS.fraction+/-HH:MM
+
+    Rejected forms:
+        Date-only (2026-07-30)
+        Naive datetime without timezone (2026-07-30T10:00:00)
+        Space-separated (2026-07-30 10:00:00Z)
+        Invalid calendar dates
+        Invalid timezone offsets (e.g. +25:00)
+    """
     if not isinstance(value, str) or not value:
-        raise BackendError("invalid_audit_run_measurement", "{0} must be a non-empty ISO date-time string".format(param_name))
+        raise BackendError(
+            error_code,
+            "{0} must be a non-empty RFC 3339 date-time string".format(param_name),
+        )
+
+    match = _RFC3339_PATTERN.match(value)
+    if match is None:
+        raise BackendError(
+            error_code,
+            "{0} must be a valid RFC 3339 date-time string".format(param_name),
+        )
+
+    year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+    hour, minute, second = int(match.group(4)), int(match.group(5)), int(match.group(6))
+    tz_part = match.group(8)
+
+    # Validate calendar date via stdlib
+    from datetime import date as _date
+
     try:
-        val = value.replace("Z", "+00:00") if value.endswith("Z") else value
-        from datetime import datetime
-        datetime.fromisoformat(val)
-        return value
+        _date(year, month, day)
     except ValueError:
-        raise BackendError("invalid_audit_run_measurement", "{0} must be a valid ISO 8601 date-time string".format(param_name))
+        raise BackendError(
+            error_code,
+            "{0} contains an invalid calendar date".format(param_name),
+        )
+
+    if hour > 23 or minute > 59 or second > 59:
+        raise BackendError(
+            error_code,
+            "{0} contains an invalid time component".format(param_name),
+        )
+
+    # Validate timezone offset bounds
+    if tz_part != "Z":
+        tz_hour = int(tz_part[1:3])
+        tz_min = int(tz_part[4:6])
+        if tz_hour > 23 or tz_min > 59:
+            raise BackendError(
+                error_code,
+                "{0} contains an invalid timezone offset".format(param_name),
+            )
+
+    return value
+
+
+def _validate_iso_datetime(
+    value: Any,
+    param_name: str,
+    error_code: str = "invalid_audit_run_measurement",
+) -> str:
+    """Convenience alias for backwards compatibility."""
+    return _validate_rfc3339(value, param_name, error_code=error_code)
 
 
 def _sanitize_audit_run(audit_run: Dict[str, Any]) -> Dict[str, Any]:
@@ -641,6 +711,12 @@ class RepeatableAuditStore(CustomerAuditStore):
         return data
 
     def _read_audit_runs_manifest_unlocked(self, assessment_id: str) -> Dict[str, Any]:
+        """Read or reconstruct the audit-runs manifest in memory.
+
+        Never writes the manifest to disk.  Persisting a repaired
+        or updated manifest is the responsibility of mutating operations
+        that include the manifest in their PrivateTransaction commit.
+        """
         base = self._ensure_assessment_directories(assessment_id)
         manifest_file = base / "audit_runs_manifest.json"
         if manifest_file.exists():
@@ -670,10 +746,6 @@ class RepeatableAuditStore(CustomerAuditStore):
             "active_closure_reserve": closure_reserve,
             "runs": runs_map,
         }
-        try:
-            write_private_file(manifest_file, json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n")
-        except OSError:
-            pass
         return manifest
 
     def _update_audit_runs_manifest_unlocked(self, assessment_id: str, audit_run_id: str, status: str) -> Dict[str, Any]:
@@ -1124,7 +1196,7 @@ class RepeatableAuditStore(CustomerAuditStore):
         _validate_revision(expected_assessment_revision)
         clean_title = _clean_text(title, "title", 128, required=True)
         if due_at is not None:
-            _validate_iso_datetime(due_at, "due_at")
+            _validate_iso_datetime(due_at, "due_at", error_code="invalid_audit_run")
         if not pinned_assurance_profile_version_id or not isinstance(pinned_assurance_profile_version_id, str):
             raise BackendError("profile_version_not_found", "pinned_assurance_profile_version_id is required")
         if not ASSURANCE_VERSION_ID_PATTERN.match(pinned_assurance_profile_version_id):

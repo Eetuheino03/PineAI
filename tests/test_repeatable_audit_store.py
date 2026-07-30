@@ -615,6 +615,102 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             capacity = store.get_assessment_capacity(aid)
             self.assertEqual(capacity["event_reserved_for_run_closure"], 1)
 
+    def test_strict_rfc3339_datetime_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ensure_pseudonymization_key(directory)
+            store = RepeatableAuditStore(directory)
+            assessment = store.create({"name": "RFC3339 Test", "location": "Lab", "notes": ""})
+            aid = assessment["assessment_id"]
+            rev = assessment["revision"]
+
+            ap_res = store.create_assurance_profile_version(aid, rev, sample_assurance_profile())
+            rev = ap_res["assessment"]["revision"]
+            vid = ap_res["assurance_profile_version"]["assurance_profile_version_id"]
+            store.activate_assurance_profile_version(aid, rev, vid)
+
+            mp_res = store.create_measurement_point(aid, 3, sample_context(), "Point A")
+            mp_id = mp_res["measurement_point"]["measurement_point_id"]
+
+            # 1. Negative tests for due_at (error_code: invalid_audit_run)
+            invalid_due_ats = [
+                "2026-07-30",                   # Date only
+                "2026-07-30T10:00:00",          # Naive (no timezone)
+                "2026-07-30 10:00:00Z",         # Space separator
+                "2026-02-31T10:00:00Z",         # Invalid calendar date
+                "2026-07-30T10:00:00+25:00",    # Invalid timezone offset
+            ]
+            for bad_dt in invalid_due_ats:
+                with self.assertRaises(BackendError) as raised:
+                    store.create_audit_run(aid, 4, "Bad Due At", vid, [mp_id], due_at=bad_dt)
+                self.assertEqual(raised.exception.code, "invalid_audit_run")
+
+            # 2. Positive test for due_at (accepted RFC 3339 forms)
+            valid_due_ats = [
+                "2026-07-30T10:00:00Z",
+                "2026-07-30T10:00:00.123456Z",
+                "2026-07-30T10:00:00+02:00",
+                "2026-07-30T10:00:00-05:00",
+            ]
+            for idx, ok_dt in enumerate(valid_due_ats):
+                ar_out = store.create_audit_run(aid, 4 + idx, f"Run {idx}", vid, [mp_id], due_at=ok_dt)
+                self.assertEqual(ar_out["audit_run"]["due_at"], ok_dt)
+
+            # 3. Negative tests for measurement timestamps (resolved_at, completed_at, failed_at -> invalid_audit_run_measurement)
+            run_id = store.create_audit_run(aid, 8, "Measurement Test Run", vid, [mp_id])["audit_run"]["audit_run_id"]
+            store.start_audit_run(aid, 9, run_id, 1)
+
+            digests = setup_test_artifacts(directory, aid)
+            bad_resolved_at = "2026-07-30T10:00:00"  # naive
+            with self.assertRaises(BackendError) as raised:
+                store.resolve_audit_measurement(aid, 10, run_id, 2, mp_id, {
+                    "status": "resolved",
+                    "snapshot_id": "snapshot_0000000000000001",
+                    "snapshot_digest": digests["snapshot_digest"],
+                    "measurement_profile_id": "mprofile_00000000-0000-4000-8000-000000000001",
+                    "measurement_profile_version_id": "mprofile_r0001",
+                    "measurement_profile_digest": "b" * 64,
+                    "baseline_version_id": "baseline_v0001",
+                    "baseline_type": "consensus",
+                    "baseline_model_id": "bmodel_0000000000000001",
+                    "baseline_model_digest": "c" * 64,
+                    "baseline_record_digest": "d" * 64,
+                    "assurance_profile_version_id": vid,
+                    "assurance_profile_digest": "e" * 64,
+                    "comparability_status": "comparable",
+                    "resolved_at": bad_resolved_at,
+                })
+            self.assertEqual(raised.exception.code, "invalid_audit_run_measurement")
+
+    def test_read_only_manifest_reconstruction_does_not_write_disk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ensure_pseudonymization_key(directory)
+            store = RepeatableAuditStore(directory)
+            assessment = store.create({"name": "Read-Only Manifest Test", "location": "Lab", "notes": ""})
+            aid = assessment["assessment_id"]
+
+            ap_res = store.create_assurance_profile_version(aid, 1, sample_assurance_profile())
+            vid = ap_res["assurance_profile_version"]["assurance_profile_version_id"]
+            store.activate_assurance_profile_version(aid, 2, vid)
+
+            mp_res = store.create_measurement_point(aid, 3, sample_context(), "Point A")
+            mp_id = mp_res["measurement_point"]["measurement_point_id"]
+
+            store.create_audit_run(aid, 4, "Run 1", vid, [mp_id])
+
+            manifest_path = Path(directory) / "assessments" / aid / "audit_runs_manifest.json"
+            self.assertTrue(manifest_path.exists())
+
+            # Delete manifest file on disk
+            manifest_path.unlink()
+            self.assertFalse(manifest_path.exists())
+
+            # Call read-only operations (list, get, capacity)
+            store.list_audit_runs(aid)
+            store.get_assessment_capacity(aid)
+
+            # Manifest must NOT have been written back to disk
+            self.assertFalse(manifest_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
