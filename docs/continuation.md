@@ -144,7 +144,12 @@ reclassified without the inventory and policy that existed at the time.
 
 The verified `PineAI-0.6.3.tar.gz` artifact and its matching SHA-256 sidecar will be published as a GitHub pre-release upon completion of release verification. Keep that exact release marked as a pre-release until the exact asset passes the physical Mark VII hardware smoke test. Do not rebuild or replace the assets during hardware validation.
 
-## Next task
+## Formal hardware validation gate & v0.7.0 contract checkpoint
 
-When the Mark VII is connected, install that exact v0.6.3 release package after backing up the existing module and `/root/.PineAI`, then execute the 18-point physical smoke test (offline health, Recon scan resolution, consensus baseline activation, inventory/policy activation, finding notes, evidence viewing, script-free HTML report export, 15–30 min longevity observation, backup/restore verification). Record the result here. If successful, promote the GitHub release from pre-release to stable without rebuilding its assets.
+- **Status**: Automated verification and packaging for `v0.6.3` (`1e77e18670c49c0fca3ecb809fbc08b0f6235222`) are complete.
+- **Hardware Validation**: Physical Mark VII validation remains explicitly **pending**.
+- **Authorization**: The user has formally authorized contract design for `v0.7.0` (Repeatable Field Audits) to proceed prior to physical device testing.
+- **Isolation**: This authorization does not mark `v0.6.3` as hardware-validated. No claim of production readiness or hardware validation is added. Any `v0.6.3` hardware defect discovered later will be handled separately without silently altering the existing release candidate artifact.
+- **v0.7.0 Contract Branch**: `docs/repeatable-field-audits-contract-v0.7.0`
+- **Contracts Frozen**: API specification (`docs/repeatable-audits-api-v1.md`), JSON Schemas (`repeatable-audits-v1.schema.json`, `audit-run-report-v1.schema.json`), and schema test suites (`test_repeatable_audits_schema.py`, `test_audit_run_report_schema.py`).
 
