@@ -271,3 +271,11 @@ After installing the `0.6.3` archive:
 This physical smoke test is pending for `v0.6.3`. Until it is completed, the
 GitHub release remains a pre-release and must not be described as
 hardware-verified.
+
+## v0.7.0 Repeatable Field Audits UI Extensions (Contract Frozen)
+
+PineAI v0.7.0 contracts specify minimal Guided and Expert UI extensions for audit runs:
+* **Guided Mode**: Step-by-step audit run execution wizard (`create_audit_run`, `start_audit_run`, per-point `resolve_audit_measurement` + `save_audit_measurement_comparison`, `complete_audit_run`). Displays derived `ready_to_start` status banner before starting run.
+* **Expert Mode**: Compact table views of `MeasurementPoints` and multi-point `AuditRuns`. Provides progress counters (completed / total points), pinned contract digests, and `generate_audit_run_report` export buttons for sealed runs.
+* **Contract Specification**: `docs/repeatable-audits-api-v1.md`
+* **JSON Schemas**: `docs/schemas/repeatable-audits-v1.schema.json` and `docs/schemas/audit-run-report-v1.schema.json`

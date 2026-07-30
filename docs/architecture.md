@@ -278,7 +278,7 @@ See [install-mark-vii.md](install-mark-vii.md) for the exact SSH commands.
 
 ## Radio and network boundaries
 
-PineAI v0.6.2 reads only:
+PineAI v0.6.3 reads only:
 
 ```text
 GET /api/recon/status
@@ -291,3 +291,10 @@ stop endpoints and does not alter PineAP or radio settings.
 
 Only optional AI explanation requires an outbound provider connection. All
 authoritative analysis, lifecycle, evidence, and reporting remain local.
+
+## v0.7.0 Repeatable Field Audits Architecture (Contract Frozen)
+
+PineAI v0.7.0 introduces multi-point offline wireless change auditing (`MeasurementPoint` and `AuditRun`).
+* **Contract Specification**: `docs/repeatable-audits-api-v1.md`
+* **JSON Schemas**: `docs/schemas/repeatable-audits-v1.schema.json` and `docs/schemas/audit-run-report-v1.schema.json`
+* **Hardware Validation Gate**: Physical Mark VII validation for `v0.6.3` remains pending. Contract design for `v0.7.0` is frozen as a pre-implementation specification by user authorization.
