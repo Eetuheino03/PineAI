@@ -119,6 +119,60 @@ class AuditRunReportSchemaTests(unittest.TestCase):
         }
         self.jsonschema.validate(instance=valid_report, schema=self.schema)
 
+    def test_privacy_profile_enum_validation(self):
+        base_report = {
+            "report_id": "report_0123456789abcdef",
+            "schema_version": "1.0",
+            "scope": "audit_run",
+            "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "audit_run_id": "ar_0123456789abcdef",
+            "title": "Privacy Test Report",
+            "generated_at": "2026-07-29T12:30:00Z",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurements_summary": {
+                "total_points": 1,
+                "completed_points": 1,
+                "failed_points": 0,
+                "comparable_points": 1,
+                "partially_comparable_points": 0,
+                "not_comparable_points": 0,
+            },
+            "per_point_measurements": [
+                {
+                    "measurement_point_id": "mp_a1b2c3d4e5f67890",
+                    "status": "completed",
+                    "comparability_status": "comparable",
+                    "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+                    "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    "baseline_version_id": "baseline_v0001",
+                    "baseline_type": "single_scan",
+                    "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    "baseline_snapshot_id": "snapshot_a1b2c3d4e5f67890",
+                    "baseline_snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    "finding_counts": {
+                        "total": 0,
+                        "open": 0,
+                        "acknowledged": 0,
+                        "false_positive": 0,
+                        "resolved": 0,
+                    },
+                }
+            ],
+            "evidence_references": [],
+            "report_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        }
+
+        # Valid v0.7.0 enums
+        for profile in ["internal_full", "share_safe", "pseudonymized"]:
+            report = dict(base_report, privacy_profile=profile)
+            self.jsonschema.validate(instance=report, schema=self.schema)
+
+        # Invalid legacy v0.6.3 profile in v0.7.0 AuditRun report schema
+        invalid_report = dict(base_report, privacy_profile="local_full")
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.jsonschema.validate(instance=invalid_report, schema=self.schema)
+
 
 if __name__ == "__main__":
     unittest.main()

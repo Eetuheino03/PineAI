@@ -248,7 +248,7 @@
       }
     },
 
-    "auditRunMeasurementResolved": {
+    "auditRunMeasurementResolvedConsensus": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -263,6 +263,8 @@
         "measurement_profile_digest",
         "baseline_version_id",
         "baseline_type",
+        "baseline_model_id",
+        "baseline_model_digest",
         "baseline_record_digest",
         "assurance_profile_version_id",
         "assurance_profile_digest",
@@ -281,12 +283,56 @@
         "measurement_profile_version_id": { "$ref": "#/$defs/mprofileVersionId" },
         "measurement_profile_digest": { "$ref": "#/$defs/digest64" },
         "baseline_version_id": { "$ref": "#/$defs/baselineVersionId" },
-        "baseline_type": { "type": "string", "enum": ["consensus", "single_scan"] },
-        "baseline_record_digest": { "$ref": "#/$defs/digest64" },
+        "baseline_type": { "type": "string", "const": "consensus" },
         "baseline_model_id": { "$ref": "#/$defs/baselineModelId" },
         "baseline_model_digest": { "$ref": "#/$defs/digest64" },
+        "baseline_record_digest": { "$ref": "#/$defs/digest64" },
+        "assurance_profile_version_id": { "$ref": "#/$defs/assuranceVersionId" },
+        "assurance_profile_digest": { "$ref": "#/$defs/digest64" },
+        "comparability_status": { "type": "string", "enum": ["comparable", "partially_comparable", "not_comparable"] },
+        "resolved_at": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "auditRunMeasurementResolvedSingleScan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "measurement_id",
+        "audit_run_id",
+        "measurement_point_id",
+        "status",
+        "snapshot_id",
+        "snapshot_digest",
+        "measurement_profile_id",
+        "measurement_profile_version_id",
+        "measurement_profile_digest",
+        "baseline_version_id",
+        "baseline_type",
+        "baseline_snapshot_id",
+        "baseline_snapshot_digest",
+        "baseline_record_digest",
+        "assurance_profile_version_id",
+        "assurance_profile_digest",
+        "comparability_status",
+        "resolved_at"
+      ],
+      "properties": {
+        "measurement_id": { "$ref": "#/$defs/auditRunMeasurementId" },
+        "audit_run_id": { "$ref": "#/$defs/auditRunId" },
+        "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
+        "status": { "type": "string", "const": "resolved" },
+        "source_recon_id": { "type": ["string", "null"] },
+        "snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "snapshot_digest": { "$ref": "#/$defs/digest64" },
+        "measurement_profile_id": { "$ref": "#/$defs/mprofileId" },
+        "measurement_profile_version_id": { "$ref": "#/$defs/mprofileVersionId" },
+        "measurement_profile_digest": { "$ref": "#/$defs/digest64" },
+        "baseline_version_id": { "$ref": "#/$defs/baselineVersionId" },
+        "baseline_type": { "type": "string", "const": "single_scan" },
         "baseline_snapshot_id": { "$ref": "#/$defs/snapshotId" },
         "baseline_snapshot_digest": { "$ref": "#/$defs/digest64" },
+        "baseline_record_digest": { "$ref": "#/$defs/digest64" },
         "assurance_profile_version_id": { "$ref": "#/$defs/assuranceVersionId" },
         "assurance_profile_digest": { "$ref": "#/$defs/digest64" },
         "comparability_status": { "type": "string", "enum": ["comparable", "partially_comparable", "not_comparable"] },
@@ -440,7 +486,8 @@
     "auditRunMeasurement": {
       "oneOf": [
         { "$ref": "#/$defs/auditRunMeasurementPending" },
-        { "$ref": "#/$defs/auditRunMeasurementResolved" },
+        { "$ref": "#/$defs/auditRunMeasurementResolvedConsensus" },
+        { "$ref": "#/$defs/auditRunMeasurementResolvedSingleScan" },
         { "$ref": "#/$defs/auditRunMeasurementCompletedConsensus" },
         { "$ref": "#/$defs/auditRunMeasurementCompletedSingleScan" },
         { "$ref": "#/$defs/auditRunMeasurementFailed" }

@@ -62,8 +62,8 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
         self.validate_def(pending, "auditRunMeasurementPending")
         self.validate_def(pending, "auditRunMeasurement")
 
-        # 2. Resolved variant
-        resolved = {
+        # 2a. Resolved Consensus variant
+        resolved_consensus = {
             "measurement_id": "arm_0123456789abcdef",
             "audit_run_id": "ar_0123456789abcdef",
             "measurement_point_id": "mp_a1b2c3d4e5f67890",
@@ -75,14 +75,40 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
             "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "baseline_version_id": "baseline_v0001",
             "baseline_type": "consensus",
+            "baseline_model_id": "bmodel_1122334455667788",
+            "baseline_model_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "assurance_profile_version_id": "assurance_v0001",
             "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "comparability_status": "comparable",
             "resolved_at": "2026-07-30T09:10:00Z",
         }
-        self.validate_def(resolved, "auditRunMeasurementResolved")
-        self.validate_def(resolved, "auditRunMeasurement")
+        self.validate_def(resolved_consensus, "auditRunMeasurementResolvedConsensus")
+        self.validate_def(resolved_consensus, "auditRunMeasurement")
+
+        # 2b. Resolved Single Scan variant
+        resolved_single_scan = {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "resolved",
+            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "measurement_profile_version_id": "mprofile_r0001",
+            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_version_id": "baseline_v0001",
+            "baseline_type": "single_scan",
+            "baseline_snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "baseline_snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "comparability_status": "comparable",
+            "resolved_at": "2026-07-30T09:10:00Z",
+        }
+        self.validate_def(resolved_single_scan, "auditRunMeasurementResolvedSingleScan")
+        self.validate_def(resolved_single_scan, "auditRunMeasurement")
 
         # 3. Completed Consensus variant
         consensus = {
@@ -168,7 +194,133 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
         with self.assertRaises(self.jsonschema.ValidationError):
             self.validate_def(bad_pending, "auditRunMeasurementPending")
 
-        # Negative 2: consensus measurement cannot contain single-scan fields
+        # Negative 2: resolved consensus rejects baseline_snapshot_id
+        resolved_consensus_bad_snap_id = {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "resolved",
+            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "measurement_profile_version_id": "mprofile_r0001",
+            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_version_id": "baseline_v0001",
+            "baseline_type": "consensus",
+            "baseline_model_id": "bmodel_1122334455667788",
+            "baseline_model_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "comparability_status": "comparable",
+            "resolved_at": "2026-07-30T09:10:00Z",
+        }
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(resolved_consensus_bad_snap_id, "auditRunMeasurementResolvedConsensus")
+
+        # Negative 3: resolved consensus rejects baseline_snapshot_digest
+        resolved_consensus_bad_snap_dig = {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "resolved",
+            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "measurement_profile_version_id": "mprofile_r0001",
+            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_version_id": "baseline_v0001",
+            "baseline_type": "consensus",
+            "baseline_model_id": "bmodel_1122334455667788",
+            "baseline_model_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "comparability_status": "comparable",
+            "resolved_at": "2026-07-30T09:10:00Z",
+        }
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(resolved_consensus_bad_snap_dig, "auditRunMeasurementResolvedConsensus")
+
+        # Negative 4: resolved single scan rejects baseline_model_id
+        resolved_single_bad_model_id = {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "resolved",
+            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "measurement_profile_version_id": "mprofile_r0001",
+            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_version_id": "baseline_v0001",
+            "baseline_type": "single_scan",
+            "baseline_snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "baseline_snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_model_id": "bmodel_1122334455667788",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "comparability_status": "comparable",
+            "resolved_at": "2026-07-30T09:10:00Z",
+        }
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(resolved_single_bad_model_id, "auditRunMeasurementResolvedSingleScan")
+
+        # Negative 5: resolved single scan rejects baseline_model_digest
+        resolved_single_bad_model_dig = {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "resolved",
+            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "measurement_profile_version_id": "mprofile_r0001",
+            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_version_id": "baseline_v0001",
+            "baseline_type": "single_scan",
+            "baseline_snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "baseline_snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_model_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "comparability_status": "comparable",
+            "resolved_at": "2026-07-30T09:10:00Z",
+        }
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(resolved_single_bad_model_dig, "auditRunMeasurementResolvedSingleScan")
+
+        # Negative 6: object containing both baseline variants is rejected by auditRunMeasurement union
+        both_variants = {
+            "measurement_id": "arm_0123456789abcdef",
+            "audit_run_id": "ar_0123456789abcdef",
+            "measurement_point_id": "mp_a1b2c3d4e5f67890",
+            "status": "resolved",
+            "snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
+            "measurement_profile_version_id": "mprofile_r0001",
+            "measurement_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_version_id": "baseline_v0001",
+            "baseline_type": "consensus",
+            "baseline_model_id": "bmodel_1122334455667788",
+            "baseline_model_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_snapshot_id": "snapshot_a1b2c3d4e5f67890",
+            "baseline_snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "baseline_record_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "assurance_profile_version_id": "assurance_v0001",
+            "assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "comparability_status": "comparable",
+            "resolved_at": "2026-07-30T09:10:00Z",
+        }
+        with self.assertRaises(self.jsonschema.ValidationError):
+            self.validate_def(both_variants, "auditRunMeasurement")
+
+        # Negative 7: consensus measurement cannot contain single-scan fields
         bad_consensus = {
             "measurement_id": "arm_0123456789abcdef",
             "audit_run_id": "ar_0123456789abcdef",
@@ -197,7 +349,7 @@ class RepeatableAuditsSchemaTests(unittest.TestCase):
         with self.assertRaises(self.jsonschema.ValidationError):
             self.validate_def(bad_consensus, "auditRunMeasurementCompletedConsensus")
 
-        # Negative 3: arbitrary unknown fields are rejected
+        # Negative 8: arbitrary unknown fields are rejected
         with_unknown = {
             "measurement_id": "arm_0123456789abcdef",
             "audit_run_id": "ar_0123456789abcdef",

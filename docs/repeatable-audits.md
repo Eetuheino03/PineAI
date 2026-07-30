@@ -75,9 +75,16 @@ PineAI MUST NOT contain or expose:
 ### 4.3 AuditRunMeasurement State Machine (v0.7.0)
 ```text
 pending ──(resolve_audit_measurement)──► resolved ──(save_comparison)──► completed
-   ▲                                         │
-   └─────────(retry_audit_measurement)───────┴──► failed
+   ▲                                        ▲    │
+   │   failed_stage=resolution              │    │
+   └──────(retry_audit_measurement)─────────┤    └──(failure)──► failed
+                                            │                      │
+                                            │ failed_stage=comp.   │
+                                            └─(retry_measurement)──┘
 ```
+* **Deterministic Retry Paths**:
+  * `failed_stage == "resolution"`: `retry_audit_measurement` transitions `failed` → `pending` (resets snapshot resolution & clears error fields).
+  * `failed_stage == "comparison"`: `retry_audit_measurement` transitions `failed` → `resolved` (retains snapshot and contract pins, resets comparison & clears error fields).
 * **Comparability** (`comparable`, `partially_comparable`, `not_comparable`) is stored as a separate result field. A `not_comparable` result stores diagnostic comparison details without generating findings.
 
 ---

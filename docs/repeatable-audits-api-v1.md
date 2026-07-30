@@ -61,6 +61,12 @@ All list actions use offset pagination:
 * Response fields: `total` (int), `limit` (int), `offset` (int), `has_more` (bool).
 * Invalid offset or negative values raise `invalid_page_token`.
 
+### 1.6 Privacy Profile Contract Evolution
+* **v0.7.0 AuditRun Reports**: Use privacy profiles `internal_full`, `share_safe`, and `pseudonymized`.
+* **Intentional Successor**: `internal_full` is the explicit AuditRun-report successor to legacy v0.6.3 `local_full`.
+* **Backward Compatibility**: Existing v0.6.3 comparison and assessment reports remain unchanged and continue accepting `local_full` and `share_safe`.
+* **Non-Interchangeable Scopes**: `internal_full` and `local_full` are bound to their respective schema versions and must not be treated as interchangeable outside their report schemas. No automatic rewriting of stored report facts or historical request parameters occurs.
+
 ---
 
 ## 2. Complete Module Action Contracts (v0.7.0)
