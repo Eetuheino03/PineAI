@@ -639,6 +639,7 @@ never echoed. Runtime band allowlists are not used by `0.6.3`.
 ## v0.7.0 Repeatable Field Audits Module Actions (Contract Frozen)
 
 PineAI v0.7.0 introduces multi-point audit run orchestration actions. Full JSON Schemas and action specifications are provided in `docs/repeatable-audits-api-v1.md` and `docs/schemas/repeatable-audits-v1.schema.json`.
+Corrective contract amendments define: response envelopes requiring authoritative revisions (`assessment_revision` and `audit_run.revision`) and observational `assessment_capacity`, 3 discriminated failed measurement branches, 100 evidence IDs limit per measurement, dynamic event closure reserve, and explicit 128 MB RAM hardware constraints.
 
 ### Action List Summary
 * **`create_measurement_point`**: Defines a new MeasurementPoint in an Assessment (`status: "active"`).

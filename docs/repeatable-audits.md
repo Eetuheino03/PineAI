@@ -54,13 +54,13 @@ PineAI MUST NOT contain or expose:
 
 ---
 
-## 4. State Machines
+## 4. State Machines & Failure Semantics
 
 ### 4.1 MeasurementPoint State Machine
 ```text
 (created) ──► active ──(archive_measurement_point)──► archived
 ```
-* Archived points remain readable but cannot be added to new AuditRuns.
+* Active MeasurementPoints count $< 64$. Archived points remain readable but do not count toward the active 64-point limit.
 
 ### 4.2 AuditRun State Machine (v0.7.0)
 ```text
@@ -69,27 +69,43 @@ PineAI MUST NOT contain or expose:
                          └──────(cancel_audit_run)──────┴──► cancelled
 ```
 * `ready_to_start` is a derived API response field (`true` when `measurement_point_ids` non-empty and AssuranceProfile valid). It is **not** written to disk files.
-* `complete_audit_run` in v0.7.0 requires **all** required measurements to be in `completed` status. (Skip and partial completion deferred to v0.7.1).
+* `complete_audit_run` in v0.7.0 requires **all** required measurements to be in `completed` status.
 * Terminal runs (`completed`, `cancelled`) are sealed and immutable.
 
-### 4.3 AuditRunMeasurement State Machine (v0.7.0)
+### 4.3 AuditRunMeasurement State Machine & Discriminated Failed Branches (v0.7.0)
 ```text
 pending ──(resolve_audit_measurement)──► resolved ──(save_comparison)──► completed
    ▲                                        ▲    │
-   │   failed_stage=resolution              │    │
-   └──────(retry_audit_measurement)─────────┤    └──(failure)──► failed
-                                            │                      │
-                                            │ failed_stage=comp.   │
-                                            └─(retry_measurement)──┘
+   │   failed_stage=resolution              │    │ (failed_stage=comparison)
+   └──────(retry_audit_measurement)─────────┴────┴──► failed
 ```
+* **Discriminated Failed Branches**:
+  1. `auditRunMeasurementFailedResolution`: Failed during resolution. `retry_target: "pending"`. Prohibits snapshot, baseline, and comparison fields.
+  2. `auditRunMeasurementFailedComparisonConsensus`: Failed during comparison against consensus baseline. `retry_target: "resolved"`. Retains snapshot and consensus baseline pins.
+  3. `auditRunMeasurementFailedComparisonSingleScan`: Failed during comparison against single-scan baseline. `retry_target: "resolved"`. Retains snapshot and single-scan baseline pins.
 * **Deterministic Retry Paths**:
   * `failed_stage == "resolution"`: `retry_audit_measurement` transitions `failed` → `pending` (resets snapshot resolution & clears error fields).
   * `failed_stage == "comparison"`: `retry_audit_measurement` transitions `failed` → `resolved` (retains snapshot and contract pins, resets comparison & clears error fields).
-* **Comparability** (`comparable`, `partially_comparable`, `not_comparable`) is stored as a separate result field. A `not_comparable` result stores diagnostic comparison details without generating findings.
 
 ---
 
-## 5. Storage Layout & Backup Integration
+## 5. Capacity Bounds & Hardware Constraints (WiFi Pineapple Mark VII)
+
+* **Hardware Target**: 128 MB RAM, MIPS single-core CPU, slow SPI/SD storage.
+* **Shared Assessment Pools**:
+  * `MAX_SNAPSHOTS = 100`, `MAX_COMPARISONS = 100`, `MAX_OCCURRENCES = 100`.
+  * `MAX_ACTIVE_MEASUREMENT_POINTS = 64` (archived points do not count toward the active 64-point limit).
+  * `MAX_TOTAL_MEASUREMENT_POINT_RECORDS = 90` (all active and archived records count toward the 90 total-record limit; creation fails with `storage_limit_exceeded` if either the 90 total-record limit or `MAX_MEASUREMENT_POINTS_DOCUMENT_BYTES = 512 * 1024` (512 KB) limit is reached; 90 maximum-sized valid records fit under 512 KB with at least 20% headroom).
+  * `MAX_AUDIT_RUNS_PER_ASSESSMENT = 128` (max 64 points per run).
+  * `MAX_EVIDENCE_IDS_PER_AUDIT_MEASUREMENT = 100`.
+* **Dynamic Closure Reserve**:
+  * $\text{closure\_reserve} = \text{number of AuditRuns in draft or in\_progress}$.
+  * Non-terminal mutations require: $\text{last\_event\_sequence} + 1 + \text{projected\_closure\_reserve} \le 5000$.
+  * Terminal mutations (`cancel_audit_run`, `complete_audit_run`) consume 1 event slot and decrease `closure_reserve` by 1.
+
+---
+
+## 6. Storage Layout & Transaction Recovery
 
 All v0.7.0 audit run records are stored strictly under the assessment runtime directory:
 
@@ -102,11 +118,15 @@ All v0.7.0 audit run records are stored strictly under the assessment runtime di
 ```
 
 * **Permissions**: Directory `0700` (`drwx------`), files `0600` (`-rw-------`).
-* **Zero Backup Production Code Changes**: The existing `backup.py` implementation recursively includes all subdirectories under `/root/.PineAI/assessments/`. Storing `audit_runs/` and `measurement_points.json` under assessment directories requires **zero changes to production backup code**.
+* **Zero Backup Production Code Changes**: `backup.py` recursively includes all subdirectories under `assessments/`.
+* **Transaction Recovery Requirements**:
+  * Standardized fault hook stages: `staged`, `prepared`, `target_written`, `committed`, `before_cleanup`, `cleanup_failed`.
+  * An abandoned pre-prepare transaction directory missing `journal.json` is safely removed during startup recovery without error.
+  * A malformed `journal.json` raises `transaction_recovery_failed`.
 
 ---
 
-## 6. Formal Hardware Validation Gate
+## 7. Formal Hardware Validation Gate
 
 > [!NOTE]
 > **Hardware Validation Status**: Automated unit testing (140 Python, 26 Angular), static analysis, and local-adapter correctness gates are complete for commit `1e77e18670c49c0fca3ecb809fbc08b0f6235222` (`v0.6.3`). Physical WiFi Pineapple Mark VII validation remains explicitly **pending**.
