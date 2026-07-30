@@ -130,7 +130,7 @@ class PrivateTransaction:
             self.directory / "journal.json", _canonical_bytes(journal)
         )
         self._fault("prepared", -1)
-        self._roll_forward(self.root, self.directory)
+        self._roll_forward(self.root, self.directory, fault_injector=self.fault_injector)
         return {
             "transaction_id": self.transaction_id,
             "document_count": len(manifest_entries),
@@ -160,16 +160,32 @@ class PrivateTransaction:
         return journal
 
     @classmethod
-    def _roll_forward(cls, root: Path, directory: Path) -> None:
+    def _roll_forward(
+        cls,
+        root: Path,
+        directory: Path,
+        fault_injector: Optional[Callable[[str, int], None]] = None,
+    ) -> None:
+        def _trigger(stage: str, index: int) -> None:
+            if fault_injector is not None:
+                fault_injector(stage, index)
+
         journal = cls._read_journal(directory)
-        for entry in journal["entries"]:
+        for index, entry in enumerate(journal["entries"]):
             if not isinstance(entry, dict):
                 raise BackendError(
                     "transaction_recovery_failed",
                     "a storage transaction entry is invalid",
                 )
-            relative = _safe_relative_path(str(entry.get("target", "")))
-            staged_relative = _safe_relative_path(str(entry.get("staged", "")))
+            try:
+                relative = _safe_relative_path(str(entry.get("target", "")))
+                staged_relative = _safe_relative_path(str(entry.get("staged", "")))
+            except BackendError as error:
+                raise BackendError(
+                    "transaction_recovery_failed",
+                    "a storage transaction target path is invalid",
+                ) from error
+
             target = root / relative
             staged = directory / staged_relative
             expected = entry.get("sha256")
@@ -186,6 +202,7 @@ class PrivateTransaction:
                 except OSError:
                     target_matches = False
             if target_matches:
+                _trigger("target_written", index)
                 continue
             if not staged.exists():
                 raise BackendError(
@@ -206,17 +223,19 @@ class PrivateTransaction:
                 )
             _private_directory(target.parent)
             write_private_file(target, payload)
+            _trigger("target_written", index)
 
         write_private_file(directory / "COMMITTED", b"committed\n")
+        _trigger("committed", -1)
+        _trigger("before_cleanup", -1)
         try:
             shutil.rmtree(str(directory))
         except OSError:
-            # A committed marker makes cleanup retryable and harmless.
-            pass
+            _trigger("cleanup_failed", -1)
 
 
 def recover_private_transactions(root: Path) -> List[str]:
-    """Roll forward every prepared transaction and remove committed journals."""
+    """Roll forward every prepared transaction and remove committed or abandoned journals."""
     transactions = root / ".transactions"
     if not transactions.exists():
         return []
@@ -225,6 +244,13 @@ def recover_private_transactions(root: Path) -> List[str]:
         if not directory.is_dir():
             continue
         if (directory / "COMMITTED").exists():
+            try:
+                shutil.rmtree(str(directory))
+            except OSError:
+                pass
+            continue
+        if not (directory / "journal.json").exists():
+            # Abandoned pre-prepare transaction without journal or committed marker
             try:
                 shutil.rmtree(str(directory))
             except OSError:
