@@ -1,0 +1,306 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Eetuheino03/PineAI/repeatable-audits-v1.schema.json",
+  "title": "PineAI Repeatable Field Audits contracts (v0.7.0)",
+  "description": "Public v0.7.0 JSON Schema contracts for MeasurementPoints, AuditRuns, and AuditRunMeasurements.",
+  "type": "object",
+  "anyOf": [
+    { "$ref": "#/$defs/measurementPoint" },
+    { "$ref": "#/$defs/auditRun" },
+    { "$ref": "#/$defs/auditRunMeasurement" },
+    { "$ref": "#/$defs/createMeasurementPointRequest" },
+    { "$ref": "#/$defs/createAuditRunRequest" }
+  ],
+  "$defs": {
+    "digest64": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Exactly 64 lowercase hexadecimal characters representing a SHA-256 digest without prefix."
+    },
+    "assessmentId": {
+      "type": "string",
+      "pattern": "^assessment_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "measurementPointId": {
+      "type": "string",
+      "pattern": "^mp_[0-9a-f]{16}$"
+    },
+    "auditRunId": {
+      "type": "string",
+      "pattern": "^ar_[0-9a-f]{16}$"
+    },
+    "auditRunMeasurementId": {
+      "type": "string",
+      "pattern": "^arm_[0-9a-f]{16}$"
+    },
+    "snapshotId": {
+      "type": "string",
+      "pattern": "^snapshot_[0-9a-f]{16}$"
+    },
+    "baselineVersionId": {
+      "type": "string",
+      "pattern": "^baseline_v[0-9]{4}$"
+    },
+    "baselineModelId": {
+      "type": "string",
+      "pattern": "^bmodel_[0-9a-f]{16}$"
+    },
+    "comparisonId": {
+      "type": "string",
+      "pattern": "^comparison_[0-9a-f]{16}$"
+    },
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^evidence_[0-9a-f]{12}$"
+    },
+    "occurrenceSetId": {
+      "type": "string",
+      "pattern": "^occurrence_[0-9a-f]{16}$"
+    },
+    "mprofileId": {
+      "type": "string",
+      "pattern": "^mprofile_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "mprofileVersionId": {
+      "type": "string",
+      "pattern": "^mprofile_r[0-9]{4}$"
+    },
+    "assuranceVersionId": {
+      "type": "string",
+      "pattern": "^assurance_v[0-9]{4}$"
+    },
+
+    "expectedMeasurementContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "location_id",
+        "measurement_point_id",
+        "scan_profile_id",
+        "radio_profile_id",
+        "interface",
+        "declared_bands",
+        "declared_channels",
+        "scan_time"
+      ],
+      "properties": {
+        "location_id": { "type": "string", "minLength": 1 },
+        "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
+        "scan_profile_id": { "type": "string", "minLength": 1 },
+        "radio_profile_id": { "type": "string", "minLength": 1 },
+        "interface": { "type": "string", "minLength": 1 },
+        "declared_bands": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["2.4", "5"] },
+          "minItems": 1
+        },
+        "declared_channels": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 196 },
+          "minItems": 1
+        },
+        "scan_time": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 3600
+        }
+      }
+    },
+
+    "measurementPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "measurement_point_id",
+        "assessment_id",
+        "name",
+        "expected_measurement_context",
+        "status",
+        "created_at",
+        "revision"
+      ],
+      "properties": {
+        "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "description": { "type": ["string", "null"], "maxLength": 512 },
+        "expected_measurement_context": { "$ref": "#/$defs/expectedMeasurementContext" },
+        "status": { "type": "string", "enum": ["active", "archived"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "archived_at": { "type": ["string", "null"], "format": "date-time" },
+        "revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "auditRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "audit_run_id",
+        "assessment_id",
+        "title",
+        "status",
+        "created_at",
+        "pinned_assurance_profile_version_id",
+        "pinned_assurance_profile_digest",
+        "measurement_point_ids",
+        "revision"
+      ],
+      "properties": {
+        "audit_run_id": { "$ref": "#/$defs/auditRunId" },
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "status": { "type": "string", "enum": ["draft", "in_progress", "completed", "cancelled"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "started_at": { "type": ["string", "null"], "format": "date-time" },
+        "completed_at": { "type": ["string", "null"], "format": "date-time" },
+        "archived_at": { "type": ["string", "null"], "format": "date-time" },
+        "due_at": { "type": ["string", "null"], "format": "date-time" },
+        "pinned_assurance_profile_version_id": { "$ref": "#/$defs/assuranceVersionId" },
+        "pinned_assurance_profile_digest": { "$ref": "#/$defs/digest64" },
+        "measurement_point_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/measurementPointId" },
+          "minItems": 1
+        },
+        "revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "auditRunMeasurementBase": {
+      "type": "object",
+      "required": [
+        "measurement_id",
+        "audit_run_id",
+        "measurement_point_id",
+        "status",
+        "snapshot_id",
+        "snapshot_digest",
+        "measurement_profile_id",
+        "measurement_profile_version_id",
+        "measurement_profile_digest",
+        "baseline_version_id",
+        "baseline_type",
+        "baseline_record_digest",
+        "assurance_profile_version_id",
+        "assurance_profile_digest",
+        "comparability_status",
+        "comparison_id",
+        "occurrence_set_id",
+        "evidence_ids",
+        "completed_at"
+      ],
+      "properties": {
+        "measurement_id": { "$ref": "#/$defs/auditRunMeasurementId" },
+        "audit_run_id": { "$ref": "#/$defs/auditRunId" },
+        "measurement_point_id": { "$ref": "#/$defs/measurementPointId" },
+        "status": { "type": "string", "enum": ["pending", "resolved", "completed", "failed"] },
+        "source_recon_id": { "type": ["string", "null"] },
+        "snapshot_id": { "$ref": "#/$defs/snapshotId" },
+        "snapshot_digest": { "$ref": "#/$defs/digest64" },
+        "measurement_profile_id": { "$ref": "#/$defs/mprofileId" },
+        "measurement_profile_version_id": { "$ref": "#/$defs/mprofileVersionId" },
+        "measurement_profile_digest": { "$ref": "#/$defs/digest64" },
+        "baseline_version_id": { "$ref": "#/$defs/baselineVersionId" },
+        "baseline_record_digest": { "$ref": "#/$defs/digest64" },
+        "assurance_profile_version_id": { "$ref": "#/$defs/assuranceVersionId" },
+        "assurance_profile_digest": { "$ref": "#/$defs/digest64" },
+        "comparability_status": { "type": "string", "enum": ["comparable", "partially_comparable", "not_comparable"] },
+        "comparison_id": { "$ref": "#/$defs/comparisonId" },
+        "occurrence_set_id": { "$ref": "#/$defs/occurrenceSetId" },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidenceId" }
+        },
+        "completed_at": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "auditRunMeasurementConsensus": {
+      "allOf": [
+        { "$ref": "#/$defs/auditRunMeasurementBase" },
+        {
+          "type": "object",
+          "required": [
+            "baseline_type",
+            "baseline_model_id",
+            "baseline_model_digest"
+          ],
+          "properties": {
+            "baseline_type": { "type": "string", "const": "consensus" },
+            "baseline_model_id": { "$ref": "#/$defs/baselineModelId" },
+            "baseline_model_digest": { "$ref": "#/$defs/digest64" }
+          }
+        }
+      ]
+    },
+
+    "auditRunMeasurementSingleScan": {
+      "allOf": [
+        { "$ref": "#/$defs/auditRunMeasurementBase" },
+        {
+          "type": "object",
+          "required": [
+            "baseline_type",
+            "baseline_snapshot_id",
+            "baseline_snapshot_digest"
+          ],
+          "properties": {
+            "baseline_type": { "type": "string", "const": "single_scan" },
+            "baseline_snapshot_id": { "$ref": "#/$defs/snapshotId" },
+            "baseline_snapshot_digest": { "$ref": "#/$defs/digest64" }
+          }
+        }
+      ]
+    },
+
+    "auditRunMeasurement": {
+      "oneOf": [
+        { "$ref": "#/$defs/auditRunMeasurementConsensus" },
+        { "$ref": "#/$defs/auditRunMeasurementSingleScan" }
+      ]
+    },
+
+    "createMeasurementPointRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_id",
+        "name",
+        "expected_measurement_context",
+        "expected_assessment_revision"
+      ],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "description": { "type": "string", "maxLength": 512 },
+        "expected_measurement_context": { "$ref": "#/$defs/expectedMeasurementContext" },
+        "expected_assessment_revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "createAuditRunRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_id",
+        "title",
+        "pinned_assurance_profile_version_id",
+        "measurement_point_ids",
+        "expected_assessment_revision"
+      ],
+      "properties": {
+        "assessment_id": { "$ref": "#/$defs/assessmentId" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "due_at": { "type": "string", "format": "date-time" },
+        "pinned_assurance_profile_version_id": { "$ref": "#/$defs/assuranceVersionId" },
+        "measurement_point_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/measurementPointId" },
+          "minItems": 1
+        },
+        "expected_assessment_revision": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

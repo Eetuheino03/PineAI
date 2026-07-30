@@ -636,6 +636,27 @@ For Baseline & Drift, editable settings are:
 The API key is accepted only in the request body, stored in a `0600` file, and
 never echoed. Runtime band allowlists are not used by `0.6.3`.
 
+## v0.7.0 Repeatable Field Audits Module Actions (Contract Frozen)
+
+PineAI v0.7.0 introduces multi-point audit run orchestration actions. Full JSON Schemas and action specifications are provided in `docs/repeatable-audits-api-v1.md` and `docs/schemas/repeatable-audits-v1.schema.json`.
+
+### Action List Summary
+* **`create_measurement_point`**: Defines a new MeasurementPoint in an Assessment (`status: "active"`).
+* **`list_measurement_points`**: Returns paginated list of MeasurementPoints.
+* **`get_measurement_point`**: Retrieves single MeasurementPoint details.
+* **`update_measurement_point`**: Updates point metadata or expected context.
+* **`archive_measurement_point`**: Archives a MeasurementPoint (`status: "archived"`).
+* **`create_audit_run`**: Initializes a multi-point AuditRun (`status: "draft"`).
+* **`list_audit_runs`**: Returns paginated list of AuditRuns.
+* **`get_audit_run`**: Retrieves AuditRun details and per-point measurement status.
+* **`start_audit_run`**: Validates readiness atomically and transitions `draft` → `in_progress`.
+* **`cancel_audit_run`**: Cancels an in-progress AuditRun (`status: "cancelled"`).
+* **`resolve_audit_measurement`**: Resolves raw Recon JSON in memory to an immutable snapshot (`snapshot_<16 hex>`). Raw Recon is never persisted.
+* **`retry_audit_measurement`**: Resets a `failed` measurement to allow re-running resolution or comparison.
+* **`save_audit_measurement_comparison`**: Executes baseline comparison for a point, pins contract digests, and saves occurrence set (`occurrence_set_id`).
+* **`complete_audit_run`**: Seals an AuditRun (`status: "completed"`).
+* **`generate_audit_run_report`**: Exports deterministic JSON (`AUDIT_RUN_REPORT_SCHEMA_VERSION = "1.0"`) or script-free HTML. Strictly read-only.
+
 ## Error codes
 
 Clients must branch on `code`, not message text.
