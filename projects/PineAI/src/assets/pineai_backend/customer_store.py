@@ -18,6 +18,7 @@ from .assessment_store import (
     FINDING_CORE_FIELDS,
     MAX_BASELINE_VERSIONS,
     MAX_COMPARISONS,
+    MAX_EVENTS,
     MAX_FINDINGS,
     MAX_SNAPSHOTS,
     AssessmentStore,
@@ -274,6 +275,8 @@ class CustomerAuditStore(AssessmentStore):
         event_type: str,
         data: Optional[Dict[str, Any]],
     ):
+        if metadata.get("last_event_sequence", 0) >= MAX_EVENTS:
+            raise BackendError("event_limit", "event capacity limit exceeded")
         now = _utc_now()
         metadata["revision"] += 1
         metadata["updated_at"] = now

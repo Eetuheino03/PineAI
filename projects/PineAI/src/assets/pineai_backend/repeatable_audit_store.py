@@ -5,6 +5,7 @@ persistence, optimistic concurrency, dynamic closure reserves, and recoverable s
 """
 
 import json
+import os
 import re
 import uuid
 from pathlib import Path
@@ -35,6 +36,7 @@ REPEATABLE_AUDITS_SCHEMA_VERSION = "1.0"
 MEASUREMENT_POINT_ID_PATTERN = re.compile(r"^mp_[0-9a-f]{16}$")
 AUDIT_RUN_ID_PATTERN = re.compile(r"^ar_[0-9a-f]{16}$")
 AUDIT_MEASUREMENT_ID_PATTERN = re.compile(r"^arm_[0-9a-f]{16}$")
+ASSURANCE_VERSION_ID_PATTERN = re.compile(r"^assurance_v[0-9]{4}$")
 
 MAX_ACTIVE_MEASUREMENT_POINTS = 64
 MAX_TOTAL_MEASUREMENT_POINT_RECORDS = 90
@@ -56,6 +58,322 @@ def _generate_ar_id() -> str:
 
 def _generate_arm_id() -> str:
     return "arm_{0}".format(uuid.uuid4().hex[:16])
+
+
+def _sanitize_audit_run(audit_run: Dict[str, Any]) -> Dict[str, Any]:
+    """Return public auditRun object adhering strictly to #/$defs/auditRun."""
+    allowed = {
+        "audit_run_id",
+        "assessment_id",
+        "title",
+        "status",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "due_at",
+        "pinned_assurance_profile_version_id",
+        "pinned_assurance_profile_digest",
+        "measurement_point_ids",
+        "revision",
+    }
+    res = {}
+    for k in allowed:
+        if k in audit_run:
+            res[k] = audit_run[k]
+        elif k in ("started_at", "completed_at", "due_at"):
+            res[k] = None
+    return res
+
+
+def _compute_ready_to_start(audit_run: Dict[str, Any]) -> bool:
+    """Compute derived ready_to_start status. Never persisted on disk."""
+    if audit_run.get("status") != "draft":
+        return False
+    mp_ids = audit_run.get("measurement_point_ids")
+    if not isinstance(mp_ids, list) or len(mp_ids) == 0:
+        return False
+    assurance_version = audit_run.get("pinned_assurance_profile_version_id")
+    assurance_digest = audit_run.get("pinned_assurance_profile_digest")
+    if not assurance_version or not assurance_digest:
+        return False
+    return True
+
+
+RESOLVED_PINNED_FIELDS = {
+    "snapshot_id",
+    "snapshot_digest",
+    "measurement_profile_id",
+    "measurement_profile_version_id",
+    "measurement_profile_digest",
+    "baseline_version_id",
+    "baseline_type",
+    "baseline_model_id",
+    "baseline_model_digest",
+    "baseline_snapshot_id",
+    "baseline_snapshot_digest",
+    "baseline_record_digest",
+    "assurance_profile_version_id",
+    "assurance_profile_digest",
+    "comparability_status",
+    "resolved_at",
+}
+
+COMPLETED_FIELDS = {
+    "comparison_id",
+    "comparison_digest",
+    "occurrence_set_id",
+    "evidence_ids",
+    "completed_at",
+}
+
+FAILURE_FIELDS = {
+    "failed_stage",
+    "retry_target",
+    "error_code",
+    "error_message",
+    "failed_at",
+}
+
+CONSENSUS_FIELDS = {
+    "baseline_model_id",
+    "baseline_model_digest",
+}
+
+SINGLE_SCAN_FIELDS = {
+    "baseline_snapshot_id",
+    "baseline_snapshot_digest",
+}
+
+
+def _sanitize_measurement(m: Dict[str, Any]) -> Dict[str, Any]:
+    """Sanitize measurement dict to conform strictly to matching branch schema."""
+    m_copy = dict(m)
+    if "audit_measurement_id" in m_copy and "measurement_id" not in m_copy:
+        m_copy["measurement_id"] = m_copy.pop("audit_measurement_id")
+    else:
+        m_copy.pop("audit_measurement_id", None)
+
+    m_copy.pop("assessment_id", None)
+    m_copy.pop("expected_measurement_context", None)
+
+    status = m_copy.get("status")
+    failed_stage = m_copy.get("failed_stage")
+    baseline_type = m_copy.get("baseline_type")
+
+    if status == "pending":
+        allowed = {"measurement_id", "audit_run_id", "measurement_point_id", "status", "created_at"}
+    elif status == "resolved":
+        if baseline_type == "consensus":
+            allowed = {
+                "measurement_id", "audit_run_id", "measurement_point_id", "status",
+                "source_recon_id", "snapshot_id", "snapshot_digest",
+                "measurement_profile_id", "measurement_profile_version_id", "measurement_profile_digest",
+                "baseline_version_id", "baseline_type", "baseline_model_id", "baseline_model_digest",
+                "baseline_record_digest", "assurance_profile_version_id", "assurance_profile_digest",
+                "comparability_status", "resolved_at",
+            }
+        else:
+            allowed = {
+                "measurement_id", "audit_run_id", "measurement_point_id", "status",
+                "source_recon_id", "snapshot_id", "snapshot_digest",
+                "measurement_profile_id", "measurement_profile_version_id", "measurement_profile_digest",
+                "baseline_version_id", "baseline_type", "baseline_snapshot_id", "baseline_snapshot_digest",
+                "baseline_record_digest", "assurance_profile_version_id", "assurance_profile_digest",
+                "comparability_status", "resolved_at",
+            }
+    elif status == "completed":
+        if baseline_type == "consensus":
+            allowed = {
+                "measurement_id", "audit_run_id", "measurement_point_id", "status",
+                "source_recon_id", "snapshot_id", "snapshot_digest",
+                "measurement_profile_id", "measurement_profile_version_id", "measurement_profile_digest",
+                "baseline_version_id", "baseline_type", "baseline_model_id", "baseline_model_digest",
+                "baseline_record_digest", "assurance_profile_version_id", "assurance_profile_digest",
+                "comparability_status", "comparison_id", "comparison_digest",
+                "occurrence_set_id", "evidence_ids", "completed_at",
+            }
+        else:
+            allowed = {
+                "measurement_id", "audit_run_id", "measurement_point_id", "status",
+                "source_recon_id", "snapshot_id", "snapshot_digest",
+                "measurement_profile_id", "measurement_profile_version_id", "measurement_profile_digest",
+                "baseline_version_id", "baseline_type", "baseline_snapshot_id", "baseline_snapshot_digest",
+                "baseline_record_digest", "assurance_profile_version_id", "assurance_profile_digest",
+                "comparability_status", "comparison_id", "comparison_digest",
+                "occurrence_set_id", "evidence_ids", "completed_at",
+            }
+    elif status == "failed":
+        if failed_stage == "resolution":
+            allowed = {
+                "measurement_id", "audit_run_id", "measurement_point_id", "status",
+                "failed_stage", "error_code", "error_message", "failed_at", "retry_target",
+            }
+        elif failed_stage == "comparison":
+            if baseline_type == "consensus":
+                allowed = {
+                    "measurement_id", "audit_run_id", "measurement_point_id", "status",
+                    "failed_stage", "retry_target", "source_recon_id", "snapshot_id", "snapshot_digest",
+                    "measurement_profile_id", "measurement_profile_version_id", "measurement_profile_digest",
+                    "baseline_version_id", "baseline_type", "baseline_model_id", "baseline_model_digest",
+                    "baseline_record_digest", "assurance_profile_version_id", "assurance_profile_digest",
+                    "comparability_status", "resolved_at", "error_code", "error_message", "failed_at",
+                }
+            else:
+                allowed = {
+                    "measurement_id", "audit_run_id", "measurement_point_id", "status",
+                    "failed_stage", "retry_target", "source_recon_id", "snapshot_id", "snapshot_digest",
+                    "measurement_profile_id", "measurement_profile_version_id", "measurement_profile_digest",
+                    "baseline_version_id", "baseline_type", "baseline_snapshot_id", "baseline_snapshot_digest",
+                    "baseline_record_digest", "assurance_profile_version_id", "assurance_profile_digest",
+                    "comparability_status", "resolved_at", "error_code", "error_message", "failed_at",
+                }
+        else:
+            allowed = set(m_copy.keys())
+    else:
+        allowed = set(m_copy.keys())
+
+    return {k: v for k, v in m_copy.items() if k in allowed and (v is not None or k == "source_recon_id")}
+
+
+def _validate_audit_run_measurement(m: Dict[str, Any]) -> None:
+    """Validate measurement fields strictly against the 8 variant schemas."""
+    status = m.get("status")
+    mid = m.get("measurement_id") or m.get("audit_measurement_id")
+    if not mid or not AUDIT_MEASUREMENT_ID_PATTERN.match(mid):
+        raise BackendError("invalid_audit_run_measurement", "invalid measurement_id format")
+
+    if status == "pending":
+        if set(m) & (RESOLVED_PINNED_FIELDS | COMPLETED_FIELDS | FAILURE_FIELDS):
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "pending measurement cannot contain resolution, completed, or failure fields",
+            )
+    elif status == "resolved":
+        if set(m) & (COMPLETED_FIELDS | FAILURE_FIELDS):
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "resolved measurement cannot contain completed or failure fields",
+            )
+        btype = m.get("baseline_type")
+        if btype == "consensus":
+            if set(m) & SINGLE_SCAN_FIELDS:
+                raise BackendError(
+                    "invalid_audit_run_measurement",
+                    "consensus branch cannot contain single scan fields",
+                )
+            if not CONSENSUS_FIELDS.issubset(set(m)):
+                raise BackendError(
+                    "invalid_audit_run_measurement",
+                    "consensus branch missing required baseline model fields",
+                )
+        elif btype == "single_scan":
+            if set(m) & CONSENSUS_FIELDS:
+                raise BackendError(
+                    "invalid_audit_run_measurement",
+                    "single scan branch cannot contain consensus fields",
+                )
+            if not SINGLE_SCAN_FIELDS.issubset(set(m)):
+                raise BackendError(
+                    "invalid_audit_run_measurement",
+                    "single scan branch missing required baseline snapshot fields",
+                )
+        else:
+            raise BackendError("invalid_audit_run_measurement", "invalid baseline_type")
+    elif status == "completed":
+        if set(m) & FAILURE_FIELDS:
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "completed measurement cannot contain failure fields",
+            )
+        if not COMPLETED_FIELDS.issubset(set(m)):
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "completed measurement missing required comparison result fields",
+            )
+        btype = m.get("baseline_type")
+        if btype == "consensus":
+            if set(m) & SINGLE_SCAN_FIELDS:
+                raise BackendError(
+                    "invalid_audit_run_measurement",
+                    "consensus branch cannot contain single scan fields",
+                )
+            if not CONSENSUS_FIELDS.issubset(set(m)):
+                raise BackendError(
+                    "invalid_audit_run_measurement",
+                    "consensus branch missing required baseline model fields",
+                )
+        elif btype == "single_scan":
+            if set(m) & CONSENSUS_FIELDS:
+                raise BackendError(
+                    "invalid_audit_run_measurement",
+                    "single scan branch cannot contain consensus fields",
+                )
+            if not SINGLE_SCAN_FIELDS.issubset(set(m)):
+                raise BackendError(
+                    "invalid_audit_run_measurement",
+                    "single scan branch missing required baseline snapshot fields",
+                )
+        else:
+            raise BackendError("invalid_audit_run_measurement", "invalid baseline_type")
+    elif status == "failed":
+        if set(m) & COMPLETED_FIELDS:
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "failed measurement cannot contain completed fields",
+            )
+        if not FAILURE_FIELDS.issubset(set(m)):
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "failed measurement missing required error fields",
+            )
+        fstage = m.get("failed_stage")
+        rtarget = m.get("retry_target")
+        if fstage == "resolution":
+            if rtarget != "pending":
+                raise BackendError(
+                    "invalid_audit_run_transition",
+                    "resolution failure must have retry_target pending",
+                )
+            if set(m) & RESOLVED_PINNED_FIELDS:
+                raise BackendError(
+                    "invalid_audit_run_measurement",
+                    "failed resolution measurement cannot contain resolution fields",
+                )
+        elif fstage == "comparison":
+            if rtarget != "resolved":
+                raise BackendError(
+                    "invalid_audit_run_transition",
+                    "comparison failure must have retry_target resolved",
+                )
+            btype = m.get("baseline_type")
+            if btype == "consensus":
+                if set(m) & SINGLE_SCAN_FIELDS:
+                    raise BackendError(
+                        "invalid_audit_run_measurement",
+                        "consensus branch cannot contain single scan fields",
+                    )
+                if not CONSENSUS_FIELDS.issubset(set(m)):
+                    raise BackendError(
+                        "invalid_audit_run_measurement",
+                        "consensus branch missing required baseline model fields",
+                    )
+            elif btype == "single_scan":
+                if set(m) & CONSENSUS_FIELDS:
+                    raise BackendError(
+                        "invalid_audit_run_measurement",
+                        "single scan branch cannot contain consensus fields",
+                    )
+                if not SINGLE_SCAN_FIELDS.issubset(set(m)):
+                    raise BackendError(
+                        "invalid_audit_run_measurement",
+                        "single scan branch missing required baseline snapshot fields",
+                    )
+            else:
+                raise BackendError("invalid_audit_run_measurement", "invalid baseline_type")
+        else:
+            raise BackendError("invalid_audit_run_transition", "unknown failed_stage")
+    else:
+        raise BackendError("invalid_audit_run_measurement", "unknown status")
 
 
 def _validate_expected_measurement_context(
@@ -142,17 +460,43 @@ class RepeatableAuditStore(CustomerAuditStore):
         recover_private_transactions(base)
         return base
 
+    def _validate_audit_run_size(self, audit_run: Dict[str, Any]) -> bytes:
+        run_bytes = json.dumps(audit_run, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
+        if len(run_bytes) > MAX_AUDIT_RUN_DOCUMENT_BYTES:
+            raise BackendError("storage_limit_exceeded", "audit run document size exceeded limit")
+        return run_bytes
+
     def _get_assessment_capacity_unlocked(self, assessment_id: str) -> Dict[str, Any]:
         base = self._ensure_assessment_directories(assessment_id)
-        snapshots = len(list((base / "snapshots").glob("*.json"))) if (base / "snapshots").exists() else 0
-        comparisons = len(list((base / "comparisons").glob("*.json"))) if (base / "comparisons").exists() else 0
-        events = self._read_events(assessment_id)
-        event_used = len(events)
 
-        runs = self._list_audit_runs_unlocked(assessment_id)
-        closure_reserve = sum(
-            1 for run in runs if run.get("status") in ("draft", "in_progress")
-        )
+        snapshots = 0
+        snap_dir = base / "snapshots"
+        if snap_dir.exists():
+            with os.scandir(str(snap_dir)) as it:
+                snapshots = sum(1 for entry in it if entry.name.endswith(".json"))
+
+        comparisons = 0
+        comp_dir = base / "comparisons"
+        if comp_dir.exists():
+            with os.scandir(str(comp_dir)) as it:
+                comparisons = sum(1 for entry in it if entry.name.endswith(".json"))
+
+        metadata = self._read_metadata(assessment_id)
+        event_used = metadata.get("last_event_sequence", 0)
+
+        runs_dir = base / "audit_runs"
+        closure_reserve = 0
+        if runs_dir.exists():
+            with os.scandir(str(runs_dir)) as it:
+                for entry in it:
+                    if entry.name.startswith("ar_") and entry.name.endswith(".json"):
+                        try:
+                            with open(entry.path, "r", encoding="utf-8") as f:
+                                content = f.read(512)
+                                if '"status": "draft"' in content or '"status": "in_progress"' in content:
+                                    closure_reserve += 1
+                        except OSError:
+                            pass
 
         snapshot_limit = MAX_SNAPSHOTS
         comparison_limit = MAX_COMPARISONS
@@ -216,10 +560,24 @@ class RepeatableAuditStore(CustomerAuditStore):
         return list(points)
 
     def list_measurement_points(
-        self, assessment_id: str, include_archived: bool = False
-    ) -> List[Dict[str, Any]]:
+        self, assessment_id: str, include_archived: bool = False, limit: int = 50, offset: int = 0
+    ) -> Dict[str, Any]:
+        if limit < 1 or limit > 100 or offset < 0:
+            raise BackendError("invalid_page_token", "invalid pagination parameters")
         with self._lock(assessment_id):
-            return self._list_measurement_points_unlocked(assessment_id, include_archived=include_archived)
+            all_pts = self._list_measurement_points_unlocked(assessment_id, include_archived=include_archived)
+            sorted_pts = sorted(all_pts, key=lambda p: (p.get("created_at", ""), p.get("measurement_point_id", "")))
+            sorted_pts.sort(key=lambda p: p.get("created_at", ""), reverse=True)
+            total = len(sorted_pts)
+            paginated = sorted_pts[offset:offset + limit]
+            return {
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
+                "measurement_points": paginated,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + len(paginated) < total,
+            }
 
     def _get_measurement_point_unlocked(
         self, assessment_id: str, measurement_point_id: str
@@ -236,7 +594,11 @@ class RepeatableAuditStore(CustomerAuditStore):
         self, assessment_id: str, measurement_point_id: str
     ) -> Dict[str, Any]:
         with self._lock(assessment_id):
-            return self._get_measurement_point_unlocked(assessment_id, measurement_point_id)
+            mp = self._get_measurement_point_unlocked(assessment_id, measurement_point_id)
+            return {
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
+                "measurement_point": mp,
+            }
 
     def create_measurement_point(
         self,
@@ -274,15 +636,16 @@ class RepeatableAuditStore(CustomerAuditStore):
                 "assessment_id": assessment_id,
                 "name": clean_name,
                 "description": clean_desc if clean_desc else None,
-                "expected_measurement_context": validated_context,
                 "status": "active",
                 "created_at": _utc_now(),
                 "archived_at": None,
                 "revision": 1,
+                "expected_measurement_context": validated_context,
             }
-            _ensure_no_raw_recon(new_point)
 
-            updated_points = list(existing_points) + [new_point]
+            updated_points = list(existing_points)
+            updated_points.append(new_point)
+
             new_doc = {
                 "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
                 "assessment_id": assessment_id,
@@ -290,32 +653,28 @@ class RepeatableAuditStore(CustomerAuditStore):
                 "measurement_points": updated_points,
             }
 
-            _canonical_digest(new_doc)  # verifies serializability
+            _canonical_digest(new_doc)
             doc_bytes = json.dumps(new_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
             if len(doc_bytes) > MAX_MEASUREMENT_POINTS_DOCUMENT_BYTES:
                 raise BackendError("storage_limit_exceeded", "measurement points document size exceeded limit")
 
-            base = self._ensure_assessment_directories(assessment_id)
-            event_payload = {
-                "measurement_point_id": mp_id,
-                "name": clean_name,
-                "status": "active",
-            }
             event_obj, events_bytes = self._transaction_event(
-                assessment_id, metadata, "measurement_point_created", event_payload
+                assessment_id,
+                metadata,
+                "measurement_point_created",
+                {"measurement_point": new_point},
             )
 
-            txn = PrivateTransaction(base)
+            base = self._ensure_assessment_directories(assessment_id)
+            txn = PrivateTransaction(base, fault_injector=self.fault_injector)
+            txn.add_bytes("measurement_points.json", doc_bytes)
             txn.add_json("assessment.json", metadata)
-            txn.add_json("measurement_points.json", new_doc)
             txn.add_bytes("events.jsonl", events_bytes)
             txn.commit()
 
             return {
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
                 "measurement_point": new_point,
-                "assessment_revision": metadata["revision"],
-                "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
-                "event": event_obj,
             }
 
     def update_measurement_point(
@@ -328,12 +687,12 @@ class RepeatableAuditStore(CustomerAuditStore):
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_measurement_point_revision)
-        if not isinstance(updates, dict):
-            raise BackendError("invalid_measurement_point", "updates must be an object")
+        if not isinstance(updates, dict) or not updates:
+            raise BackendError("invalid_measurement_point", "updates must be a non-empty object")
 
-        allowed_updates = {"name", "description", "expected_measurement_context"}
-        if set(updates) - allowed_updates:
-            raise BackendError("invalid_measurement_point", "unsupported update fields")
+        allowed_keys = {"name", "description", "expected_measurement_context"}
+        if set(updates) - allowed_keys:
+            raise BackendError("invalid_measurement_point", "updates contains unsupported fields")
 
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
@@ -343,18 +702,18 @@ class RepeatableAuditStore(CustomerAuditStore):
             doc = self._read_measurement_points_doc(assessment_id)
             points = doc.get("measurement_points", [])
 
-            target_index = -1
+            target_idx = -1
             target_mp = None
             for idx, p in enumerate(points):
                 if p.get("measurement_point_id") == measurement_point_id:
-                    target_index = idx
+                    target_idx = idx
                     target_mp = p
                     break
 
             if target_mp is None:
                 raise BackendError("measurement_point_not_found", "measurement point not found")
             if target_mp.get("status") == "archived":
-                raise BackendError("measurement_point_archived", "cannot update archived measurement point")
+                raise BackendError("measurement_point_archived", "archived measurement point cannot be updated")
             if target_mp.get("revision") != expected_measurement_point_revision:
                 raise BackendError("revision_conflict", "measurement point revision has changed")
 
@@ -362,18 +721,20 @@ class RepeatableAuditStore(CustomerAuditStore):
             if "name" in updates:
                 updated_mp["name"] = _clean_text(updates["name"], "name", 128, required=True)
             if "description" in updates:
-                desc = updates["description"]
-                updated_mp["description"] = _clean_text(desc, "description", 512, required=False) if desc is not None else None
+                updated_mp["description"] = (
+                    _clean_text(updates["description"], "description", 512, required=False)
+                    if updates["description"] is not None
+                    else None
+                )
             if "expected_measurement_context" in updates:
                 updated_mp["expected_measurement_context"] = _validate_expected_measurement_context(
                     updates["expected_measurement_context"], measurement_point_id=measurement_point_id
                 )
 
             updated_mp["revision"] += 1
-            _ensure_no_raw_recon(updated_mp)
 
             updated_points = list(points)
-            updated_points[target_index] = updated_mp
+            updated_points[target_idx] = updated_mp
 
             new_doc = {
                 "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
@@ -386,27 +747,23 @@ class RepeatableAuditStore(CustomerAuditStore):
             if len(doc_bytes) > MAX_MEASUREMENT_POINTS_DOCUMENT_BYTES:
                 raise BackendError("storage_limit_exceeded", "measurement points document size exceeded limit")
 
-            base = self._ensure_assessment_directories(assessment_id)
-            event_payload = {
-                "measurement_point_id": measurement_point_id,
-                "name": updated_mp["name"],
-                "status": updated_mp["status"],
-            }
             event_obj, events_bytes = self._transaction_event(
-                assessment_id, metadata, "measurement_point_updated", event_payload
+                assessment_id,
+                metadata,
+                "measurement_point_updated",
+                {"measurement_point": updated_mp},
             )
 
-            txn = PrivateTransaction(base)
+            base = self._ensure_assessment_directories(assessment_id)
+            txn = PrivateTransaction(base, fault_injector=self.fault_injector)
+            txn.add_bytes("measurement_points.json", doc_bytes)
             txn.add_json("assessment.json", metadata)
-            txn.add_json("measurement_points.json", new_doc)
             txn.add_bytes("events.jsonl", events_bytes)
             txn.commit()
 
             return {
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
                 "measurement_point": updated_mp,
-                "assessment_revision": metadata["revision"],
-                "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
-                "event": event_obj,
             }
 
     def archive_measurement_point(
@@ -427,11 +784,11 @@ class RepeatableAuditStore(CustomerAuditStore):
             doc = self._read_measurement_points_doc(assessment_id)
             points = doc.get("measurement_points", [])
 
-            target_index = -1
+            target_idx = -1
             target_mp = None
             for idx, p in enumerate(points):
                 if p.get("measurement_point_id") == measurement_point_id:
-                    target_index = idx
+                    target_idx = idx
                     target_mp = p
                     break
 
@@ -448,7 +805,7 @@ class RepeatableAuditStore(CustomerAuditStore):
             updated_mp["revision"] += 1
 
             updated_points = list(points)
-            updated_points[target_index] = updated_mp
+            updated_points[target_idx] = updated_mp
 
             new_doc = {
                 "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
@@ -457,27 +814,27 @@ class RepeatableAuditStore(CustomerAuditStore):
                 "measurement_points": updated_points,
             }
 
-            base = self._ensure_assessment_directories(assessment_id)
-            event_payload = {
-                "measurement_point_id": measurement_point_id,
-                "name": updated_mp["name"],
-                "status": "archived",
-            }
+            doc_bytes = json.dumps(new_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
+            if len(doc_bytes) > MAX_MEASUREMENT_POINTS_DOCUMENT_BYTES:
+                raise BackendError("storage_limit_exceeded", "measurement points document size exceeded limit")
+
             event_obj, events_bytes = self._transaction_event(
-                assessment_id, metadata, "measurement_point_archived", event_payload
+                assessment_id,
+                metadata,
+                "measurement_point_archived",
+                {"measurement_point": updated_mp},
             )
 
-            txn = PrivateTransaction(base)
+            base = self._ensure_assessment_directories(assessment_id)
+            txn = PrivateTransaction(base, fault_injector=self.fault_injector)
+            txn.add_bytes("measurement_points.json", doc_bytes)
             txn.add_json("assessment.json", metadata)
-            txn.add_json("measurement_points.json", new_doc)
             txn.add_bytes("events.jsonl", events_bytes)
             txn.commit()
 
             return {
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
                 "measurement_point": updated_mp,
-                "assessment_revision": metadata["revision"],
-                "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
-                "event": event_obj,
             }
 
     # -------------------------------------------------------------------------
@@ -496,9 +853,31 @@ class RepeatableAuditStore(CustomerAuditStore):
                 results.append(_json_clone(run, "invalid_audit_run", "audit_run"))
         return results
 
-    def list_audit_runs(self, assessment_id: str) -> List[Dict[str, Any]]:
+    def list_audit_runs(self, assessment_id: str, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        if limit < 1 or limit > 100 or offset < 0:
+            raise BackendError("invalid_page_token", "invalid pagination parameters")
         with self._lock(assessment_id):
-            return self._list_audit_runs_unlocked(assessment_id)
+            all_runs = self._list_audit_runs_unlocked(assessment_id)
+            sorted_runs = sorted(all_runs, key=lambda r: (r.get("created_at", ""), r.get("audit_run_id", "")))
+            sorted_runs.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+            total = len(sorted_runs)
+            paginated = sorted_runs[offset:offset + limit]
+            items = [
+                {
+                    "audit_run": _sanitize_audit_run(run),
+                    "ready_to_start": _compute_ready_to_start(run),
+                }
+                for run in paginated
+            ]
+            return {
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
+                "audit_runs": items,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + len(items) < total,
+                "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
+            }
 
     def _get_audit_run_unlocked(self, assessment_id: str, audit_run_id: str) -> Dict[str, Any]:
         if not AUDIT_RUN_ID_PATTERN.match(audit_run_id):
@@ -512,25 +891,34 @@ class RepeatableAuditStore(CustomerAuditStore):
 
     def get_audit_run(self, assessment_id: str, audit_run_id: str) -> Dict[str, Any]:
         with self._lock(assessment_id):
-            return self._get_audit_run_unlocked(assessment_id, audit_run_id)
+            run_doc = self._get_audit_run_unlocked(assessment_id, audit_run_id)
+            sanitized_measurements = [_sanitize_measurement(m) for m in run_doc.get("measurements", [])]
+            return {
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
+                "audit_run": _sanitize_audit_run(run_doc),
+                "ready_to_start": _compute_ready_to_start(run_doc),
+                "measurements": sanitized_measurements,
+                "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
+            }
 
     def create_audit_run(
         self,
         assessment_id: str,
         expected_assessment_revision: int,
         title: str,
+        pinned_assurance_profile_version_id: str,
         measurement_point_ids: List[str],
         due_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         clean_title = _clean_text(title, "title", 128, required=True)
+        if not pinned_assurance_profile_version_id or not isinstance(pinned_assurance_profile_version_id, str):
+            raise BackendError("profile_version_not_found", "pinned_assurance_profile_version_id is required")
         if not isinstance(measurement_point_ids, list) or len(measurement_point_ids) < 1 or len(measurement_point_ids) > MAX_MEASUREMENT_POINTS_PER_RUN:
             raise BackendError("invalid_audit_run", "measurement_point_ids must contain between 1 and 64 items")
+
         if len(set(measurement_point_ids)) != len(measurement_point_ids):
             raise BackendError("invalid_audit_run", "measurement_point_ids must contain unique items")
-        for mpid in measurement_point_ids:
-            if not MEASUREMENT_POINT_ID_PATTERN.match(mpid):
-                raise BackendError("invalid_audit_run", "invalid measurement_point_id in list")
 
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
@@ -539,18 +927,21 @@ class RepeatableAuditStore(CustomerAuditStore):
 
             existing_runs = self._list_audit_runs_unlocked(assessment_id)
             if len(existing_runs) >= MAX_AUDIT_RUNS_PER_ASSESSMENT:
-                raise BackendError("audit_run_limit_exceeded", "audit run limit reached")
+                raise BackendError("storage_limit_exceeded", "max audit runs per assessment reached")
 
             active_mps = {mp["measurement_point_id"]: mp for mp in self._list_measurement_points_unlocked(assessment_id, include_archived=False)}
-            for mpid in measurement_point_ids:
-                if mpid not in active_mps:
-                    raise BackendError("measurement_point_archived", "referenced measurement point {0} is archived or missing".format(mpid))
+            all_mps = {mp["measurement_point_id"]: mp for mp in self._list_measurement_points_unlocked(assessment_id, include_archived=True)}
 
-            assurance_version = metadata.get("active_assurance_profile_version")
-            if not assurance_version:
-                raise BackendError("invalid_audit_run", "assessment has no active assurance profile")
-            assurance_prof = self.get_assurance_profile_version(assessment_id, assurance_version)
+            for mpid in measurement_point_ids:
+                if mpid not in all_mps:
+                    raise BackendError("measurement_point_not_found", "measurement point {0} not found".format(mpid))
+                if mpid not in active_mps:
+                    raise BackendError("archived_measurement_point_not_allowed", "measurement point {0} is archived".format(mpid))
+
+            assurance_prof = self.get_assurance_profile_version(assessment_id, pinned_assurance_profile_version_id)
             assurance_digest = assurance_prof.get("digest")
+            if not assurance_digest:
+                raise BackendError("profile_version_not_found", "assurance profile digest missing")
 
             ar_id = _generate_ar_id()
             now = _utc_now()
@@ -560,9 +951,8 @@ class RepeatableAuditStore(CustomerAuditStore):
                 mp_obj = active_mps[mpid]
                 arm_id = _generate_arm_id()
                 measurements.append({
-                    "audit_measurement_id": arm_id,
+                    "measurement_id": arm_id,
                     "audit_run_id": ar_id,
-                    "assessment_id": assessment_id,
                     "measurement_point_id": mpid,
                     "status": "pending",
                     "created_at": now,
@@ -578,42 +968,37 @@ class RepeatableAuditStore(CustomerAuditStore):
                 "started_at": None,
                 "completed_at": None,
                 "due_at": due_at,
-                "pinned_assurance_profile_version_id": assurance_version,
+                "pinned_assurance_profile_version_id": pinned_assurance_profile_version_id,
                 "pinned_assurance_profile_digest": assurance_digest,
                 "measurement_point_ids": list(measurement_point_ids),
                 "measurements": measurements,
                 "revision": 1,
             }
-            _ensure_no_raw_recon(audit_run)
 
-            run_bytes = json.dumps(audit_run, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
-            if len(run_bytes) > MAX_AUDIT_RUN_DOCUMENT_BYTES:
-                raise BackendError("storage_limit_exceeded", "audit run document size exceeded limit")
+            run_bytes = self._validate_audit_run_size(audit_run)
 
-            base = self._ensure_assessment_directories(assessment_id)
-            event_payload = {
-                "audit_run_id": ar_id,
-                "title": clean_title,
-                "status": "draft",
-                "measurement_point_count": len(measurement_point_ids),
-            }
             event_obj, events_bytes = self._transaction_event(
-                assessment_id, metadata, "audit_run_created", event_payload
+                assessment_id,
+                metadata,
+                "audit_run_created",
+                {"audit_run": _sanitize_audit_run(audit_run)},
             )
 
-            txn = PrivateTransaction(base)
+            base = self._ensure_assessment_directories(assessment_id)
+            runs_dir = base / "audit_runs"
+            self._ensure_private_directory(runs_dir)
+
+            txn = PrivateTransaction(base, fault_injector=self.fault_injector)
+            txn.add_bytes(f"audit_runs/{ar_id}.json", run_bytes)
             txn.add_json("assessment.json", metadata)
-            txn.add_json("audit_runs/{0}.json".format(ar_id), audit_run)
             txn.add_bytes("events.jsonl", events_bytes)
             txn.commit()
 
-            res_run = _json_clone(audit_run, "invalid_audit_run", "audit_run")
-            res_run["ready_to_start"] = True
             return {
-                "audit_run": res_run,
-                "assessment_revision": metadata["revision"],
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
+                "audit_run": _sanitize_audit_run(audit_run),
+                "ready_to_start": _compute_ready_to_start(audit_run),
                 "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
-                "event": event_obj,
             }
 
     def start_audit_run(
@@ -633,9 +1018,9 @@ class RepeatableAuditStore(CustomerAuditStore):
 
             audit_run = self._get_audit_run_unlocked(assessment_id, audit_run_id)
             if audit_run.get("status") in ("completed", "cancelled"):
-                raise BackendError("audit_run_sealed", "cannot modify sealed audit run")
+                raise BackendError("audit_run_sealed", "cannot start sealed audit run")
             if audit_run.get("status") != "draft":
-                raise BackendError("invalid_audit_run_transition", "audit run is not in draft status")
+                raise BackendError("invalid_audit_run_transition", "audit run is already started")
             if audit_run.get("revision") != expected_audit_run_revision:
                 raise BackendError("revision_conflict", "audit run revision has changed")
 
@@ -644,28 +1029,25 @@ class RepeatableAuditStore(CustomerAuditStore):
             updated_run["started_at"] = _utc_now()
             updated_run["revision"] += 1
 
-            base = self._ensure_assessment_directories(assessment_id)
-            event_payload = {
-                "audit_run_id": audit_run_id,
-                "status": "in_progress",
-            }
+            run_bytes = self._validate_audit_run_size(updated_run)
+
             event_obj, events_bytes = self._transaction_event(
-                assessment_id, metadata, "audit_run_started", event_payload
+                assessment_id,
+                metadata,
+                "audit_run_started",
+                {"audit_run": _sanitize_audit_run(updated_run)},
             )
 
-            txn = PrivateTransaction(base)
+            base = self._ensure_assessment_directories(assessment_id)
+            txn = PrivateTransaction(base, fault_injector=self.fault_injector)
+            txn.add_bytes(f"audit_runs/{audit_run_id}.json", run_bytes)
             txn.add_json("assessment.json", metadata)
-            txn.add_json("audit_runs/{0}.json".format(audit_run_id), updated_run)
             txn.add_bytes("events.jsonl", events_bytes)
             txn.commit()
 
-            res_run = _json_clone(updated_run, "invalid_audit_run", "audit_run")
-            res_run["ready_to_start"] = False
             return {
-                "audit_run": res_run,
-                "assessment_revision": metadata["revision"],
-                "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
-                "event": event_obj,
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
+                "audit_run": _sanitize_audit_run(updated_run),
             }
 
     def cancel_audit_run(
@@ -693,28 +1075,25 @@ class RepeatableAuditStore(CustomerAuditStore):
             updated_run["completed_at"] = _utc_now()
             updated_run["revision"] += 1
 
-            base = self._ensure_assessment_directories(assessment_id)
-            event_payload = {
-                "audit_run_id": audit_run_id,
-                "status": "cancelled",
-            }
+            run_bytes = self._validate_audit_run_size(updated_run)
+
             event_obj, events_bytes = self._transaction_event(
-                assessment_id, metadata, "audit_run_cancelled", event_payload
+                assessment_id,
+                metadata,
+                "audit_run_cancelled",
+                {"audit_run": _sanitize_audit_run(updated_run)},
             )
 
-            txn = PrivateTransaction(base)
+            base = self._ensure_assessment_directories(assessment_id)
+            txn = PrivateTransaction(base, fault_injector=self.fault_injector)
+            txn.add_bytes(f"audit_runs/{audit_run_id}.json", run_bytes)
             txn.add_json("assessment.json", metadata)
-            txn.add_json("audit_runs/{0}.json".format(audit_run_id), updated_run)
             txn.add_bytes("events.jsonl", events_bytes)
             txn.commit()
 
-            res_run = _json_clone(updated_run, "invalid_audit_run", "audit_run")
-            res_run["ready_to_start"] = False
             return {
-                "audit_run": res_run,
-                "assessment_revision": metadata["revision"],
-                "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
-                "event": event_obj,
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
+                "audit_run": _sanitize_audit_run(updated_run),
             }
 
     def complete_audit_run(
@@ -733,48 +1112,45 @@ class RepeatableAuditStore(CustomerAuditStore):
 
             audit_run = self._get_audit_run_unlocked(assessment_id, audit_run_id)
             if audit_run.get("status") in ("completed", "cancelled"):
-                raise BackendError("audit_run_sealed", "cannot complete sealed audit run")
+                raise BackendError("audit_run_sealed", "audit run is already sealed")
             if audit_run.get("status") != "in_progress":
                 raise BackendError("invalid_audit_run_transition", "audit run must be in_progress to complete")
             if audit_run.get("revision") != expected_audit_run_revision:
                 raise BackendError("revision_conflict", "audit run revision has changed")
 
             measurements = audit_run.get("measurements", [])
-            incomplete = [m for m in measurements if m.get("status") not in ("completed", "failed")]
+            incomplete = [m for m in measurements if m.get("status") != "completed"]
             if incomplete:
-                raise BackendError("audit_run_incomplete", "all measurements must be completed or failed before closing run")
+                raise BackendError("invalid_audit_run_transition", "all measurements must be completed before completing audit run")
 
             updated_run = _json_clone(audit_run, "invalid_audit_run", "audit_run")
             updated_run["status"] = "completed"
             updated_run["completed_at"] = _utc_now()
             updated_run["revision"] += 1
 
-            base = self._ensure_assessment_directories(assessment_id)
-            event_payload = {
-                "audit_run_id": audit_run_id,
-                "status": "completed",
-            }
+            run_bytes = self._validate_audit_run_size(updated_run)
+
             event_obj, events_bytes = self._transaction_event(
-                assessment_id, metadata, "audit_run_completed", event_payload
+                assessment_id,
+                metadata,
+                "audit_run_completed",
+                {"audit_run": _sanitize_audit_run(updated_run)},
             )
 
-            txn = PrivateTransaction(base)
+            base = self._ensure_assessment_directories(assessment_id)
+            txn = PrivateTransaction(base, fault_injector=self.fault_injector)
+            txn.add_bytes(f"audit_runs/{audit_run_id}.json", run_bytes)
             txn.add_json("assessment.json", metadata)
-            txn.add_json("audit_runs/{0}.json".format(audit_run_id), updated_run)
             txn.add_bytes("events.jsonl", events_bytes)
             txn.commit()
 
-            res_run = _json_clone(updated_run, "invalid_audit_run", "audit_run")
-            res_run["ready_to_start"] = False
             return {
-                "audit_run": res_run,
-                "assessment_revision": metadata["revision"],
-                "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
-                "event": event_obj,
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
+                "audit_run": _sanitize_audit_run(updated_run),
             }
 
     # -------------------------------------------------------------------------
-    # AuditRunMeasurement Persistence Primitives
+    # AuditRunMeasurement Operations
     # -------------------------------------------------------------------------
 
     def resolve_audit_measurement(
@@ -814,19 +1190,27 @@ class RepeatableAuditStore(CustomerAuditStore):
 
             if target_m is None:
                 raise BackendError("measurement_point_not_found", "measurement point not in audit run")
-            if target_m.get("status") not in ("pending", "failed"):
+            if target_m.get("status") != "pending":
                 raise BackendError("invalid_audit_run_transition", "cannot resolve measurement in status {0}".format(target_m.get("status")))
 
             status = outcome.get("status")
             if status not in ("resolved", "failed"):
                 raise BackendError("invalid_audit_run_measurement", "resolve outcome status must be resolved or failed")
 
+            snapshot_id = outcome.get("snapshot_id")
+            if snapshot_id:
+                snap_path = self._ensure_assessment_directories(assessment_id) / "snapshots" / f"{snapshot_id}.json"
+                if not snap_path.exists():
+                    raise BackendError("snapshot_not_found", "referenced snapshot missing")
+
             updated_m = _json_clone(target_m, "invalid_audit_run_measurement", "measurement")
             updated_m.update(_json_clone(outcome, "invalid_audit_run_measurement", "outcome"))
-            updated_m["audit_measurement_id"] = target_m["audit_measurement_id"]
+            mid = target_m.get("measurement_id") or target_m.get("audit_measurement_id")
+            updated_m["measurement_id"] = mid
             updated_m["audit_run_id"] = audit_run_id
-            updated_m["assessment_id"] = assessment_id
             updated_m["measurement_point_id"] = measurement_point_id
+
+            _validate_audit_run_measurement(updated_m)
 
             updated_measurements = list(measurements)
             updated_measurements[target_idx] = updated_m
@@ -835,31 +1219,30 @@ class RepeatableAuditStore(CustomerAuditStore):
             updated_run["measurements"] = updated_measurements
             updated_run["revision"] += 1
 
-            base = self._ensure_assessment_directories(assessment_id)
-            event_payload = {
-                "audit_run_id": audit_run_id,
-                "measurement_point_id": measurement_point_id,
-                "audit_measurement_id": target_m["audit_measurement_id"],
-                "status": status,
-            }
+            run_bytes = self._validate_audit_run_size(updated_run)
+
+            sanitized_m = _sanitize_measurement(updated_m)
+
             event_obj, events_bytes = self._transaction_event(
-                assessment_id, metadata, "audit_measurement_resolved", event_payload
+                assessment_id,
+                metadata,
+                "audit_measurement_resolved",
+                {"measurement": sanitized_m},
             )
 
-            txn = PrivateTransaction(base)
+            base = self._ensure_assessment_directories(assessment_id)
+            txn = PrivateTransaction(base, fault_injector=self.fault_injector)
+            txn.add_bytes(f"audit_runs/{audit_run_id}.json", run_bytes)
             txn.add_json("assessment.json", metadata)
-            txn.add_json("audit_runs/{0}.json".format(audit_run_id), updated_run)
             txn.add_bytes("events.jsonl", events_bytes)
             txn.commit()
 
-            res_run = _json_clone(updated_run, "invalid_audit_run", "audit_run")
-            res_run["ready_to_start"] = False
             return {
-                "audit_run": res_run,
-                "measurement": updated_m,
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
                 "assessment_revision": metadata["revision"],
                 "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
-                "event": event_obj,
+                "audit_run": _sanitize_audit_run(updated_run),
+                "measurement": sanitized_m,
             }
 
     def retry_audit_measurement(
@@ -869,11 +1252,12 @@ class RepeatableAuditStore(CustomerAuditStore):
         audit_run_id: str,
         expected_audit_run_revision: int,
         measurement_point_id: str,
-        outcome: Dict[str, Any],
+        outcome: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_audit_run_revision)
-        _ensure_no_raw_recon(outcome)
+        if outcome is not None:
+            _ensure_no_raw_recon(outcome)
 
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
@@ -914,15 +1298,45 @@ class RepeatableAuditStore(CustomerAuditStore):
             else:
                 raise BackendError("invalid_audit_run_transition", "unknown failed_stage for measurement")
 
+            if outcome is not None and isinstance(outcome, dict):
+                provided_status = outcome.get("status")
+                if provided_status is not None and provided_status != expected_retry_target:
+                    raise BackendError(
+                        "invalid_audit_run_transition",
+                        "retry outcome status does not match retry target",
+                    )
+                if failed_stage == "comparison":
+                    for pin in RESOLVED_PINNED_FIELDS:
+                        if pin in outcome and outcome[pin] != target_m.get(pin):
+                            raise BackendError(
+                                "invalid_audit_run_measurement",
+                                "cannot replace immutable pinned fields during retry",
+                            )
+
             updated_m = _json_clone(target_m, "invalid_audit_run_measurement", "measurement")
             for k in ("error_code", "error_message", "failed_stage", "retry_target", "failed_at"):
                 updated_m.pop(k, None)
 
-            updated_m.update(_json_clone(outcome, "invalid_audit_run_measurement", "outcome"))
-            updated_m["audit_measurement_id"] = target_m["audit_measurement_id"]
+            if failed_stage == "resolution":
+                updated_m["status"] = "pending"
+                for pin in RESOLVED_PINNED_FIELDS:
+                    updated_m.pop(pin, None)
+                for comp in COMPLETED_FIELDS:
+                    updated_m.pop(comp, None)
+            elif failed_stage == "comparison":
+                updated_m["status"] = "resolved"
+                for comp in COMPLETED_FIELDS:
+                    updated_m.pop(comp, None)
+
+            if outcome is not None and isinstance(outcome, dict):
+                updated_m.update(_json_clone(outcome, "invalid_audit_run_measurement", "outcome"))
+
+            mid = target_m.get("measurement_id") or target_m.get("audit_measurement_id")
+            updated_m["measurement_id"] = mid
             updated_m["audit_run_id"] = audit_run_id
-            updated_m["assessment_id"] = assessment_id
             updated_m["measurement_point_id"] = measurement_point_id
+
+            _validate_audit_run_measurement(updated_m)
 
             updated_measurements = list(measurements)
             updated_measurements[target_idx] = updated_m
@@ -931,31 +1345,30 @@ class RepeatableAuditStore(CustomerAuditStore):
             updated_run["measurements"] = updated_measurements
             updated_run["revision"] += 1
 
-            base = self._ensure_assessment_directories(assessment_id)
-            event_payload = {
-                "audit_run_id": audit_run_id,
-                "measurement_point_id": measurement_point_id,
-                "audit_measurement_id": target_m["audit_measurement_id"],
-                "status": updated_m.get("status"),
-            }
+            run_bytes = self._validate_audit_run_size(updated_run)
+
+            sanitized_m = _sanitize_measurement(updated_m)
+
             event_obj, events_bytes = self._transaction_event(
-                assessment_id, metadata, "audit_measurement_retried", event_payload
+                assessment_id,
+                metadata,
+                "audit_measurement_retried",
+                {"measurement": sanitized_m},
             )
 
-            txn = PrivateTransaction(base)
+            base = self._ensure_assessment_directories(assessment_id)
+            txn = PrivateTransaction(base, fault_injector=self.fault_injector)
+            txn.add_bytes(f"audit_runs/{audit_run_id}.json", run_bytes)
             txn.add_json("assessment.json", metadata)
-            txn.add_json("audit_runs/{0}.json".format(audit_run_id), updated_run)
             txn.add_bytes("events.jsonl", events_bytes)
             txn.commit()
 
-            res_run = _json_clone(updated_run, "invalid_audit_run", "audit_run")
-            res_run["ready_to_start"] = False
             return {
-                "audit_run": res_run,
-                "measurement": updated_m,
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
                 "assessment_revision": metadata["revision"],
                 "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
-                "event": event_obj,
+                "audit_run": _sanitize_audit_run(updated_run),
+                "measurement": sanitized_m,
             }
 
     def save_audit_measurement_comparison(
@@ -975,6 +1388,8 @@ class RepeatableAuditStore(CustomerAuditStore):
         if evidence_ids is not None:
             if not isinstance(evidence_ids, list) or len(evidence_ids) > MAX_EVIDENCE_IDS_PER_AUDIT_MEASUREMENT:
                 raise BackendError("invalid_audit_run_measurement", "evidence_ids cannot exceed 100 items")
+            if len(set(evidence_ids)) != len(evidence_ids):
+                raise BackendError("invalid_audit_run_measurement", "evidence_ids must contain unique items")
 
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
@@ -1007,12 +1422,44 @@ class RepeatableAuditStore(CustomerAuditStore):
             if status not in ("completed", "failed"):
                 raise BackendError("invalid_audit_run_measurement", "comparison outcome status must be completed or failed")
 
+            for pin in RESOLVED_PINNED_FIELDS:
+                if pin in outcome and outcome[pin] != target_m.get(pin):
+                    raise BackendError(
+                        "invalid_audit_run_measurement",
+                        "cannot replace immutable pinned fields during comparison",
+                    )
+
+            base = self._ensure_assessment_directories(assessment_id)
+            comp_id = outcome.get("comparison_id")
+            if comp_id:
+                comp_path = base / "comparisons" / f"{comp_id}.json"
+                if not comp_path.exists():
+                    raise BackendError("comparison_not_found", "referenced comparison missing")
+
+            occ_id = outcome.get("occurrence_set_id")
+            if occ_id:
+                occ_path = base / "occurrences" / f"{occ_id}.json"
+                if not occ_path.exists():
+                    raise BackendError("occurrence_set_not_found", "referenced occurrence set missing")
+
             updated_m = _json_clone(target_m, "invalid_audit_run_measurement", "measurement")
-            updated_m.update(_json_clone(outcome, "invalid_audit_run_measurement", "outcome"))
-            updated_m["audit_measurement_id"] = target_m["audit_measurement_id"]
+            if status == "completed":
+                updated_m.update(_json_clone(outcome, "invalid_audit_run_measurement", "outcome"))
+                for k in FAILURE_FIELDS:
+                    updated_m.pop(k, None)
+            elif status == "failed":
+                updated_m.update(_json_clone(outcome, "invalid_audit_run_measurement", "outcome"))
+                updated_m["failed_stage"] = "comparison"
+                updated_m["retry_target"] = "resolved"
+                for k in COMPLETED_FIELDS:
+                    updated_m.pop(k, None)
+
+            mid = target_m.get("measurement_id") or target_m.get("audit_measurement_id")
+            updated_m["measurement_id"] = mid
             updated_m["audit_run_id"] = audit_run_id
-            updated_m["assessment_id"] = assessment_id
             updated_m["measurement_point_id"] = measurement_point_id
+
+            _validate_audit_run_measurement(updated_m)
 
             updated_measurements = list(measurements)
             updated_measurements[target_idx] = updated_m
@@ -1021,34 +1468,27 @@ class RepeatableAuditStore(CustomerAuditStore):
             updated_run["measurements"] = updated_measurements
             updated_run["revision"] += 1
 
-            base = self._ensure_assessment_directories(assessment_id)
-            event_payload = {
-                "audit_run_id": audit_run_id,
-                "measurement_point_id": measurement_point_id,
-                "audit_measurement_id": target_m["audit_measurement_id"],
-                "status": status,
-            }
+            run_bytes = self._validate_audit_run_size(updated_run)
+
+            sanitized_m = _sanitize_measurement(updated_m)
+
             event_obj, events_bytes = self._transaction_event(
-                assessment_id, metadata, "audit_measurement_comparison_saved", event_payload
+                assessment_id,
+                metadata,
+                "audit_measurement_comparison_saved",
+                {"measurement": sanitized_m},
             )
 
-            txn = PrivateTransaction(base)
+            txn = PrivateTransaction(base, fault_injector=self.fault_injector)
+            txn.add_bytes(f"audit_runs/{audit_run_id}.json", run_bytes)
             txn.add_json("assessment.json", metadata)
-            txn.add_json("audit_runs/{0}.json".format(audit_run_id), updated_run)
             txn.add_bytes("events.jsonl", events_bytes)
             txn.commit()
 
-            res_run = _json_clone(updated_run, "invalid_audit_run", "audit_run")
-            res_run["ready_to_start"] = False
             return {
-                "audit_run": res_run,
-                "measurement": updated_m,
+                "schema_version": REPEATABLE_AUDITS_SCHEMA_VERSION,
                 "assessment_revision": metadata["revision"],
                 "assessment_capacity": self._get_assessment_capacity_unlocked(assessment_id),
-                "event": event_obj,
+                "audit_run": _sanitize_audit_run(updated_run),
+                "measurement": sanitized_m,
             }
-
-
-def _canonical_bytes_single(value: Any) -> bytes:
-    import json
-    return json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8") + b"\n"
