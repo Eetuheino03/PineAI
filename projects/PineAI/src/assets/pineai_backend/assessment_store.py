@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import threading
 import time
 import uuid
@@ -586,46 +587,76 @@ class AssessmentStore:
         return base
 
     @contextmanager
-    def _lock(self, assessment_id: str):
-        self._ensure_assessment_directories(assessment_id)
-        _, _, _, _, lock_path = self._assessment_paths(assessment_id)
-        descriptor = None
-        deadline = time.monotonic() + 2.0
-        while descriptor is None:
+    def _exclusive_file_lock(self, lock_path: Path):
+        self._ensure_private_directory(lock_path.parent)
+        flags = os.O_CREAT | os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(str(lock_path), flags, 0o600)
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode) or lock_path.is_symlink():
+                raise OSError("lock path is not a regular file")
             try:
-                descriptor = os.open(
-                    str(lock_path),
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                    0o600,
-                )
-            except FileExistsError:
-                try:
-                    stale = time.time() - lock_path.stat().st_mtime > 30
-                except OSError:
-                    stale = False
-                if stale:
-                    try:
-                        lock_path.unlink()
-                    except OSError:
-                        pass
-                    continue
+                os.fchmod(descriptor, 0o600)
+            except OSError:
+                pass
+            if details.st_size == 0:
+                os.write(descriptor, b"\0")
+                os.fsync(descriptor)
+        except OSError as error:
+            if "descriptor" in locals():
+                os.close(descriptor)
+            raise BackendError(
+                "storage_busy", "assessment storage lock is unavailable"
+            ) from error
+
+        lock_backend = None
+        deadline = time.monotonic() + 2.0
+        while lock_backend is None:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                    lock_backend = ("msvcrt", msvcrt)
+                else:
+                    import fcntl
+
+                    fcntl.flock(
+                        descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB
+                    )
+                    lock_backend = ("fcntl", fcntl)
+            except (BlockingIOError, OSError):
                 if time.monotonic() >= deadline:
+                    os.close(descriptor)
                     raise BackendError(
                         "storage_busy", "assessment storage is busy"
                     )
                 time.sleep(0.05)
         try:
-            os.write(descriptor, str(os.getpid()).encode("ascii"))
-            os.close(descriptor)
-            descriptor = None
             yield
         finally:
-            if descriptor is not None:
-                os.close(descriptor)
             try:
-                lock_path.unlink()
-            except OSError:
-                pass
+                if lock_backend[0] == "msvcrt":
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    lock_backend[1].locking(
+                        descriptor, lock_backend[1].LK_UNLCK, 1
+                    )
+                else:
+                    lock_backend[1].flock(
+                        descriptor, lock_backend[1].LOCK_UN
+                    )
+            finally:
+                os.close(descriptor)
+
+    @contextmanager
+    def _lock(self, assessment_id: str):
+        self._ensure_assessment_directories(assessment_id)
+        _, _, _, _, lock_path = self._assessment_paths(assessment_id)
+        with self._exclusive_file_lock(lock_path):
+            yield
 
     def _read_json(
         self, path: Path, missing_code: str, missing_message: str

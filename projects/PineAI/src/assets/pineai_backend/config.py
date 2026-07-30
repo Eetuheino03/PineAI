@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import secrets
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -21,6 +22,9 @@ DEFAULTS = {
 }
 SUPPORTED_LANGUAGES = {"en", "fi"}
 MAX_SUPPORTED_BANDS = 8
+MAX_SETTINGS_BYTES = 256 * 1024
+MAX_API_KEY_BYTES = 2048
+MAX_IDENTITY_KEY_BYTES = 128
 
 
 class ConfigError(ValueError):
@@ -102,6 +106,22 @@ def _ensure_private_directory(path: Path) -> None:
         pass
 
 
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    descriptor = None
+    try:
+        descriptor = os.open(str(path), flags)
+        os.fsync(descriptor)
+    except OSError:
+        # Windows and some filesystems do not support directory fsync.
+        pass
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def _atomic_private_write(path: Path, data: bytes) -> None:
     _ensure_private_directory(path.parent)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -121,9 +141,47 @@ def _atomic_private_write(path: Path, data: bytes) -> None:
             os.chmod(str(path), 0o600)
         except OSError:
             pass
+        _fsync_directory(path.parent)
     finally:
         if os.path.exists(temporary_name):
             os.unlink(temporary_name)
+
+
+def _read_private_bytes(path: Path, maximum_bytes: int) -> bytes:
+    try:
+        details = path.lstat()
+    except OSError as error:
+        raise ConfigError("Could not read private PineAI file") from error
+    if (
+        stat.S_ISLNK(details.st_mode)
+        or not stat.S_ISREG(details.st_mode)
+        or details.st_size > maximum_bytes
+    ):
+        raise ConfigError("Private PineAI file path or size is invalid")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = None
+    try:
+        descriptor = os.open(str(path), flags)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_size != details.st_size
+            or getattr(opened, "st_ino", 0) != getattr(details, "st_ino", 0)
+        ):
+            raise ConfigError("Private PineAI file changed while reading")
+        data = os.read(descriptor, maximum_bytes + 1)
+        if len(data) != opened.st_size or len(data) > maximum_bytes:
+            raise ConfigError("Private PineAI file size is invalid")
+        return data
+    except ConfigError:
+        raise
+    except OSError as error:
+        raise ConfigError("Could not read private PineAI file") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def write_private_file(path: Path, data: bytes) -> None:
@@ -161,8 +219,10 @@ def load_settings(config_dir: Optional[str] = None) -> Dict[str, Any]:
     if not path.exists():
         return dict(DEFAULTS)
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+        raw = json.loads(
+            _read_private_bytes(path, MAX_SETTINGS_BYTES).decode("utf-8")
+        )
+    except (ConfigError, UnicodeError, ValueError) as error:
         raise ConfigError("Could not read PineAI configuration: {0}".format(error))
     if not isinstance(raw, dict):
         raise ConfigError("PineAI configuration must be a JSON object")
@@ -195,6 +255,7 @@ def delete_api_key(config_dir: Optional[str] = None) -> None:
     path = resolve_config_dir(config_dir) / "openai.key"
     try:
         path.unlink()
+        _fsync_directory(path.parent)
     except FileNotFoundError:
         return
     except OSError as error:
@@ -210,8 +271,10 @@ def load_api_key(config_dir: Optional[str] = None) -> Optional[str]:
     if not path.exists():
         return None
     try:
-        value = path.read_text(encoding="utf-8").strip()
-    except OSError as error:
+        value = _read_private_bytes(path, MAX_API_KEY_BYTES).decode(
+            "utf-8"
+        ).strip()
+    except (ConfigError, UnicodeError) as error:
         raise ConfigError("Could not read OpenAI API key: {0}".format(error))
     return value or None
 
@@ -235,8 +298,9 @@ def _identity_bound_data_exists(directory: Path) -> bool:
 
 def _read_pseudonymization_key(path: Path) -> bytes:
     try:
-        raw = base64.b64decode(path.read_bytes().strip(), validate=True)
-    except (OSError, ValueError) as error:
+        encoded = _read_private_bytes(path, MAX_IDENTITY_KEY_BYTES)
+        raw = base64.b64decode(encoded.strip(), validate=True)
+    except (ConfigError, ValueError) as error:
         raise IdentityKeyError(
             "identity_key_invalid",
             "PineAI identity key is invalid; restore the matching backup",
@@ -266,14 +330,43 @@ def ensure_pseudonymization_key(config_dir: Optional[str] = None) -> bytes:
         return _read_pseudonymization_key(path)
 
     if _identity_bound_data_exists(directory):
+        if path.exists():
+            return _read_pseudonymization_key(path)
         raise IdentityKeyError(
             "identity_key_missing",
             "PineAI identity key is missing; restore the matching backup",
         )
 
     raw = secrets.token_bytes(32)
-    _atomic_private_write(path, base64.b64encode(raw) + b"\n")
-    return raw
+    payload = base64.b64encode(raw) + b"\n"
+    _ensure_private_directory(directory)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".pseudonymization.key.", dir=str(directory)
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        _atomic_private_write(temporary, payload)
+        try:
+            os.link(str(temporary), str(path))
+            _fsync_directory(directory)
+        except FileExistsError:
+            pass
+        except OSError as error:
+            # Same-directory hard links are available on Mark VII and modern
+            # Windows. Failing closed avoids a racy overwrite fallback.
+            raise IdentityKeyError(
+                "identity_key_invalid",
+                "PineAI identity key could not be initialized safely",
+            ) from error
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+    return _read_pseudonymization_key(path)
 
 
 def public_identity_status(config_dir: Optional[str] = None) -> Dict[str, Any]:

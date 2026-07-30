@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 import jsonschema
@@ -11,12 +12,14 @@ ASSETS = ROOT / "projects" / "PineAI" / "src" / "assets"
 sys.path.insert(0, str(ASSETS))
 
 from pineai_backend.assessment_store import _canonical_digest  # noqa: E402
+from pineai_backend.assurance_service import AssuranceService  # noqa: E402
 from pineai_backend.backup import create_backup, restore_backup_staging  # noqa: E402
 from pineai_backend.config import ensure_pseudonymization_key  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
 from pineai_backend.repeatable_audit_store import RepeatableAuditStore  # noqa: E402
 
 SCHEMA_PATH = ROOT / "docs" / "schemas" / "repeatable-audits-v1.schema.json"
+RECON_FIXTURE_PATH = ROOT / "tests" / "fixtures" / "recon_basic.json"
 with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
     REPEATABLE_AUDITS_SCHEMA = json.load(f)
 
@@ -37,9 +40,9 @@ def sample_context():
         "scan_profile_id": "fast-scan",
         "radio_profile_id": "wlan1-mk7",
         "interface": "wlan1mon",
-        "declared_bands": ["2.4", "5"],
-        "declared_channels": [1, 6, 11, 36, 40],
-        "scan_time": 300,
+        "declared_bands": ["2.4"],
+        "declared_channels": [1, 6, 11],
+        "scan_time": 180,
     }
 
 
@@ -57,9 +60,74 @@ def sample_assurance_profile():
     }
 
 
-def make_valid_snapshot(snapshot_id="snapshot_0000000000000001", suffix="1"):
+def fixture_scan():
+    return json.loads(RECON_FIXTURE_PATH.read_text(encoding="utf-8"))
+
+
+def utc_now():
+    return (
+        datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def measurement_profile_input():
+    return {
+        "name": "Repeatable audit point",
+        "description": "Saved Recon test profile",
+        "location_id": "building-a",
+        "measurement_point_id": "point-a",
+        "scan_profile_id": "fast-scan",
+        "radio_profile_id": "wlan1-mk7",
+        "interface": "wlan1mon",
+        "declared_bands": ["2.4"],
+        "declared_channels": [1, 6, 11],
+        "scan_time": 180,
+        "is_default": True,
+        "five_ghz_operator_confirmed": False,
+    }
+
+
+def scan_metadata(measurement_profile, hour):
+    version = measurement_profile["active_version"]
+    return {
+        "scan_id": "saved-scan-{0}".format(hour),
+        "date": "2026-07-30T{0:02d}:00:00Z".format(hour),
+        "scan_time": 180,
+        "coverage": ["2.4"],
+        "source": "hak5_recon",
+        "measurement_context": {
+            "location_id": "building-a",
+            "measurement_point_id": "point-a",
+            "scan_profile_id": "fast-scan",
+            "radio_profile_id": "wlan1-mk7",
+            "interface": "wlan1mon",
+            "declared_bands": ["2.4"],
+            "declared_channels": [1, 6, 11],
+            "measurement_profile_id": measurement_profile[
+                "measurement_profile_id"
+            ],
+            "measurement_profile_version_id": version["version_id"],
+            "measurement_profile_digest": version["digest"],
+        },
+    }
+
+
+def inventory_csv():
+    return (
+        "site,ssid,bssid,vendor,role,approved,name,required_presence,"
+        "allowed_encryption_codes,wps_allowed,allowed_channels,"
+        "allowed_vendors,notes\n"
+        "Test,Example-Corp,AA:BB:CC:00:00:01,Unknown,corporate,true,"
+        "AP1,true,5,true,1,,\n"
+    )
+
+
+def make_valid_snapshot(suffix="1"):
     digest_char = suffix[-1]
     digest = digest_char * 64
+    snapshot_id = "snapshot_{0}".format(digest[:16])
     ap_id = "ap_aaaaaaaaaaaa"
     net_id = "network_bbbbbbbbbbbb"
     ev_id = "evidence_cccccccccccc"
@@ -144,68 +212,134 @@ def make_valid_snapshot(snapshot_id="snapshot_0000000000000001", suffix="1"):
             }
         ],
     }
-    snap["snapshot_digest"] = _canonical_digest(snap)
     return snap
 
 
-def make_valid_comparison(comparison_id="comparison_0000000000000001", baseline_snap_id="snapshot_0000000000000001", current_snap_id="snapshot_0000000000000001"):
-    return {
-        "schema_version": "1.0",
-        "comparison_id": comparison_id,
-        "baseline_snapshot_id": baseline_snap_id,
-        "current_snapshot_id": current_snap_id,
-        "comparability": {
-            "status": "comparable",
-            "absence_findings_allowed": True,
-            "reasons": [],
-            "baseline": {"coverage": ["2.4"], "scan_time": 180, "access_point_count": 1},
-            "current": {"coverage": ["2.4"], "scan_time": 180, "access_point_count": 1},
-        },
-        "access_points": {"matched": [], "added": [], "removed": []},
-        "networks": {"matched": [], "added": [], "removed": []},
-        "summary": {"matched_access_point_count": 0, "added_access_point_count": 0, "removed_access_point_count": 0, "matched_network_count": 0, "added_network_count": 0, "removed_network_count": 0},
-    }
+def current_revision(store, assessment_id):
+    return store.get(assessment_id, 0, 1)["revision"]
 
 
-def setup_test_artifacts(directory, aid, snapshot_id="snapshot_0000000000000001", comparison_id="comparison_0000000000000001", occurrence_set_id="occurrence_0000000000000001"):
-    base = Path(directory) / "assessments" / aid
-    (base / "snapshots").mkdir(parents=True, exist_ok=True)
-    (base / "comparisons").mkdir(parents=True, exist_ok=True)
-    (base / "occurrences").mkdir(parents=True, exist_ok=True)
-
-    snap_doc = make_valid_snapshot(snapshot_id)
-    snap_bytes = json.dumps(snap_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
-    snap_digest = _canonical_digest(snap_doc)
-
-    comp_doc = make_valid_comparison(comparison_id, snapshot_id, snapshot_id)
-    comp_bytes = json.dumps(comp_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
-    comp_digest = _canonical_digest(comp_doc)
-
-    occ_doc = {
-        "occurrence_set_id": occurrence_set_id,
-        "occurrences": [
-            {
-                "occurrence_id": "occ_0000000000000001",
-                "comparison_id": comparison_id,
-                "rule_id": "open_ssid_detected",
-                "severity": "high",
-            }
+def setup_native_customer_analysis(directory):
+    """Create artifacts only through the production CustomerAuditStore writer."""
+    service = AssuranceService(config_dir=directory)
+    measurement_profile = service.create_measurement_profile(
+        measurement_profile_input()
+    )["measurement_profile"]
+    assessment = service.create_assessment(
+        {"name": "Native artifact test", "location": "Lab", "notes": ""}
+    )
+    aid = assessment["assessment_id"]
+    baseline = service.create_baseline_version(
+        aid,
+        assessment["revision"],
+        fixture_scan(),
+        scan_metadata(measurement_profile, 10),
+        "Approved baseline",
+    )
+    assessment = service.store.activate_baseline_version(
+        aid,
+        baseline["assessment"]["revision"],
+        baseline["baseline_version"]["baseline_version_id"],
+    )["assessment"]
+    inventory = service.preview_inventory_csv(inventory_csv(), "comma")
+    assurance = service.create_assurance_profile_version(
+        aid,
+        assessment["revision"],
+        "Approved inventory",
+        inventory_preview=inventory,
+        coverage_mode="partial",
+    )
+    assessment = service.activate_assurance_profile_version(
+        aid,
+        assurance["assessment"]["revision"],
+        assurance["assurance_profile_version"][
+            "assurance_profile_version_id"
         ],
-    }
-    occ_bytes = json.dumps(occ_doc, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n"
-    occ_digest = _canonical_digest(occ_doc)
-
-    if snapshot_id:
-        (base / "snapshots" / f"{snapshot_id}.json").write_bytes(snap_bytes)
-    if comparison_id:
-        (base / "comparisons" / f"{comparison_id}.json").write_bytes(comp_bytes)
-    if occurrence_set_id:
-        (base / "occurrences" / f"{occurrence_set_id}.json").write_bytes(occ_bytes)
-
+        False,
+    )["assessment"]
+    current_scan = fixture_scan()
+    current_scan["APResults"][0]["channel"] = 6
+    metadata = scan_metadata(measurement_profile, 11)
+    preview = service.compare_recon(aid, current_scan, metadata)
+    persisted = service.analyze_recon(
+        aid, assessment["revision"], current_scan, metadata
+    )
+    occurrence = service.store.get_occurrence_set(
+        aid, persisted["comparison"]["comparison_id"]
+    )
+    baseline_record = service.store.get_baseline_version(
+        aid, baseline["baseline_version"]["baseline_version_id"]
+    )
     return {
-        "snapshot_digest": snap_digest,
-        "comparison_digest": comp_digest,
-        "occurrence_digest": occ_digest,
+        "service": service,
+        "store": RepeatableAuditStore(directory),
+        "assessment_id": aid,
+        "measurement_profile": measurement_profile,
+        "assurance_profile_version_id": assurance[
+            "assurance_profile_version"
+        ]["assurance_profile_version_id"],
+        "baseline": baseline_record,
+        "preview": preview,
+        "persisted": persisted,
+        "occurrence": occurrence,
+    }
+
+
+def resolved_outcome(native):
+    snapshot = native["preview"]["current_snapshot"]
+    baseline = native["baseline"]
+    pins = native["persisted"]["comparison"]["pinned_versions"]
+    return {
+        "status": "resolved",
+        "source_recon_id": "saved-scan-11",
+        "snapshot_id": snapshot["snapshot_id"],
+        "snapshot_digest": snapshot["snapshot_digest"],
+        "measurement_profile_id": pins["measurement_profile_id"],
+        "measurement_profile_version_id": pins[
+            "measurement_profile_version_id"
+        ],
+        "measurement_profile_digest": pins["measurement_profile_digest"],
+        "baseline_version_id": pins["baseline_version_id"],
+        "baseline_type": "single_scan",
+        "baseline_snapshot_id": baseline["snapshot_id"],
+        "baseline_snapshot_digest": baseline["snapshot_digest"],
+        "baseline_record_digest": _canonical_digest(
+            {
+                key: value
+                for key, value in baseline.items()
+                if key
+                not in {
+                    "snapshot",
+                    "is_active",
+                    "baseline_type",
+                    "legacy",
+                }
+            }
+        ),
+        "assurance_profile_version_id": pins[
+            "assurance_profile_version_id"
+        ],
+        "assurance_profile_digest": pins["assurance_profile_digest"],
+        "comparability_status": native["preview"]["diff"]["comparability"][
+            "status"
+        ],
+        "resolved_at": utc_now(),
+    }
+
+
+def completed_outcome(native):
+    comparison = native["persisted"]["comparison"]
+    evidence_ids = [
+        item["evidence_id"] for item in native["occurrence"]["evidence"]
+    ][:100]
+    return {
+        "status": "completed",
+        "comparison_id": comparison["comparison_id"],
+        # Canonical hash of the complete native outer comparison record.
+        "comparison_digest": _canonical_digest(comparison),
+        "occurrence_set_id": comparison["occurrence_set_id"],
+        "evidence_ids": evidence_ids,
+        "completed_at": utc_now(),
     }
 
 
@@ -267,23 +401,18 @@ class RepeatableAuditStoreTests(unittest.TestCase):
 
     def test_audit_run_lifecycle_and_sealing(self):
         with tempfile.TemporaryDirectory() as directory:
-            ensure_pseudonymization_key(directory)
-            store = RepeatableAuditStore(directory)
-            assessment = store.create({"name": "Lifecycle Test", "location": "Lab", "notes": ""})
-            aid = assessment["assessment_id"]
-            rev = assessment["revision"]
-
-            ap_res = store.create_assurance_profile_version(aid, rev, sample_assurance_profile())
-            rev = ap_res["assessment"]["revision"]
-            vid = ap_res["assurance_profile_version"]["assurance_profile_version_id"]
-            act_res = store.activate_assurance_profile_version(aid, rev, vid)
-            rev = act_res["assessment"]["revision"]
-
-            mp_res = store.create_measurement_point(aid, rev, sample_context(), "Point A")
-            rev = 4
+            native = setup_native_customer_analysis(directory)
+            store = native["store"]
+            aid = native["assessment_id"]
+            vid = native["assurance_profile_version_id"]
+            mp_res = store.create_measurement_point(
+                aid, current_revision(store, aid), sample_context(), "Point A"
+            )
             mp_id = mp_res["measurement_point"]["measurement_point_id"]
 
-            ar_res = store.create_audit_run(aid, rev, "Run 1", vid, [mp_id])
+            ar_res = store.create_audit_run(
+                aid, current_revision(store, aid), "Run 1", vid, [mp_id]
+            )
             validate_schema(ar_res, "createAuditRunResponse")
             run = ar_res["audit_run"]
             self.assertEqual(run["status"], "draft")
@@ -291,56 +420,52 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             self.assertNotIn("measurements", run)
             self.assertNotIn("ready_to_start", run)
 
-            digests = setup_test_artifacts(directory, aid)
-            start_res = store.start_audit_run(aid, 5, run["audit_run_id"], run["revision"])
+            start_res = store.start_audit_run(
+                aid,
+                current_revision(store, aid),
+                run["audit_run_id"],
+                run["revision"],
+            )
             validate_schema(start_res, "startAuditRunResponse")
             self.assertEqual(start_res["audit_run"]["status"], "in_progress")
 
-            # Resolve measurement
-            res_outcome = {
-                "status": "resolved",
-                "source_recon_id": "recon_1",
-                "snapshot_id": "snapshot_0000000000000001",
-                "snapshot_digest": digests["snapshot_digest"],
-                "measurement_profile_id": "mprofile_00000000-0000-4000-8000-000000000001",
-                "measurement_profile_version_id": "mprofile_r0001",
-                "measurement_profile_digest": "b" * 64,
-                "baseline_version_id": "baseline_v0001",
-                "baseline_type": "consensus",
-                "baseline_model_id": "bmodel_0000000000000001",
-                "baseline_model_digest": "c" * 64,
-                "baseline_record_digest": "d" * 64,
-                "assurance_profile_version_id": vid,
-                "assurance_profile_digest": "e" * 64,
-                "comparability_status": "comparable",
-                "resolved_at": "2026-07-30T10:00:00Z",
-            }
             res_out = store.resolve_audit_measurement(
-                aid, 6, run["audit_run_id"], 2, mp_id, res_outcome
+                aid,
+                current_revision(store, aid),
+                run["audit_run_id"],
+                2,
+                mp_id,
+                resolved_outcome(native),
             )
             validate_schema(res_out, "resolveAuditMeasurementResponse")
             self.assertEqual(res_out["measurement"]["measurement_id"].startswith("arm_"), True)
 
-            # Save comparison to complete
-            comp_outcome = {
-                "status": "completed",
-                "comparison_id": "comparison_0000000000000001",
-                "comparison_digest": digests["comparison_digest"],
-                "occurrence_set_id": "occurrence_0000000000000001",
-                "evidence_ids": ["evidence_000000000001"],
-                "completed_at": "2026-07-30T10:05:00Z",
-            }
             comp_out = store.save_audit_measurement_comparison(
-                aid, 7, run["audit_run_id"], 3, mp_id, comp_outcome
+                aid,
+                current_revision(store, aid),
+                run["audit_run_id"],
+                3,
+                mp_id,
+                completed_outcome(native),
             )
             validate_schema(comp_out, "saveAuditMeasurementComparisonResponse")
 
-            comp_run_res = store.complete_audit_run(aid, 8, run["audit_run_id"], 4)
+            comp_run_res = store.complete_audit_run(
+                aid,
+                current_revision(store, aid),
+                run["audit_run_id"],
+                4,
+            )
             validate_schema(comp_run_res, "completeAuditRunResponse")
             self.assertEqual(comp_run_res["audit_run"]["status"], "completed")
 
             with self.assertRaises(BackendError) as raised:
-                store.start_audit_run(aid, 9, run["audit_run_id"], 5)
+                store.start_audit_run(
+                    aid,
+                    current_revision(store, aid),
+                    run["audit_run_id"],
+                    5,
+                )
             self.assertEqual(raised.exception.code, "audit_run_sealed")
 
     def test_complete_audit_run_rejects_failed_or_pending_measurements(self):
@@ -375,7 +500,7 @@ class RepeatableAuditStoreTests(unittest.TestCase):
                 "retry_target": "pending",
                 "error_code": "recon_timeout",
                 "error_message": "Recon timed out",
-                "failed_at": "2026-07-30T10:00:00Z",
+                    "failed_at": utc_now(),
             })
 
             # Try completing with failed measurement -> fails
@@ -385,86 +510,86 @@ class RepeatableAuditStoreTests(unittest.TestCase):
 
     def test_evidence_limit_and_no_raw_recon(self):
         with tempfile.TemporaryDirectory() as directory:
-            ensure_pseudonymization_key(directory)
-            store = RepeatableAuditStore(directory)
-            assessment = store.create({"name": "Evidence Test", "location": "Lab", "notes": ""})
-            aid = assessment["assessment_id"]
-
-            ap_res = store.create_assurance_profile_version(aid, 1, sample_assurance_profile())
-            vid = ap_res["assurance_profile_version"]["assurance_profile_version_id"]
-            store.activate_assurance_profile_version(aid, 2, vid)
-
-            mp_res = store.create_measurement_point(aid, 3, sample_context(), "Point 1")
+            native = setup_native_customer_analysis(directory)
+            store = native["store"]
+            aid = native["assessment_id"]
+            vid = native["assurance_profile_version_id"]
+            mp_res = store.create_measurement_point(
+                aid, current_revision(store, aid), sample_context(), "Point 1"
+            )
             mp_id = mp_res["measurement_point"]["measurement_point_id"]
-            ar_res = store.create_audit_run(aid, 4, "Run 1", vid, [mp_id])
+            ar_res = store.create_audit_run(
+                aid, current_revision(store, aid), "Run 1", vid, [mp_id]
+            )
             run_id = ar_res["audit_run"]["audit_run_id"]
 
-            digests = setup_test_artifacts(directory, aid)
-            store.start_audit_run(aid, 5, run_id, 1)
+            store.start_audit_run(
+                aid, current_revision(store, aid), run_id, 1
+            )
 
             # Raw recon keys rejected
             with self.assertRaises(BackendError) as raised:
-                store.resolve_audit_measurement(aid, 6, run_id, 2, mp_id, {
-                    "status": "resolved",
-                    "recon": {"raw": "data"},
-                })
+                store.resolve_audit_measurement(
+                    aid,
+                    current_revision(store, aid),
+                    run_id,
+                    2,
+                    mp_id,
+                    {"status": "resolved", "recon": {"raw": "data"}},
+                )
             self.assertEqual(raised.exception.code, "invalid_audit_run_measurement")
 
-            store.resolve_audit_measurement(aid, 6, run_id, 2, mp_id, {
-                "status": "resolved",
-                "source_recon_id": "recon_1",
-                "snapshot_id": "snapshot_0000000000000001",
-                "snapshot_digest": digests["snapshot_digest"],
-                "measurement_profile_id": "mprofile_00000000-0000-4000-8000-000000000001",
-                "measurement_profile_version_id": "mprofile_r0001",
-                "measurement_profile_digest": "b" * 64,
-                "baseline_version_id": "baseline_v0001",
-                "baseline_type": "single_scan",
-                "baseline_snapshot_id": "snapshot_0000000000000001",
-                "baseline_snapshot_digest": digests["snapshot_digest"],
-                "baseline_record_digest": "d" * 64,
-                "assurance_profile_version_id": vid,
-                "assurance_profile_digest": "e" * 64,
-                "comparability_status": "comparable",
-                "resolved_at": "2026-07-30T10:00:00Z",
-            })
+            store.resolve_audit_measurement(
+                aid,
+                current_revision(store, aid),
+                run_id,
+                2,
+                mp_id,
+                resolved_outcome(native),
+            )
 
             # 101 evidence_ids rejected
             too_many = ["evidence_{0:012d}".format(i) for i in range(101)]
+            invalid = completed_outcome(native)
+            invalid["evidence_ids"] = too_many
             with self.assertRaises(BackendError) as raised:
-                store.save_audit_measurement_comparison(aid, 7, run_id, 3, mp_id, {
-                    "status": "completed",
-                    "comparison_id": "comparison_0000000000000001",
-                    "comparison_digest": digests["comparison_digest"],
-                    "occurrence_set_id": "occurrence_0000000000000001",
-                    "evidence_ids": too_many,
-                    "completed_at": "2026-07-30T10:05:00Z",
-                })
+                store.save_audit_measurement_comparison(
+                    aid,
+                    current_revision(store, aid),
+                    run_id,
+                    3,
+                    mp_id,
+                    invalid,
+                )
             self.assertEqual(raised.exception.code, "invalid_audit_run_measurement")
 
             # Duplicate evidence_ids rejected
+            invalid = completed_outcome(native)
+            first_evidence = invalid["evidence_ids"][0]
+            invalid["evidence_ids"] = [first_evidence, first_evidence]
             with self.assertRaises(BackendError) as raised:
-                store.save_audit_measurement_comparison(aid, 7, run_id, 3, mp_id, {
-                    "status": "completed",
-                    "comparison_id": "comparison_0000000000000001",
-                    "comparison_digest": digests["comparison_digest"],
-                    "occurrence_set_id": "occurrence_0000000000000001",
-                    "evidence_ids": ["evidence_000000000001", "evidence_000000000001"],
-                    "completed_at": "2026-07-30T10:05:00Z",
-                })
+                store.save_audit_measurement_comparison(
+                    aid,
+                    current_revision(store, aid),
+                    run_id,
+                    3,
+                    mp_id,
+                    invalid,
+                )
             self.assertEqual(raised.exception.code, "invalid_audit_run_measurement")
 
-            # Exactly 100 evidence_ids accepted
-            exactly_100 = ["evidence_{0:012d}".format(i) for i in range(100)]
-            comp_res = store.save_audit_measurement_comparison(aid, 7, run_id, 3, mp_id, {
-                "status": "completed",
-                "comparison_id": "comparison_0000000000000001",
-                "comparison_digest": digests["comparison_digest"],
-                "occurrence_set_id": "occurrence_0000000000000001",
-                "evidence_ids": exactly_100,
-                "completed_at": "2026-07-30T10:05:00Z",
-            })
-            self.assertEqual(len(comp_res["measurement"]["evidence_ids"]), 100)
+            comp_res = store.save_audit_measurement_comparison(
+                aid,
+                current_revision(store, aid),
+                run_id,
+                3,
+                mp_id,
+                completed_outcome(native),
+            )
+            self.assertEqual(
+                comp_res["measurement"]["evidence_ids"],
+                completed_outcome(native)["evidence_ids"],
+            )
 
     def test_repeatable_audit_store_fault_injection_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -601,11 +726,22 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             ar_res = store.create_audit_run(aid, 4, "Run Late Status", vid, [mp_id])
             ar_id = ar_res["audit_run"]["audit_run_id"]
 
-            # Overwrite ar_<id>.json so "status": "draft" is padded past 512 bytes
+            # Keep the exact private schema but serialize status last. This
+            # proves reconstruction parses the complete JSON document rather
+            # than searching a fixed prefix.
             run_path = Path(directory) / "assessments" / aid / "audit_runs" / f"{ar_id}.json"
             data = json.loads(run_path.read_text(encoding="utf-8"))
-            data["padding"] = "X" * 1024  # push status field down
-            run_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+            reordered = {
+                key: value for key, value in data.items() if key != "status"
+            }
+            reordered["status"] = data["status"]
+            run_path.write_text(
+                json.dumps(reordered, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            self.assertGreater(
+                run_path.read_text(encoding="utf-8").index('"status"'), 512
+            )
 
             # Remove manifest file to force recalculation from disk
             manifest_path = Path(directory) / "assessments" / aid / "audit_runs_manifest.json"
@@ -659,13 +795,26 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             run_id = store.create_audit_run(aid, 8, "Measurement Test Run", vid, [mp_id])["audit_run"]["audit_run_id"]
             store.start_audit_run(aid, 9, run_id, 1)
 
-            digests = setup_test_artifacts(directory, aid)
+            snapshot = make_valid_snapshot("9")
+            snapshot_path = (
+                Path(directory)
+                / "assessments"
+                / aid
+                / "snapshots"
+                / (snapshot["snapshot_id"] + ".json")
+            )
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            snapshot_path.write_text(
+                json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
             bad_resolved_at = "2026-07-30T10:00:00"  # naive
             with self.assertRaises(BackendError) as raised:
                 store.resolve_audit_measurement(aid, 10, run_id, 2, mp_id, {
                     "status": "resolved",
-                    "snapshot_id": "snapshot_0000000000000001",
-                    "snapshot_digest": digests["snapshot_digest"],
+                    "snapshot_id": snapshot["snapshot_id"],
+                    "snapshot_digest": snapshot["snapshot_digest"],
                     "measurement_profile_id": "mprofile_00000000-0000-4000-8000-000000000001",
                     "measurement_profile_version_id": "mprofile_r0001",
                     "measurement_profile_digest": "b" * 64,

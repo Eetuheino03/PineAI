@@ -14,16 +14,19 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import tarfile
 import tempfile
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 
 from .config import resolve_config_dir
 from .errors import BackendError
+from .storage_transaction import recover_private_transactions
 
 
 BACKUP_SCHEMA_VERSION = "1.0"
@@ -41,6 +44,11 @@ MAX_MEMBER_BYTES = 16 * 1024 * 1024
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 COPY_CHUNK_BYTES = 64 * 1024
+MAX_ASSESSMENTS_FOR_BACKUP = 1000
+RFC3339_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 
 def _utc_now() -> str:
@@ -116,7 +124,11 @@ def _validate_relative_path(value: Any, directory: bool = False) -> str:
     ):
         raise BackendError("backup_unsafe_path", "backup path is invalid")
     path = PurePosixPath(value)
-    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+    if (
+        path.is_absolute()
+        or path.as_posix() != value
+        or any(part in ("", ".", "..") for part in path.parts)
+    ):
         raise BackendError("backup_unsafe_path", "backup path is unsafe")
     if any(part in SECRET_EXCLUDED_NAMES for part in path.parts):
         raise BackendError(
@@ -141,6 +153,109 @@ def _validate_relative_path(value: Any, directory: bool = False) -> str:
             "backup_unsafe_path", "backup file is outside the allowlist"
         )
     return path.as_posix()
+
+
+def _assessment_names(root: Path) -> List[str]:
+    directory = root / "assessments"
+    if not directory.exists():
+        return []
+    if directory.is_symlink() or not directory.is_dir():
+        raise BackendError(
+            "backup_unsafe_source",
+            "assessments must be a real directory",
+        )
+    identifiers = []
+    try:
+        with os.scandir(str(directory)) as iterator:
+            for entry in iterator:
+                if entry.name in (".transactions",):
+                    continue
+                if (
+                    not entry.is_dir(follow_symlinks=False)
+                    or entry.name in ("", ".", "..")
+                ):
+                    raise BackendError(
+                        "backup_unsafe_source",
+                        "assessment storage contains an invalid entry",
+                    )
+                identifiers.append(entry.name)
+                if len(identifiers) > MAX_ASSESSMENTS_FOR_BACKUP:
+                    raise BackendError(
+                        "backup_limit", "backup contains too many assessments"
+                    )
+    except BackendError:
+        raise
+    except OSError as failure:
+        raise BackendError(
+            "backup_io_error", "could not enumerate assessments"
+        ) from failure
+    return sorted(identifiers)
+
+
+def _assert_no_active_transactions(root: Path) -> None:
+    for allowed in ALLOWED_DIRECTORIES:
+        directory = root / allowed
+        if not directory.exists():
+            continue
+        for current_root, directory_names, _ in os.walk(
+            str(directory), topdown=True, followlinks=False
+        ):
+            current = Path(current_root)
+            if ".transactions" in directory_names:
+                transaction_root = current / ".transactions"
+                if transaction_root.is_symlink() or not transaction_root.is_dir():
+                    raise BackendError(
+                        "backup_unsafe_source",
+                        "transaction storage is invalid",
+                    )
+                try:
+                    with os.scandir(str(transaction_root)) as iterator:
+                        if next(iterator, None) is not None:
+                            raise BackendError(
+                                "backup_busy",
+                                "backup cannot run while a transaction is active",
+                            )
+                except BackendError:
+                    raise
+                except OSError as failure:
+                    raise BackendError(
+                        "backup_io_error",
+                        "could not inspect transaction storage",
+                    ) from failure
+                directory_names.remove(".transactions")
+            directory_names[:] = [
+                name for name in directory_names if name != ".lock"
+            ]
+
+
+@contextmanager
+def _locked_backup_source(root: Path):
+    """Hold production storage locks and recover journals during backup."""
+    from .customer_store import CustomerAuditStore
+
+    store = CustomerAuditStore(str(root))
+    identifiers = _assessment_names(root)
+    with ExitStack() as stack:
+        for assessment_id in identifiers:
+            base = root / "assessments" / assessment_id
+            stack.enter_context(store._exclusive_file_lock(base / ".lock"))
+            recover_private_transactions(
+                base, cleanup_unprepared=True
+            )
+        stack.enter_context(store._measurement_profiles_lock())
+        if _assessment_names(root) != identifiers:
+            raise BackendError(
+                "backup_source_changed",
+                "assessment set changed while backup locks were acquired",
+            )
+        _assert_no_active_transactions(root)
+        yield
+        _assert_no_active_transactions(root)
+        if _assessment_names(root) != identifiers:
+            raise BackendError(
+                "backup_source_changed",
+                "assessment set changed during backup",
+            )
 
 
 def _source_entries(
@@ -313,6 +428,16 @@ def create_backup(
 ) -> Dict[str, Any]:
     """Create and verify a private device-continuity tar.gz archive."""
     root = resolve_config_dir(config_dir)
+    if not (root / "pseudonymization.key").exists():
+        raise BackendError(
+            "backup_identity_missing",
+            "pseudonymization.key is required for a continuity backup",
+        )
+    with _locked_backup_source(root):
+        return _create_backup_unlocked(root, output)
+
+
+def _create_backup_unlocked(root: Path, output: str) -> Dict[str, Any]:
     output_path = Path(output)
     if output_path.exists() or output_path.is_symlink():
         raise BackendError(
@@ -322,6 +447,21 @@ def create_backup(
     if not parent.exists() or not parent.is_dir():
         raise BackendError(
             "backup_output_invalid", "backup output directory does not exist"
+        )
+    try:
+        root_resolved = root.resolve()
+        output_resolved = output_path.resolve()
+        output_resolved.relative_to(root_resolved)
+    except ValueError:
+        pass
+    except OSError as failure:
+        raise BackendError(
+            "backup_output_invalid", "backup output path cannot be resolved"
+        ) from failure
+    else:
+        raise BackendError(
+            "backup_output_invalid",
+            "backup output must be outside the active PineAI directory",
         )
 
     directories, files, total_bytes = _source_entries(root)
@@ -412,6 +552,7 @@ def _member_relative(name: str, directory: bool = False) -> str:
     if (
         not isinstance(name, str)
         or not name.startswith(DATA_PREFIX + "/")
+        or PurePosixPath(name).as_posix() != name
     ):
         raise BackendError("backup_unsafe_path", "archive member path is invalid")
     relative = name[len(DATA_PREFIX) + 1 :]
@@ -473,6 +614,15 @@ def _validate_manifest(value: Dict[str, Any]) -> Tuple[List[str], List[Dict[str,
         raise BackendError("backup_invalid", "backup root allowlist is invalid")
     if value.get("excluded") != sorted(EXCLUDED_NAMES):
         raise BackendError("backup_invalid", "backup exclusion policy is invalid")
+    created_at = value.get("created_at")
+    if not isinstance(created_at, str) or not RFC3339_PATTERN.match(created_at):
+        raise BackendError("backup_invalid", "backup created_at is invalid")
+    try:
+        datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError as failure:
+        raise BackendError(
+            "backup_invalid", "backup created_at is invalid"
+        ) from failure
 
     normalized_directories = []
     seen_directories = set()
@@ -552,19 +702,35 @@ def _open_archive(path: Path) -> tarfile.TarFile:
         )
 
 
+def _bounded_members(archive: tarfile.TarFile) -> List[tarfile.TarInfo]:
+    members = []
+    try:
+        while True:
+            member = archive.next()
+            if member is None:
+                break
+            members.append(member)
+            if len(members) > MAX_MEMBERS:
+                raise BackendError(
+                    "backup_limit", "backup member count is invalid"
+                )
+    except BackendError:
+        raise
+    except (OSError, tarfile.TarError) as failure:
+        raise BackendError(
+            "backup_invalid",
+            "could not read backup archive: {0}".format(failure),
+        )
+    if not members:
+        raise BackendError("backup_limit", "backup member count is invalid")
+    return members
+
+
 def verify_backup(input_path: str) -> Dict[str, Any]:
     """Verify archive structure, allowlisted paths, sizes, and every file hash."""
     path = Path(input_path)
     with _open_archive(path) as archive:
-        try:
-            members = archive.getmembers()
-        except (OSError, tarfile.TarError) as failure:
-            raise BackendError(
-                "backup_invalid",
-                "could not read backup archive: {0}".format(failure),
-            )
-        if not members or len(members) > MAX_MEMBERS:
-            raise BackendError("backup_limit", "backup member count is invalid")
+        members = _bounded_members(archive)
 
         seen_names = set()
         manifest_members = []
@@ -737,10 +903,21 @@ def restore_backup_staging(input_path: str, target: str) -> Dict[str, Any]:
             "backup_restore_target_invalid",
             "could not resolve restore target: {0}".format(failure),
         )
-    if requested_target == active_root:
+    overlaps_active = requested_target == active_root
+    try:
+        requested_target.relative_to(active_root)
+        overlaps_active = True
+    except ValueError:
+        pass
+    try:
+        active_root.relative_to(requested_target)
+        overlaps_active = True
+    except ValueError:
+        pass
+    if overlaps_active:
         raise BackendError(
             "backup_restore_target_invalid",
-            "restore-staging cannot overwrite the active PineAI directory",
+            "restore-staging must not overlap the active PineAI directory",
         )
     target_exists = target_path.exists()
     if target_exists and not _target_is_empty(target_path):
@@ -773,7 +950,7 @@ def restore_backup_staging(input_path: str, target: str) -> Dict[str, Any]:
         with _open_archive(Path(input_path)) as archive:
             members = {
                 _member_relative(member.name): member
-                for member in archive.getmembers()
+                for member in _bounded_members(archive)
                 if member.isfile() and member.name != MANIFEST_NAME
             }
             for expected in manifest["files"]:

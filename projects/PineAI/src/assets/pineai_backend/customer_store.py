@@ -8,7 +8,10 @@ import datetime
 import json
 import os
 import re
+import threading
 import uuid
+from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +26,7 @@ from .assessment_store import (
     MAX_SNAPSHOTS,
     AssessmentStore,
     _canonical_digest,
+    _ensure_no_raw_recon,
     _json_clone,
     _utc_now,
     _validate_revision,
@@ -53,6 +57,16 @@ OCCURRENCE_SET_ID = re.compile(r"^occurrence_[0-9a-f]{16}$")
 MAX_MEASUREMENT_PROFILES = 100
 MAX_ASSURANCE_PROFILES = 100
 MAX_PROFILE_DOCUMENT_BYTES = 2 * 1024 * 1024
+MAX_OCCURRENCES = 100
+ANALYSIS_PIN_FIELDS = {
+    "baseline_version_id",
+    "baseline_digest",
+    "measurement_profile_id",
+    "measurement_profile_version_id",
+    "measurement_profile_digest",
+    "assurance_profile_version_id",
+    "assurance_profile_digest",
+}
 
 
 def _private_directory(path: Path) -> None:
@@ -61,6 +75,15 @@ def _private_directory(path: Path) -> None:
         os.chmod(str(path), 0o700)
     except OSError:
         pass
+
+
+def _measurement_profile_mutation(function):
+    @wraps(function)
+    def locked(self, *args, **kwargs):
+        with self._measurement_profiles_lock():
+            return function(self, *args, **kwargs)
+
+    return locked
 
 
 def _clean_text(value: Any, field: str, maximum: int, required: bool = False) -> str:
@@ -206,18 +229,17 @@ class CustomerAuditStore(AssessmentStore):
         self.config_directory = resolve_config_dir(config_dir)
         self.measurement_directory = self.config_directory / "measurement_profiles"
         self.fault_injector = fault_injector
-        recover_private_transactions(self.directory)
-        recover_private_transactions(self.measurement_directory)
+        self._measurement_lock_state = threading.local()
 
     def list_findings(
         self,
         assessment_id: str,
-        status: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
         currently_observed: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """Label pre-v0.6.2 findings as immutable legacy history."""
         results = super().list_findings(
-            assessment_id, status, currently_observed
+            assessment_id, statuses, currently_observed
         )
         for finding in results:
             result_type = finding.get("details", {}).get("result_type")
@@ -265,8 +287,15 @@ class CustomerAuditStore(AssessmentStore):
             "exports",
         ):
             self._ensure_private_directory(base / name)
-        recover_private_transactions(base)
         return base
+
+    @contextmanager
+    def _lock(self, assessment_id: str):
+        """Recover an assessment only after obtaining its exclusive lock."""
+        with super()._lock(assessment_id):
+            base = self._ensure_assessment_directories(assessment_id)
+            recover_private_transactions(base, cleanup_unprepared=True)
+            yield
 
     def _transaction_event(
         self,
@@ -316,6 +345,201 @@ class CustomerAuditStore(AssessmentStore):
             transaction.add_bytes(relative, value)
         return transaction.commit()
 
+    def _measurement_profile_bases_unlocked(self) -> List[Path]:
+        self._ensure_private_directory(self.measurement_directory)
+        results = []
+        try:
+            with os.scandir(str(self.measurement_directory)) as iterator:
+                for entry in iterator:
+                    if entry.name in (".lock", ".transactions"):
+                        continue
+                    if not entry.name.startswith("mprofile_"):
+                        continue
+                    if (
+                        not MEASUREMENT_PROFILE_ID.match(entry.name)
+                        or not entry.is_dir(follow_symlinks=False)
+                    ):
+                        raise BackendError(
+                            "storage_error",
+                            "measurement profile storage contains an invalid entry",
+                        )
+                    results.append(Path(entry.path))
+                    if len(results) > MAX_MEASUREMENT_PROFILES:
+                        raise BackendError(
+                            "measurement_profile_limit",
+                            "measurement profile limit was reached",
+                        )
+        except BackendError:
+            raise
+        except OSError as error:
+            raise BackendError(
+                "storage_error", "measurement profile storage is unreadable"
+            ) from error
+        return sorted(results, key=lambda item: item.name)
+
+    @contextmanager
+    def _measurement_profiles_lock(self):
+        depth = getattr(self._measurement_lock_state, "depth", 0)
+        if depth:
+            self._measurement_lock_state.depth = depth + 1
+            try:
+                yield
+            finally:
+                self._measurement_lock_state.depth = depth
+            return
+        self._ensure_private_directory(self.measurement_directory)
+        with self._exclusive_file_lock(self.measurement_directory / ".lock"):
+            self._measurement_lock_state.depth = 1
+            try:
+                recover_private_transactions(
+                    self.measurement_directory, cleanup_unprepared=True
+                )
+                for base in self._measurement_profile_bases_unlocked():
+                    recover_private_transactions(
+                        base, cleanup_unprepared=True
+                    )
+                yield
+            finally:
+                self._measurement_lock_state.depth = 0
+
+    def _immutable_preflight(
+        self, path: Path, value: Dict[str, Any], conflict_code: str
+    ) -> bool:
+        """Return True when a new immutable file is needed.
+
+        Existing bytes may be reused only when the decoded canonical document
+        is exactly identical. Symlinks and special files always fail closed.
+        """
+        if not path.exists() and not path.is_symlink():
+            return True
+        if path.is_symlink() or not path.is_file():
+            raise BackendError(
+                conflict_code, "immutable document path is invalid"
+            )
+        existing = self._read_json(
+            path, conflict_code, "immutable document is unavailable"
+        )
+        if existing != value:
+            raise BackendError(
+                conflict_code,
+                "immutable document already exists with different content",
+            )
+        return False
+
+    def _validate_analysis_pins_unlocked(
+        self,
+        assessment_id: str,
+        baseline: Dict[str, Any],
+        pinned_versions: Dict[str, Any],
+        active_assurance_version: Optional[str],
+    ) -> Dict[str, Any]:
+        pins = _json_clone(
+            pinned_versions,
+            "invalid_analysis",
+            "pinned_versions",
+            MAX_PROFILE_DOCUMENT_BYTES,
+        )
+        _ensure_no_raw_recon(pins)
+        if not isinstance(pins, dict) or set(pins) != ANALYSIS_PIN_FIELDS:
+            raise BackendError(
+                "invalid_analysis", "pinned_versions fields are invalid"
+            )
+        if pins.get("baseline_version_id") != baseline.get(
+            "baseline_version_id"
+        ):
+            raise BackendError(
+                "invalid_analysis", "baseline version pin is inconsistent"
+            )
+        baseline_digest = baseline.get(
+            "baseline_model_digest", baseline.get("snapshot_digest")
+        )
+        if (
+            not isinstance(baseline_digest, str)
+            or not re.match(r"^[0-9a-f]{64}$", baseline_digest)
+            or pins.get("baseline_digest") != baseline_digest
+        ):
+            raise BackendError(
+                "invalid_analysis", "baseline digest pin is inconsistent"
+            )
+
+        measurement_values = [
+            pins.get("measurement_profile_id"),
+            pins.get("measurement_profile_version_id"),
+            pins.get("measurement_profile_digest"),
+        ]
+        if any(value is not None for value in measurement_values):
+            if not all(isinstance(value, str) for value in measurement_values):
+                raise BackendError(
+                    "invalid_analysis",
+                    "measurement profile pin must be complete",
+                )
+            profile_id, version_id, digest = measurement_values
+            record = self._profile_version(profile_id, version_id)
+            if (
+                not isinstance(record, dict)
+                or record.get("measurement_profile_id") != profile_id
+                or record.get("version_id") != version_id
+                or record.get("digest") != digest
+                or not isinstance(record.get("profile"), dict)
+                or record.get("digest") != _canonical_digest(record["profile"])
+            ):
+                raise BackendError(
+                    "invalid_analysis",
+                    "measurement profile pin does not match storage",
+                )
+        elif any(value is not None for value in measurement_values):
+            raise BackendError(
+                "invalid_analysis", "measurement profile pin is invalid"
+            )
+
+        assurance_version = pins.get("assurance_profile_version_id")
+        assurance_digest = pins.get("assurance_profile_digest")
+        if assurance_version != active_assurance_version:
+            raise BackendError(
+                "assurance_profile_changed",
+                "active assurance profile changed before analysis was saved",
+            )
+        if assurance_version is None:
+            if assurance_digest is not None:
+                raise BackendError(
+                    "invalid_analysis", "assurance profile pin is incomplete"
+                )
+        else:
+            if (
+                not isinstance(assurance_version, str)
+                or not ASSURANCE_PROFILE_VERSION_ID.match(assurance_version)
+                or not isinstance(assurance_digest, str)
+            ):
+                raise BackendError(
+                    "invalid_analysis", "assurance profile pin is invalid"
+                )
+            path = self._assurance_profile_path(
+                assessment_id, assurance_version
+            )
+            if path.is_symlink() or not path.is_file():
+                raise BackendError(
+                    "invalid_analysis", "assurance profile pin is unavailable"
+                )
+            record = self._read_json(
+                path,
+                "invalid_analysis",
+                "assurance profile pin is unavailable",
+            )
+            if (
+                not isinstance(record, dict)
+                or record.get("assessment_id") != assessment_id
+                or record.get("assurance_profile_version_id")
+                != assurance_version
+                or record.get("digest") != assurance_digest
+                or not isinstance(record.get("profile"), dict)
+                or record.get("digest") != _canonical_digest(record["profile"])
+            ):
+                raise BackendError(
+                    "invalid_analysis",
+                    "assurance profile pin does not match storage",
+                )
+        return pins
+
     # Measurement profiles -------------------------------------------------
 
     def _profile_base(self, profile_id: str) -> Path:
@@ -328,6 +552,7 @@ class CustomerAuditStore(AssessmentStore):
             )
         return self.measurement_directory / profile_id
 
+    @_measurement_profile_mutation
     def _profile_meta(self, profile_id: str) -> Dict[str, Any]:
         base = self._profile_base(profile_id)
         try:
@@ -351,6 +576,7 @@ class CustomerAuditStore(AssessmentStore):
             )
         return value
 
+    @_measurement_profile_mutation
     def _profile_version(self, profile_id: str, version_id: str) -> Dict[str, Any]:
         if not isinstance(version_id, str) or not MEASUREMENT_PROFILE_VERSION_ID.match(
             version_id
@@ -376,10 +602,11 @@ class CustomerAuditStore(AssessmentStore):
             )
         return value
 
+    @_measurement_profile_mutation
     def create_measurement_profile(self, value: Any) -> Dict[str, Any]:
         profile = validate_measurement_profile(value)
         _private_directory(self.measurement_directory)
-        if len(list(self.measurement_directory.glob("mprofile_*"))) >= (
+        if len(self._measurement_profile_bases_unlocked()) >= (
             MAX_MEASUREMENT_PROFILES
         ):
             raise BackendError(
@@ -418,6 +645,7 @@ class CustomerAuditStore(AssessmentStore):
         )
         return dict(metadata, active_version=record)
 
+    @_measurement_profile_mutation
     def list_measurement_profiles(
         self, include_archived: bool = False
     ) -> List[Dict[str, Any]]:
@@ -428,9 +656,7 @@ class CustomerAuditStore(AssessmentStore):
         if not self.measurement_directory.exists():
             return []
         results = []
-        for path in sorted(self.measurement_directory.glob("mprofile_*")):
-            if not path.is_dir() or not MEASUREMENT_PROFILE_ID.match(path.name):
-                continue
+        for path in self._measurement_profile_bases_unlocked():
             metadata = self._profile_meta(path.name)
             if metadata["status"] == "archived" and not include_archived:
                 continue
@@ -444,6 +670,7 @@ class CustomerAuditStore(AssessmentStore):
             reverse=True,
         )
 
+    @_measurement_profile_mutation
     def update_measurement_profile(
         self, profile_id: str, expected_revision: Any, changes: Any
     ) -> Dict[str, Any]:
@@ -496,6 +723,7 @@ class CustomerAuditStore(AssessmentStore):
         )
         return dict(updated, active_version=record)
 
+    @_measurement_profile_mutation
     def archive_measurement_profile(
         self, profile_id: str, expected_revision: Any
     ) -> Dict[str, Any]:
@@ -566,6 +794,8 @@ class CustomerAuditStore(AssessmentStore):
         model: Dict[str, Any],
         label: str,
     ) -> Dict[str, Any]:
+        _ensure_no_raw_recon(snapshots)
+        _ensure_no_raw_recon(model)
         normalized_snapshots = [_validate_snapshot(item) for item in snapshots]
         model = _json_clone(
             model,
@@ -582,6 +812,20 @@ class CustomerAuditStore(AssessmentStore):
             raise BackendError(
                 "invalid_consensus_baseline",
                 "baseline model schema_version is unsupported",
+            )
+        digest_input = {
+            key: value
+            for key, value in model.items()
+            if key not in {"baseline_model_id", "baseline_model_digest"}
+        }
+        reproduced_model_digest = _canonical_digest(digest_input)
+        if (
+            model.get("baseline_model_digest") != reproduced_model_digest
+            or model_id != "bmodel_{0}".format(reproduced_model_digest[:16])
+        ):
+            raise BackendError(
+                "invalid_consensus_baseline",
+                "baseline model digest is invalid",
             )
         if not isinstance(label, str) or len(label) > 128:
             raise BackendError("invalid_baseline", "label is invalid")
@@ -604,6 +848,29 @@ class CustomerAuditStore(AssessmentStore):
             number = max(numbers or [0]) + 1
             version_id = "baseline_v{0:04d}".format(number)
             now = _utc_now()
+            new_snapshot_count = 0
+            for snapshot in normalized_snapshots:
+                if self._immutable_preflight(
+                    self._snapshot_path(
+                        assessment_id, snapshot["snapshot_id"]
+                    ),
+                    snapshot,
+                    "snapshot_conflict",
+                ):
+                    new_snapshot_count += 1
+            existing_snapshot_count = len(
+                list((base / "snapshots").glob("snapshot_*.json"))
+            )
+            if existing_snapshot_count + new_snapshot_count > MAX_SNAPSHOTS:
+                raise BackendError(
+                    "snapshot_limit",
+                    "assessment snapshot limit was reached",
+                )
+            self._immutable_preflight(
+                base / "baseline_models" / (model_id + ".json"),
+                model,
+                "baseline_model_conflict",
+            )
             record = {
                 "schema_version": CUSTOMER_AUDIT_SCHEMA_VERSION,
                 "assessment_id": assessment_id,
@@ -939,6 +1206,14 @@ class CustomerAuditStore(AssessmentStore):
         pinned_versions: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Atomically persist v0.6.2 facts, lifecycle state, and occurrences."""
+        for value in (
+            comparison,
+            current_snapshot,
+            lifecycle_findings,
+            occurrence_set,
+            pinned_versions,
+        ):
+            _ensure_no_raw_recon(value)
         normalized_comparison = _validate_comparison(comparison)
         normalized_snapshot = _validate_snapshot(current_snapshot)
         if not isinstance(lifecycle_findings, list) or len(
@@ -987,14 +1262,12 @@ class CustomerAuditStore(AssessmentStore):
             active_assurance = metadata.get(
                 "active_assurance_profile_version"
             )
-            requested_assurance = pinned_versions.get(
-                "assurance_profile_version_id"
+            pinned_versions = self._validate_analysis_pins_unlocked(
+                assessment_id,
+                baseline,
+                pinned_versions,
+                active_assurance,
             )
-            if active_assurance != requested_assurance:
-                raise BackendError(
-                    "assurance_profile_changed",
-                    "active assurance profile changed before analysis was saved",
-                )
             if (
                 normalized_comparison["current_snapshot_id"]
                 != normalized_snapshot["snapshot_id"]
@@ -1015,7 +1288,10 @@ class CustomerAuditStore(AssessmentStore):
             snapshot_path = self._snapshot_path(
                 assessment_id, normalized_snapshot["snapshot_id"]
             )
-            if not snapshot_path.exists() and len(
+            snapshot_is_new = self._immutable_preflight(
+                snapshot_path, normalized_snapshot, "snapshot_conflict"
+            )
+            if snapshot_is_new and len(
                 list((base / "snapshots").glob("snapshot_*.json"))
             ) >= MAX_SNAPSHOTS:
                 raise BackendError(
@@ -1136,6 +1412,19 @@ class CustomerAuditStore(AssessmentStore):
             )
             occurrence["occurrence_set_id"] = occurrence_id
             occurrence["occurrence_digest"] = occurrence_digest
+            occurrence_path = (
+                base / "occurrences" / (occurrence_id + ".json")
+            )
+            occurrence_is_new = self._immutable_preflight(
+                occurrence_path, occurrence, "occurrence_conflict"
+            )
+            if occurrence_is_new and len(
+                list((base / "occurrences").glob("occurrence_*.json"))
+            ) >= MAX_OCCURRENCES:
+                raise BackendError(
+                    "occurrence_limit",
+                    "assessment occurrence limit was reached",
+                )
 
             record = {
                 "schema_version": CUSTOMER_AUDIT_SCHEMA_VERSION,
@@ -1232,81 +1521,170 @@ class CustomerAuditStore(AssessmentStore):
             raise BackendError(
                 "invalid_occurrence_set", "occurrence set must be an object"
             )
+        _ensure_no_raw_recon(record)
+        record.setdefault("schema_version", OCCURRENCE_SCHEMA_VERSION)
+        record.setdefault("assessment_id", assessment_id)
+        record.setdefault("comparison_id", comparison_id)
+        if (
+            record.get("schema_version") != OCCURRENCE_SCHEMA_VERSION
+            or record.get("assessment_id") != assessment_id
+            or record.get("comparison_id") != comparison_id
+        ):
+            raise BackendError(
+                "invalid_occurrence_set",
+                "occurrence set identity is inconsistent",
+            )
+        record.pop("occurrence_set_id", None)
+        record.pop("occurrence_digest", None)
         digest = _canonical_digest(record)
         occurrence_id = "occurrence_{0}".format(digest[:16])
-        record.setdefault("schema_version", OCCURRENCE_SCHEMA_VERSION)
         record["occurrence_set_id"] = occurrence_id
-        record["occurrence_digest"] = _canonical_digest(
-            {
-                key: value
-                for key, value in record.items()
-                if key != "occurrence_digest"
-            }
-        )
-        base = self._ensure_assessment_directories(assessment_id)
-        comparison = self.get_comparison(assessment_id, comparison_id)
-        if comparison.get("occurrence_set_id") not in (None, occurrence_id):
-            raise BackendError(
-                "occurrence_conflict",
-                "comparison already references another occurrence set",
+        record["occurrence_digest"] = digest
+
+        with self._lock(assessment_id):
+            self._read_metadata(assessment_id)
+            base = self._ensure_assessment_directories(assessment_id)
+            comparison_path = self._comparison_path(
+                assessment_id, comparison_id
             )
-        path = base / "occurrences" / (occurrence_id + ".json")
-        if path.exists():
-            try:
-                existing = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            comparison = self._read_json(
+                comparison_path,
+                "comparison_not_found",
+                "comparison was not found",
+            )
+            if comparison.get("comparison_id") != comparison_id:
                 raise BackendError(
-                    "storage_error", "occurrence set is invalid"
+                    "storage_error", "comparison record is invalid"
                 )
-            if existing != record:
+            if comparison.get("occurrence_set_id") not in (
+                None,
+                occurrence_id,
+            ):
                 raise BackendError(
                     "occurrence_conflict",
-                    "occurrence set already exists with different content",
+                    "comparison already references another occurrence set",
                 )
-        else:
-            write_private_file(
-                path,
-                json.dumps(
-                    record, ensure_ascii=False, indent=2, sort_keys=True
-                ).encode("utf-8")
-                + b"\n",
+            path = base / "occurrences" / (occurrence_id + ".json")
+            is_new = self._immutable_preflight(
+                path, record, "occurrence_conflict"
             )
+            if is_new and len(
+                list((base / "occurrences").glob("occurrence_*.json"))
+            ) >= MAX_OCCURRENCES:
+                raise BackendError(
+                    "occurrence_limit",
+                    "assessment occurrence limit was reached",
+                )
+            if is_new:
+                self._transaction(
+                    base,
+                    {
+                        "occurrences/{0}.json".format(
+                            occurrence_id
+                        ): record
+                    },
+                )
         return record
 
     def get_occurrence_set(
         self, assessment_id: str, comparison_id: str
     ) -> Optional[Dict[str, Any]]:
-        comparison = self.get_comparison(assessment_id, comparison_id)
-        base = self._ensure_assessment_directories(assessment_id)
-        direct = comparison.get("occurrence_set_id")
-        if direct:
-            candidates = [base / "occurrences" / (direct + ".json")]
-        else:
-            candidates = sorted(
-                (base / "occurrences").glob("occurrence_*.json")
-            )
-        for path in candidates:
-            try:
-                record = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            if record.get("comparison_id") == comparison_id:
-                return record
-        return None
+        with self._lock(assessment_id):
+            comparison = self.get_comparison(assessment_id, comparison_id)
+            base = self._ensure_assessment_directories(assessment_id)
+            direct = comparison.get("occurrence_set_id")
+            if direct:
+                candidates = [base / "occurrences" / (direct + ".json")]
+            else:
+                candidates = sorted(
+                    (base / "occurrences").glob("occurrence_*.json")
+                )
+            for path in candidates:
+                if path.is_symlink() or not path.is_file():
+                    raise BackendError(
+                        "storage_error", "occurrence set path is invalid"
+                    )
+                record = self._read_json(
+                    path,
+                    "storage_error",
+                    "occurrence set is unavailable",
+                )
+                if not isinstance(record, dict):
+                    raise BackendError(
+                        "storage_error", "occurrence set is invalid"
+                    )
+                stored_digest = record.get("occurrence_digest")
+                digest_input = {
+                    key: value
+                    for key, value in record.items()
+                    if key not in {"occurrence_set_id", "occurrence_digest"}
+                }
+                reproduced = _canonical_digest(digest_input)
+                if (
+                    record.get("occurrence_set_id") != path.stem
+                    or path.stem
+                    != "occurrence_{0}".format(reproduced[:16])
+                    or stored_digest != reproduced
+                ):
+                    raise BackendError(
+                        "storage_error",
+                        "occurrence set failed integrity validation",
+                    )
+                if record.get("comparison_id") == comparison_id:
+                    return record
+            if direct:
+                raise BackendError(
+                    "storage_error",
+                    "referenced occurrence set is unavailable",
+                )
+            return None
 
     def list_occurrence_sets(self, assessment_id: str) -> List[Dict[str, Any]]:
-        self._read_metadata(assessment_id)
-        base = self._ensure_assessment_directories(assessment_id)
-        results = []
-        for path in sorted((base / "occurrences").glob("occurrence_*.json")):
-            try:
-                record = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+        with self._lock(assessment_id):
+            self._read_metadata(assessment_id)
+            base = self._ensure_assessment_directories(assessment_id)
+            paths = sorted(
+                (base / "occurrences").glob("occurrence_*.json")
+            )
+            if len(paths) > MAX_OCCURRENCES:
                 raise BackendError(
-                    "storage_error", "occurrence history is invalid"
+                    "storage_error", "occurrence history exceeds its limit"
                 )
-            results.append(record)
-        return results
+            results = []
+            for path in paths:
+                if path.is_symlink() or not path.is_file():
+                    raise BackendError(
+                        "storage_error", "occurrence history path is invalid"
+                    )
+                record = self._read_json(
+                    path,
+                    "storage_error",
+                    "occurrence history is invalid",
+                )
+                stored_digest = (
+                    record.get("occurrence_digest")
+                    if isinstance(record, dict)
+                    else None
+                )
+                digest_input = {
+                    key: value
+                    for key, value in record.items()
+                    if key not in {"occurrence_set_id", "occurrence_digest"}
+                } if isinstance(record, dict) else {}
+                reproduced = _canonical_digest(digest_input)
+                if (
+                    not isinstance(record, dict)
+                    or record.get("occurrence_set_id") != path.stem
+                    or path.stem
+                    != "occurrence_{0}".format(reproduced[:16])
+                    or stored_digest != reproduced
+                ):
+                    raise BackendError(
+                        "storage_error",
+                        "occurrence history failed integrity validation",
+                    )
+                results.append(record)
+            return results
 
     def get_snapshot(
         self, assessment_id: str, snapshot_id: str
