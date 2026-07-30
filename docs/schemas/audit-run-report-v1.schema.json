@@ -73,7 +73,7 @@
       "properties": {
         "total_points": { "type": "integer", "minimum": 0 },
         "completed_points": { "type": "integer", "minimum": 0 },
-        "failed_points": { "type": "integer", "minimum": 0 },
+        "failed_points": { "type": "integer", "const": 0 },
         "comparable_points": { "type": "integer", "minimum": 0 },
         "partially_comparable_points": { "type": "integer", "minimum": 0 },
         "not_comparable_points": { "type": "integer", "minimum": 0 }
@@ -82,58 +82,90 @@
     "per_point_measurements": {
       "type": "array",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "measurement_point_id",
-          "status",
-          "comparability_status",
-          "snapshot_id",
-          "snapshot_digest",
-          "baseline_version_id",
-          "baseline_model_digest",
-          "finding_counts"
-        ],
-        "properties": {
-          "measurement_point_id": {
-            "type": "string",
-            "pattern": "^mp_[0-9a-f]{16}$"
-          },
-          "status": {
-            "type": "string",
-            "enum": ["pending", "resolved", "completed", "failed"]
-          },
-          "comparability_status": {
-            "type": "string",
-            "enum": ["comparable", "partially_comparable", "not_comparable"]
-          },
-          "snapshot_id": {
-            "type": "string",
-            "pattern": "^snapshot_[0-9a-f]{16}$"
-          },
-          "snapshot_digest": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "baseline_version_id": {
-            "type": "string",
-            "pattern": "^baseline_v[0-9]{4}$"
-          },
-          "baseline_model_digest": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "finding_counts": {
+        "oneOf": [
+          {
             "type": "object",
             "additionalProperties": false,
-            "required": ["total", "open", "resolved"],
+            "required": [
+              "measurement_point_id",
+              "status",
+              "comparability_status",
+              "snapshot_id",
+              "snapshot_digest",
+              "baseline_version_id",
+              "baseline_type",
+              "baseline_record_digest",
+              "baseline_model_id",
+              "baseline_model_digest",
+              "finding_counts"
+            ],
             "properties": {
-              "total": { "type": "integer", "minimum": 0 },
-              "open": { "type": "integer", "minimum": 0 },
-              "resolved": { "type": "integer", "minimum": 0 }
+              "measurement_point_id": { "type": "string", "pattern": "^mp_[0-9a-f]{16}$" },
+              "status": { "type": "string", "const": "completed" },
+              "comparability_status": { "type": "string", "enum": ["comparable", "partially_comparable", "not_comparable"] },
+              "snapshot_id": { "type": "string", "pattern": "^snapshot_[0-9a-f]{16}$" },
+              "snapshot_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "baseline_version_id": { "type": "string", "pattern": "^baseline_v[0-9]{4}$" },
+              "baseline_type": { "type": "string", "const": "consensus" },
+              "baseline_record_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "baseline_model_id": { "type": "string", "pattern": "^bmodel_[0-9a-f]{16}$" },
+              "baseline_model_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "finding_counts": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["total", "open", "acknowledged", "false_positive", "resolved"],
+                "properties": {
+                  "total": { "type": "integer", "minimum": 0 },
+                  "open": { "type": "integer", "minimum": 0 },
+                  "acknowledged": { "type": "integer", "minimum": 0 },
+                  "false_positive": { "type": "integer", "minimum": 0 },
+                  "resolved": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "measurement_point_id",
+              "status",
+              "comparability_status",
+              "snapshot_id",
+              "snapshot_digest",
+              "baseline_version_id",
+              "baseline_type",
+              "baseline_record_digest",
+              "baseline_snapshot_id",
+              "baseline_snapshot_digest",
+              "finding_counts"
+            ],
+            "properties": {
+              "measurement_point_id": { "type": "string", "pattern": "^mp_[0-9a-f]{16}$" },
+              "status": { "type": "string", "const": "completed" },
+              "comparability_status": { "type": "string", "enum": ["comparable", "partially_comparable", "not_comparable"] },
+              "snapshot_id": { "type": "string", "pattern": "^snapshot_[0-9a-f]{16}$" },
+              "snapshot_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "baseline_version_id": { "type": "string", "pattern": "^baseline_v[0-9]{4}$" },
+              "baseline_type": { "type": "string", "const": "single_scan" },
+              "baseline_record_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "baseline_snapshot_id": { "type": "string", "pattern": "^snapshot_[0-9a-f]{16}$" },
+              "baseline_snapshot_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "finding_counts": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["total", "open", "acknowledged", "false_positive", "resolved"],
+                "properties": {
+                  "total": { "type": "integer", "minimum": 0 },
+                  "open": { "type": "integer", "minimum": 0 },
+                  "acknowledged": { "type": "integer", "minimum": 0 },
+                  "false_positive": { "type": "integer", "minimum": 0 },
+                  "resolved": { "type": "integer", "minimum": 0 }
+                }
+              }
             }
           }
-        }
+        ]
       }
     },
     "evidence_references": {
