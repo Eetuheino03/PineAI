@@ -10,7 +10,9 @@ import argparse
 import json
 import math
 import os
+import re
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -18,10 +20,17 @@ import time
 import types
 from pathlib import Path
 
+from benchmark_repeatable_store import run_repeatable_store_benchmark
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "projects" / "PineAI" / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+ASSETS_DIR = SRC_DIR / "assets"
+if str(ASSETS_DIR) not in sys.path:
+    sys.path.insert(0, str(ASSETS_DIR))
+
+from pineai_backend.errors import BackendError  # noqa: E402
 
 
 REQUIRED_ACTIONS = [
@@ -31,6 +40,15 @@ REQUIRED_ACTIONS = [
     "list_measurement_profiles",
     "assurance_capabilities",
 ]
+ERROR_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def benchmark_exception_code(error):
+    if isinstance(error, BackendError):
+        code = getattr(error, "code", None)
+        if isinstance(code, str) and ERROR_CODE_PATTERN.match(code):
+            return code
+    return "unexpected_exception"
 
 
 def setup_pineapple_stub():
@@ -106,73 +124,69 @@ class FakeRequest:
 
 
 def validate_action_response(action_name: str, payload: any) -> tuple:
-    """Validate action response against backend contract specs.
-    Returns (is_valid: bool, error_message: str).
-    """
+    """Return a fixed validation code without serializing response content."""
     if not isinstance(payload, dict):
-        return False, f"{action_name} response is not a JSON object"
+        return False, "response_not_object"
     if "error" in payload:
-        err = payload.get("error", {})
-        msg = err.get("message", "Unknown error") if isinstance(err, dict) else str(err)
-        return False, f"{action_name} returned backend error: {msg}"
+        return False, "backend_error"
     if payload.get("success") is False:
-        return False, f"{action_name} returned success: false"
+        return False, "success_false"
 
     if action_name == "health":
         if payload.get("status") != "ok" or payload.get("module") != "PineAI":
-            return False, "health missing status='ok' or module='PineAI'"
+            return False, "health_contract"
         ver = payload.get("version")
         b_ver = payload.get("backend_version")
         if not isinstance(ver, str) or len(ver) == 0:
-            return False, "health missing non-empty string version"
+            return False, "health_version"
         if not isinstance(b_ver, str) or len(b_ver) == 0:
-            return False, "health missing non-empty string backend_version"
+            return False, "health_backend_version"
 
     elif action_name == "platform_capabilities":
         if "schema_version" not in payload:
-            return False, "platform_capabilities missing schema_version"
+            return False, "platform_schema"
         status = payload.get("status")
         if status not in {"ready", "degraded", "blocked"}:
-            return False, f"platform_capabilities status '{status}' not in ['ready', 'degraded', 'blocked']"
+            return False, "platform_status"
         if not isinstance(payload.get("storage"), dict):
-            return False, "platform_capabilities missing storage dict"
+            return False, "platform_storage"
         if not isinstance(payload.get("identity"), dict):
-            return False, "platform_capabilities missing identity dict"
+            return False, "platform_identity"
         if payload.get("recon_control") is not False:
-            return False, "platform_capabilities recon_control is not false"
+            return False, "platform_recon_control"
 
     elif action_name == "list_assessments":
         if "schema_version" not in payload:
-            return False, "list_assessments missing schema_version"
+            return False, "assessment_schema"
         if not isinstance(payload.get("assessments"), list):
-            return False, "list_assessments missing assessments list"
+            return False, "assessment_list"
 
     elif action_name == "list_measurement_profiles":
         if "schema_version" not in payload:
-            return False, "list_measurement_profiles missing schema_version"
+            return False, "measurement_profile_schema"
         if not isinstance(payload.get("measurement_profiles"), list):
-            return False, "list_measurement_profiles missing measurement_profiles list"
+            return False, "measurement_profile_list"
 
     elif action_name == "assurance_capabilities":
         if payload.get("schema_version") != "1.2":
-            return False, "assurance_capabilities schema_version is not '1.2'"
+            return False, "assurance_schema"
         if payload.get("product_mode") != "customer_audit_foundation":
-            return False, "assurance_capabilities product_mode is not 'customer_audit_foundation'"
+            return False, "assurance_product_mode"
         b_ver = payload.get("backend_version")
         if not isinstance(b_ver, str) or len(b_ver) == 0:
-            return False, "assurance_capabilities missing non-empty string backend_version"
+            return False, "assurance_backend_version"
         mod_actions = payload.get("module_actions")
         if not isinstance(mod_actions, list):
-            return False, "assurance_capabilities missing module_actions list"
+            return False, "assurance_actions"
         missing_req = set(REQUIRED_ACTIONS) - set(mod_actions)
         if missing_req:
-            return False, f"assurance_capabilities module_actions missing required actions: {missing_req}"
+            return False, "assurance_actions_missing"
         if not isinstance(payload.get("result_types"), dict):
-            return False, "assurance_capabilities result_types is not a dict"
+            return False, "assurance_result_types"
         if not isinstance(payload.get("report_scopes"), list):
-            return False, "assurance_capabilities missing report_scopes list"
+            return False, "assurance_report_scopes"
         if payload.get("recon_control") is not False:
-            return False, "assurance_capabilities recon_control is not false"
+            return False, "assurance_recon_control"
 
     return True, ""
 
@@ -184,11 +198,16 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
             "mode": "local-adapter",
             "pineai_version": "0.6.3",
             "iterations": iterations,
-            "service_initialization_ms": None,
+            "service_reinitialization_ms": None,
             "actions": {},
             "rss_mib": None,
             "cache": None,
-            "violations": ["iterations and cold_start_runs must be >= 1"],
+            "validation_scope": "workstation_software_only",
+            "protocol_validated": False,
+            "hardware_validated": False,
+            "performance_thresholds_applied": False,
+            "violations": ["invalid_benchmark_arguments"],
+            "functional_workload_passed": False,
             "passed": False,
         }
 
@@ -218,7 +237,9 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
             for action_name in REQUIRED_ACTIONS:
                 handler = module.module._actions.get(action_name)
                 if not handler:
-                    violations.append(f"Required action handler missing: {action_name}")
+                    violations.append(
+                        "handler_missing:{0}".format(action_name)
+                    )
                     action_metrics[action_name] = {
                         "first_ms": 0.0,
                         "p50_ms": 0.0,
@@ -227,7 +248,7 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
                         "attempts": iterations,
                         "successful_samples": 0,
                         "failed_samples": iterations,
-                        "last_error": f"Handler missing in module.module._actions: {action_name}"
+                        "last_error_code": "handler_missing",
                     }
                     continue
 
@@ -251,10 +272,14 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
                             last_error = err_msg
                     except Exception as ex:
                         action_failed = True
-                        last_error = str(ex)
+                        last_error = benchmark_exception_code(ex)
 
                 if action_failed or len(durations) < iterations:
-                    violations.append(f"Action '{action_name}' failed validation: {last_error}")
+                    violations.append(
+                        "action_failed:{0}:{1}".format(
+                            action_name, last_error or "validation_failed"
+                        )
+                    )
 
                 action_metrics[action_name] = {
                     "first_ms": round(first_ms, 3) if durations else 0.0,
@@ -266,7 +291,9 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
                     "failed_samples": iterations - len(durations),
                 }
                 if last_error:
-                    action_metrics[action_name]["last_error"] = last_error
+                    action_metrics[action_name][
+                        "last_error_code"
+                    ] = last_error
 
             store = module._store()
             cache_stats = {
@@ -277,6 +304,7 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
                 "evictions": store._mtime_cache_evictions,
             }
 
+            steady_rss = get_process_rss_mib(os.getpid())
             peak_rss = get_process_peak_rss_mib(os.getpid())
 
             return {
@@ -284,7 +312,11 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
                 "mode": "local-adapter",
                 "pineai_version": "0.6.3",
                 "iterations": iterations,
-                "service_initialization_ms": {
+                "validation_scope": "workstation_software_only",
+                "protocol_validated": False,
+                "hardware_validated": False,
+                "performance_thresholds_applied": False,
+                "service_reinitialization_ms": {
                     "runs": [round(x, 3) for x in cold_start_ms],
                     "p50": round(calculate_percentile(cold_start_ms, 50), 3),
                     "p95": round(calculate_percentile(cold_start_ms, 95), 3),
@@ -293,11 +325,12 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
                 "actions": action_metrics,
                 "rss_mib": {
                     "idle": round(idle_rss, 2),
-                    "steady": round(get_process_rss_mib(os.getpid()), 2),
-                    "peak": round(peak_rss, 2),
+                    "steady": round(steady_rss, 2),
+                    "process_lifetime_peak": round(peak_rss, 2),
                 },
                 "cache": cache_stats,
                 "violations": violations,
+                "functional_workload_passed": len(violations) == 0,
                 "passed": len(violations) == 0,
             }
     finally:
@@ -313,200 +346,184 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
 
 
 def run_mark_vii_socket_benchmark(iterations=50, socket_path=None, timeout_seconds=2.0):
-    """Run native Hak5 Unix-domain socket benchmark on Mark VII device (attach-only mode)."""
-    if iterations < 1:
+    """Attach to an already-running, genuine Unix socket without path output."""
+
+    def failure(code):
         return {
             "schema_version": "1.0",
             "mode": "mark-vii-socket",
             "pineai_version": "0.6.3",
             "iterations": iterations,
-            "socket_path": socket_path,
+            "socket_configured": bool(socket_path),
             "connection_mode": "attach",
-            "service_initialization_ms": None,
+            "service_reinitialization_ms": None,
             "actions": {},
             "rss_mib": None,
             "cache": None,
             "protocol_validated": False,
             "hardware_validated": False,
-            "violations": ["iterations must be >= 1"],
+            "response_contract_validated": False,
+            "performance_thresholds_applied": False,
+            "violations": [code],
+            "functional_workload_passed": False,
             "passed": False,
         }
 
+    if iterations < 1:
+        return failure("invalid_benchmark_arguments")
     if not socket_path:
         socket_path = os.environ.get("PINEAI_SOCKET_PATH")
-
     if not socket_path:
-        return {
-            "schema_version": "1.0",
-            "mode": "mark-vii-socket",
-            "pineai_version": "0.6.3",
-            "iterations": iterations,
-            "socket_path": None,
-            "connection_mode": "attach",
-            "service_initialization_ms": None,
-            "actions": {},
-            "rss_mib": None,
-            "cache": None,
-            "protocol_validated": False,
-            "hardware_validated": False,
-            "violations": ["--socket-path or PINEAI_SOCKET_PATH environment variable is required"],
-            "passed": False,
-        }
+        return failure("socket_path_required")
+    try:
+        socket_metadata = os.lstat(socket_path)
+    except OSError:
+        return failure("socket_unavailable")
+    if not stat.S_ISSOCK(socket_metadata.st_mode):
+        return failure("socket_not_unix_socket")
 
     timeout_seconds = max(0.5, min(10.0, float(timeout_seconds)))
-    max_response_bytes = 524_288  # 512 KiB transport buffer safety limit
-
+    max_response_bytes = 524_288
     action_metrics = {}
     violations = []
-    all_actions_passed = True
-
-    if not os.path.exists(socket_path):
-        return {
-            "schema_version": "1.0",
-            "mode": "mark-vii-socket",
-            "pineai_version": "0.6.3",
-            "iterations": iterations,
-            "socket_path": socket_path,
-            "connection_mode": "attach",
-            "service_initialization_ms": None,
-            "actions": {},
-            "rss_mib": None,
-            "cache": None,
-            "protocol_validated": False,
-            "hardware_validated": False,
-            "violations": [f"Socket path does not exist: {socket_path}"],
-            "passed": False,
-        }
 
     for action_name in REQUIRED_ACTIONS:
         durations = []
         first_ms = 0.0
-        successful_samples = 0
         failed_samples = 0
-        skipped_samples = 0
-        last_error = ""
-
-        for i in range(iterations):
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(timeout_seconds)
+        last_error_code = ""
+        for _index in range(iterations):
+            iteration_error = ""
+            benchmark_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            benchmark_socket.settimeout(timeout_seconds)
+            started = time.monotonic_ns()
+            response_data = b""
             try:
-                sock.connect(socket_path)
-                payload = json.dumps({"action": action_name}).encode("utf-8") + b"\n"
-                t0 = time.monotonic_ns()
-                sock.sendall(payload)
-
-                response_data = b""
-                stream_ok = True
-                framing_complete = False
-
-                while True:
+                benchmark_socket.connect(socket_path)
+                benchmark_socket.sendall(
+                    json.dumps({"action": action_name}).encode("utf-8")
+                    + b"\n"
+                )
+                while b"\n" not in response_data:
+                    chunk = benchmark_socket.recv(4096)
+                    if not chunk:
+                        iteration_error = "connection_closed"
+                        break
+                    response_data += chunk
+                    if len(response_data) > max_response_bytes:
+                        iteration_error = "response_limit"
+                        break
+                elapsed = (time.monotonic_ns() - started) / 1e6
+                if not iteration_error and b"\n" in response_data:
                     try:
-                        chunk = sock.recv(4096)
-                        if not chunk:
-                            stream_ok = False
-                            last_error = "Connection closed before newline frame terminator"
-                            break
-                        response_data += chunk
-                        if len(response_data) > max_response_bytes:
-                            stream_ok = False
-                            last_error = f"Response exceeded transport safety limit ({max_response_bytes} bytes)"
-                            break
-                        if b"\n" in response_data:
-                            framing_complete = True
-                            break
-                    except socket.timeout:
-                        stream_ok = False
-                        last_error = f"Socket request timed out ({timeout_seconds}s)"
-                        break
-                    except OSError as ex:
-                        stream_ok = False
-                        last_error = f"Socket OS error: {ex}"
-                        break
-
-                dt_ms = (time.monotonic_ns() - t0) / 1e6
-
-                if stream_ok and framing_complete and response_data:
-                    line = response_data.split(b"\n", 1)[0].decode("utf-8").strip()
-                    if not line:
-                        failed_samples += 1
-                        last_error = "Empty JSON payload"
+                        response = json.loads(
+                            response_data.split(b"\n", 1)[0].decode("utf-8")
+                        )
+                    except (UnicodeDecodeError, ValueError):
+                        iteration_error = "malformed_json"
                     else:
-                        try:
-                            resp_json = json.loads(line)
-                            is_valid, err_msg = validate_action_response(action_name, resp_json)
-                            if is_valid:
-                                if successful_samples == 0:
-                                    first_ms = dt_ms
-                                durations.append(dt_ms)
-                                successful_samples += 1
-                            else:
-                                failed_samples += 1
-                                last_error = err_msg
-                        except ValueError:
-                            failed_samples += 1
-                            last_error = f"Malformed JSON: {line[:50]}"
-                else:
-                    failed_samples += 1
+                        valid, validation_code = validate_action_response(
+                            action_name, response
+                        )
+                        if valid:
+                            if not durations:
+                                first_ms = elapsed
+                            durations.append(elapsed)
+                        else:
+                            iteration_error = validation_code
             except socket.timeout:
-                failed_samples += 1
-                last_error = f"Socket request timed out ({timeout_seconds}s)"
-            except OSError as ex:
-                failed_samples += 1
-                last_error = f"Socket OS error: {ex}"
+                iteration_error = "socket_timeout"
+            except OSError:
+                iteration_error = "socket_error"
             finally:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
+                benchmark_socket.close()
+            if iteration_error:
+                failed_samples += 1
+                last_error_code = iteration_error
 
-        if successful_samples < iterations:
-            all_actions_passed = False
-            violations.append(f"Action '{action_name}' had {failed_samples + skipped_samples} failures/skips: {last_error}")
-
-        metric_entry = {
+        if failed_samples:
+            violations.append(
+                "action_failed:{0}:{1}".format(
+                    action_name, last_error_code
+                )
+            )
+        entry = {
             "first_ms": round(first_ms, 3) if durations else 0.0,
             "p50_ms": round(calculate_percentile(durations, 50), 3),
             "p95_ms": round(calculate_percentile(durations, 95), 3),
             "max_ms": round(max(durations) if durations else 0.0, 3),
             "attempts": iterations,
-            "successful_samples": successful_samples,
+            "successful_samples": len(durations),
             "failed_samples": failed_samples,
-            "skipped_samples": skipped_samples,
         }
-        if last_error:
-            metric_entry["last_error"] = last_error
-
-        action_metrics[action_name] = metric_entry
+        if last_error_code:
+            entry["last_error_code"] = last_error_code
+        action_metrics[action_name] = entry
 
     return {
         "schema_version": "1.0",
         "mode": "mark-vii-socket",
         "pineai_version": "0.6.3",
         "iterations": iterations,
-        "socket_path": socket_path,
+        "socket_configured": True,
         "connection_mode": "attach",
-        "service_initialization_ms": None,
+        "service_reinitialization_ms": None,
         "actions": action_metrics,
         "rss_mib": None,
         "cache": None,
+        # A syntactically valid response from an arbitrary attached socket is
+        # not proof of Hak5 runtime protocol or hardware compatibility.
         "protocol_validated": False,
         "hardware_validated": False,
+        "response_contract_validated": not violations,
+        "performance_thresholds_applied": False,
         "violations": violations,
-        "passed": all_actions_passed and len(violations) == 0,
+        "functional_workload_passed": not violations,
+        "passed": not violations,
     }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PineAI Backend Socket/Adapter Benchmark"
+        description="PineAI backend workstation and attach-only benchmarks"
     )
     parser.add_argument(
-        "--mode", choices=["local-adapter", "mark-vii-socket"], default="local-adapter"
+        "--mode",
+        choices=[
+            "local-adapter",
+            "repeatable-store",
+            "mark-vii-socket",
+        ],
+        default="local-adapter",
     )
-    parser.add_argument("--iterations", type=int, default=20)
-    parser.add_argument("--cold-start-runs", type=int, default=3, help="Cold start runs (local-adapter mode only)")
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=None,
+        help=(
+            "Iteration count. Defaults to 20 for local-adapter, 1 for "
+            "repeatable-store, and 50 for attach-only socket mode."
+        ),
+    )
+    parser.add_argument(
+        "--cold-start-runs",
+        type=int,
+        default=3,
+        help="Service reinitialization runs (local-adapter mode only)",
+    )
+    parser.add_argument(
+        "--scenario",
+        choices=["minimal", "realistic", "frozen-limit"],
+        default="minimal",
+        help="RepeatableAuditStore workload",
+    )
     parser.add_argument(
         "--socket-path", type=str, default=None, help="Path to Unix domain socket for mark-vii-socket mode"
+    )
+    parser.add_argument(
+        "--allow-frozen-limit",
+        action="store_true",
+        help="Explicitly allow the expensive frozen-limit store scenario.",
     )
     parser.add_argument(
         "--timeout-seconds", type=float, default=2.0, help="Socket request timeout in seconds (0.5 to 10.0)"
@@ -516,13 +533,58 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.iterations < 1 or args.cold_start_runs < 1:
-        parser.error("iterations and cold_start_runs must be >= 1")
+    if args.iterations is None:
+        args.iterations = {
+            "local-adapter": 20,
+            "repeatable-store": 1,
+            "mark-vii-socket": 50,
+        }[args.mode]
+    if args.iterations < 1:
+        parser.error("iterations must be >= 1")
+    if args.mode == "local-adapter" and args.cold_start_runs < 1:
+        parser.error("cold_start_runs must be >= 1")
+    if (
+        args.mode == "repeatable-store"
+        and args.scenario == "frozen-limit"
+        and not args.allow_frozen_limit
+    ):
+        parser.error(
+            "frozen-limit requires explicit --allow-frozen-limit"
+        )
 
-    if args.mode == "local-adapter":
-        results = run_local_adapter_benchmark(args.iterations, args.cold_start_runs)
-    else:
-        results = run_mark_vii_socket_benchmark(args.iterations, args.socket_path, args.timeout_seconds)
+    try:
+        if args.mode == "local-adapter":
+            results = run_local_adapter_benchmark(
+                args.iterations, args.cold_start_runs
+            )
+        elif args.mode == "repeatable-store":
+            results = run_repeatable_store_benchmark(
+                args.scenario, args.iterations
+            )
+        else:
+            results = run_mark_vii_socket_benchmark(
+                args.iterations,
+                args.socket_path,
+                args.timeout_seconds,
+            )
+    except Exception as error:
+        results = {
+            "schema_version": "1.0",
+            "mode": args.mode,
+            "pineai_version": "0.6.3",
+            "iterations": args.iterations,
+            "validation_scope": "workstation_software_only",
+            "hardware_validated": False,
+            "protocol_validated": False,
+            "performance_thresholds_applied": False,
+            "violations": [
+                "benchmark_failed:{0}".format(
+                    benchmark_exception_code(error)
+                )
+            ],
+            "functional_workload_passed": False,
+            "passed": False,
+        }
 
     if args.json:
         print(json.dumps(results, indent=2))
