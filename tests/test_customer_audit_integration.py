@@ -10,6 +10,8 @@ ASSETS = ROOT / "projects" / "PineAI" / "src" / "assets"
 sys.path.insert(0, str(ASSETS))
 
 from pineai_backend.assurance_service import AssuranceService  # noqa: E402
+from pineai_backend.consensus import build_consensus_baseline  # noqa: E402
+from pineai_backend.customer_analysis import evidence_records  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
 
 
@@ -362,6 +364,96 @@ class CustomerAuditIntegrationTests(unittest.TestCase):
             self.assertNotEqual(
                 current_report["scope_digest"],
                 history_report["scope_digest"],
+            )
+
+    def test_consensus_model_and_occurrence_fields_are_source_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = AssuranceService(config_dir=directory)
+            measurement = service.create_measurement_profile(
+                profile_input()
+            )["measurement_profile"]
+            assessment = service.create_assessment(
+                {
+                    "name": "Integrity audit",
+                    "location": "Helsinki",
+                    "notes": "",
+                }
+            )
+            observations = [
+                {
+                    "scan": fixture_scan(),
+                    "scan_metadata": self.build_context(
+                        measurement, hour
+                    ),
+                }
+                for hour in range(3)
+            ]
+            snapshots = service._resolved_observations(observations)
+            mismatched_model = build_consensus_baseline(snapshots[:2])
+            with self.assertRaises(BackendError) as raised:
+                service.store.create_consensus_baseline_version(
+                    assessment["assessment_id"],
+                    assessment["revision"],
+                    snapshots[1:],
+                    mismatched_model,
+                    "Mismatched evidence",
+                )
+            self.assertEqual(
+                raised.exception.code, "invalid_consensus_baseline"
+            )
+
+            service, active, measurement, _ = (
+                self.create_active_foundation(directory)
+            )
+            current = fixture_scan()
+            current["APResults"][0]["channel"] = 11
+            preview = service.compare_recon(
+                active["assessment_id"],
+                current,
+                self.build_context(measurement, 6),
+            )
+            baseline = preview["baseline"]
+            occurrence = {
+                "observed_changes": preview["observed_changes"],
+                "inventory_reconciliation": preview[
+                    "inventory_reconciliation"
+                ],
+                "policy_deviations": preview["policy_deviations"],
+                "security_findings": preview["security_findings"],
+                "policy_evaluation_status": preview[
+                    "policy_evaluation_status"
+                ],
+                "lifecycle_findings": preview["lifecycle_findings"],
+                "evidence": evidence_records(
+                    baseline, preview["current_snapshot"]
+                ),
+                "quality_factors": preview["diff"][
+                    "comparability"
+                ].get("quality_factors", []),
+                "policy_reference": {
+                    "assurance_profile_version_id": preview[
+                        "pinned_versions"
+                    ].get("assurance_profile_version_id"),
+                    "assurance_profile_digest": preview[
+                        "pinned_versions"
+                    ].get("assurance_profile_digest"),
+                },
+                "limitations": [],
+                "unexpected_private_data": "must not persist",
+            }
+            with self.assertRaises(BackendError) as raised:
+                service.store.persist_customer_analysis(
+                    active["assessment_id"],
+                    active["revision"],
+                    baseline["baseline_version_id"],
+                    preview["diff"],
+                    preview["current_snapshot"],
+                    preview["lifecycle_findings"],
+                    occurrence,
+                    preview["pinned_versions"],
+                )
+            self.assertEqual(
+                raised.exception.code, "invalid_occurrence_set"
             )
 
 

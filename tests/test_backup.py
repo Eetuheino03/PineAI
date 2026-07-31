@@ -21,24 +21,31 @@ ASSETS = (
 sys.path.insert(0, str(ASSETS))
 
 import pineai_cli  # noqa: E402
+import pineai_backend.backup as backup_module  # noqa: E402
 from pineai_backend.backup import (  # noqa: E402
+    MAX_ARCHIVE_BYTES,
     create_backup,
     restore_backup_staging,
     verify_backup,
 )
 from pineai_backend.errors import BackendError  # noqa: E402
 
+ASSESSMENT_ID = (
+    "assessment_00000000-0000-4000-8000-000000000001"
+)
+SNAPSHOT_ID = "snapshot_0000000000000001"
+
 
 class BackupTests(unittest.TestCase):
     def source(self, root):
         source = Path(root) / "source"
-        (source / "assessments" / "assessment_example" / "snapshots").mkdir(
+        (source / "assessments" / ASSESSMENT_ID / "snapshots").mkdir(
             parents=True
         )
         (
             source
             / "assessments"
-            / "assessment_example"
+            / ASSESSMENT_ID
             / "assurance_profiles"
         ).mkdir()
         measurement = (
@@ -47,21 +54,21 @@ class BackupTests(unittest.TestCase):
             / "mprofile_00000000-0000-4000-8000-000000000001"
         )
         (measurement / "versions").mkdir(parents=True)
-        (source / "assessments" / "assessment_example" / "assessment.json").write_text(
-            json.dumps({"assessment_id": "assessment_example", "revision": 2}),
+        (source / "assessments" / ASSESSMENT_ID / "assessment.json").write_text(
+            json.dumps({"assessment_id": ASSESSMENT_ID, "revision": 2}),
             encoding="utf-8",
         )
         (
             source
             / "assessments"
-            / "assessment_example"
+            / ASSESSMENT_ID
             / "snapshots"
-            / "snapshot_example.json"
-        ).write_text(json.dumps({"snapshot_id": "snapshot_example"}), encoding="utf-8")
+            / (SNAPSHOT_ID + ".json")
+        ).write_text(json.dumps({"snapshot_id": SNAPSHOT_ID}), encoding="utf-8")
         (
             source
             / "assessments"
-            / "assessment_example"
+            / ASSESSMENT_ID
             / "assurance_profiles"
             / "assurance_v0001.json"
         ).write_text(
@@ -84,29 +91,8 @@ class BackupTests(unittest.TestCase):
         )
         # These transient files must never enter a point-in-time backup.
         (
-            source / "assessments" / "assessment_example" / ".lock"
+            source / "assessments" / ASSESSMENT_ID / ".lock"
         ).write_text("transient", encoding="utf-8")
-        transaction = (
-            source
-            / "assessments"
-            / "assessment_example"
-            / ".transactions"
-            / "txn_transient"
-        )
-        transaction.mkdir(parents=True)
-        (transaction / "journal.json").write_text(
-            json.dumps({"state": "prepared"}), encoding="utf-8"
-        )
-        measurement_transaction = (
-            source
-            / "measurement_profiles"
-            / ".transactions"
-            / "txn_transient"
-        )
-        measurement_transaction.mkdir(parents=True)
-        (measurement_transaction / "journal.json").write_text(
-            json.dumps({"state": "prepared"}), encoding="utf-8"
-        )
         (source / "profiles").mkdir()
         (source / "profiles" / "legacy.json").write_text(
             json.dumps({"legacy": True}), encoding="utf-8"
@@ -150,8 +136,8 @@ class BackupTests(unittest.TestCase):
                 names,
             )
             self.assertIn(
-                "data/assessments/assessment_example/assurance_profiles/"
-                "assurance_v0001.json",
+                f"data/assessments/{ASSESSMENT_ID}/"
+                "assurance_profiles/assurance_v0001.json",
                 names,
             )
 
@@ -171,10 +157,14 @@ class BackupTests(unittest.TestCase):
                 "measurement_profiles/"
                 "mprofile_00000000-0000-4000-8000-000000000001/"
                 "versions/mprofile_r0001.json",
-                "assessments/assessment_example/assessment.json",
-                "assessments/assessment_example/snapshots/snapshot_example.json",
-                "assessments/assessment_example/assurance_profiles/"
-                "assurance_v0001.json",
+                "assessments/{0}/assessment.json".format(
+                    ASSESSMENT_ID
+                ),
+                "assessments/{0}/snapshots/{1}.json".format(
+                    ASSESSMENT_ID, SNAPSHOT_ID
+                ),
+                f"assessments/{ASSESSMENT_ID}/"
+                "assurance_profiles/assurance_v0001.json",
             ):
                 self.assertEqual(
                     (target / relative).read_bytes(),
@@ -207,6 +197,53 @@ class BackupTests(unittest.TestCase):
             self.assertEqual(failure.exception.code, "backup_output_exists")
             self.assertEqual(output.read_bytes(), b"keep")
 
+    def test_failed_post_lock_validation_never_publishes_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            output = Path(directory) / "must-not-exist.tar.gz"
+            failure = BackendError(
+                "backup_source_changed",
+                "assessment set changed during backup",
+            )
+            with mock.patch.object(
+                backup_module,
+                "_assert_no_active_transactions",
+                side_effect=[None, failure],
+            ):
+                with self.assertRaises(BackendError) as raised:
+                    create_backup(str(source), str(output))
+            self.assertEqual(
+                raised.exception.code, "backup_source_changed"
+            )
+            self.assertFalse(output.exists())
+            self.assertEqual(
+                list(Path(directory).glob(".must-not-exist.tar.gz.*")),
+                [],
+            )
+
+    def test_os_error_details_are_not_exposed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            output = Path(directory) / "must-not-exist.tar.gz"
+            with mock.patch.object(
+                backup_module.os,
+                "link",
+                side_effect=OSError(
+                    "SECRET-PATH-CANARY /root/.PineAI/private"
+                ),
+            ):
+                with self.assertRaises(BackendError) as raised:
+                    create_backup(str(source), str(output))
+            self.assertEqual(raised.exception.code, "backup_io_error")
+            self.assertEqual(
+                raised.exception.safe_message,
+                "could not publish backup archive",
+            )
+            self.assertNotIn(
+                "SECRET-PATH-CANARY", raised.exception.safe_message
+            )
+            self.assertFalse(output.exists())
+
     def test_verify_rejects_path_traversal_and_special_members(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "unsafe.tar.gz"
@@ -220,7 +257,12 @@ class BackupTests(unittest.TestCase):
                     "config.json",
                     "pseudonymization.key",
                 ],
-                "excluded": [".lock", ".transactions", "openai.key"],
+                "excluded": [
+                    ".lock",
+                    ".transactions",
+                    "exports",
+                    "openai.key",
+                ],
                 "directories": ["assessments", "measurement_profiles"],
                 "files": [],
                 "file_count": 0,
@@ -338,6 +380,67 @@ class BackupTests(unittest.TestCase):
                     0,
                 )
             self.assertTrue(json.loads(restore_output.getvalue())["restored"])
+
+    def test_backup_rejects_raw_recon_and_unknown_config_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            raw_path = (
+                source
+                / "assessments"
+                / ASSESSMENT_ID
+                / "snapshots"
+                / (SNAPSHOT_ID + ".json")
+            )
+            raw_path.write_text(
+                json.dumps(
+                    {
+                        "nested": {
+                            "OutOfRangeClientResults": [],
+                            "APResults": [],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = Path(directory) / "raw.tar.gz"
+            with self.assertRaises(BackendError) as failure:
+                create_backup(str(source), str(output))
+            self.assertEqual(
+                failure.exception.code, "raw_recon_not_allowed"
+            )
+            self.assertFalse(output.exists())
+
+            raw_path.unlink()
+            (source / "config.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "language": "fi",
+                        "api_key": "secret-canary",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = Path(directory) / "secret.tar.gz"
+            with self.assertRaises(BackendError) as failure:
+                create_backup(str(source), str(output))
+            self.assertEqual(
+                failure.exception.code, "backup_unsafe_source"
+            )
+            self.assertFalse(output.exists())
+
+    def test_verify_rejects_oversized_compressed_input_before_parsing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "oversized.tar.gz"
+            with archive.open("wb") as handle:
+                handle.truncate(MAX_ARCHIVE_BYTES + 1)
+            with mock.patch(
+                "pineai_backend.backup.tarfile.open"
+            ) as archive_open:
+                with self.assertRaises(BackendError) as failure:
+                    verify_backup(str(archive))
+            self.assertEqual(failure.exception.code, "backup_limit")
+            archive_open.assert_not_called()
 
 
 if __name__ == "__main__":

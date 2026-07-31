@@ -18,7 +18,11 @@ from pineai_backend.config import (  # noqa: E402
     identity_fingerprint,
     public_identity_status,
 )
-from pineai_backend.customer_store import CustomerAuditStore  # noqa: E402
+from pineai_backend.customer_store import (  # noqa: E402
+    MAX_REPORT_EXPORT_BYTES,
+    MAX_REPORT_EXPORT_FILES,
+    CustomerAuditStore,
+)
 from pineai_backend.errors import BackendError  # noqa: E402
 from pineai_backend.storage_transaction import (  # noqa: E402
     PrivateTransaction,
@@ -147,6 +151,72 @@ class IdentityAndCustomerStoreTests(unittest.TestCase):
                 len(store.list_measurement_profiles(include_archived=True)), 1
             )
 
+    def test_immutable_profile_records_fail_closed_after_tampering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = CustomerAuditStore(directory)
+            measurement = store.create_measurement_profile(
+                measurement_profile()
+            )
+            measurement_path = (
+                Path(directory)
+                / "measurement_profiles"
+                / measurement["measurement_profile_id"]
+                / "versions"
+                / "mprofile_r0001.json"
+            )
+            measurement_record = json.loads(
+                measurement_path.read_text(encoding="utf-8")
+            )
+            measurement_record["profile"]["name"] = "tampered"
+            measurement_path.write_text(
+                json.dumps(measurement_record), encoding="utf-8"
+            )
+            with self.assertRaises(BackendError) as raised:
+                store.list_measurement_profiles()
+            self.assertEqual(raised.exception.code, "storage_error")
+
+            assessment = store.create(
+                {"name": "Integrity", "location": "", "notes": ""}
+            )
+            assurance = store.create_assurance_profile_version(
+                assessment["assessment_id"],
+                assessment["revision"],
+                {"title": "Opaque compatible profile"},
+            )
+            version_id = assurance["assurance_profile_version"][
+                "assurance_profile_version_id"
+            ]
+            assurance_path = (
+                Path(directory)
+                / "assessments"
+                / assessment["assessment_id"]
+                / "assurance_profiles"
+                / (version_id + ".json")
+            )
+            assurance_record = json.loads(
+                assurance_path.read_text(encoding="utf-8")
+            )
+            assurance_record["unexpected"] = "must fail closed"
+            assurance_path.write_text(
+                json.dumps(assurance_record), encoding="utf-8"
+            )
+            with self.assertRaises(BackendError) as raised:
+                store.get_assurance_profile_version(
+                    assessment["assessment_id"], version_id
+                )
+            self.assertEqual(raised.exception.code, "storage_error")
+
+    def test_measurement_profile_enumeration_rejects_unknown_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = CustomerAuditStore(directory)
+            store.measurement_directory.mkdir(parents=True, exist_ok=True)
+            (
+                store.measurement_directory / "unexpected-entry"
+            ).write_text("unexpected", encoding="utf-8")
+            with self.assertRaises(BackendError) as raised:
+                store.list_measurement_profiles()
+            self.assertEqual(raised.exception.code, "storage_error")
+
     def test_five_ghz_profile_requires_explicit_confirmation(self):
         with tempfile.TemporaryDirectory() as directory:
             value = measurement_profile()
@@ -271,6 +341,56 @@ class IdentityAndCustomerStoreTests(unittest.TestCase):
             # Verify note is NOT stored in the mutable finding record itself
             findings = store.list_findings(assessment["assessment_id"])
             self.assertNotIn("note", findings[0])
+
+    def test_report_export_size_count_and_symlink_limits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = CustomerAuditStore(directory)
+            assessment = store.create(
+                {"name": "Export limits", "location": "", "notes": ""}
+            )
+            assessment_id = assessment["assessment_id"]
+            with self.assertRaises(BackendError) as raised:
+                store.write_report_export(
+                    assessment_id,
+                    "PineAI-too-large.html",
+                    "x" * (MAX_REPORT_EXPORT_BYTES + 1),
+                )
+            self.assertEqual(raised.exception.code, "report_limit")
+
+            export_directory = (
+                Path(directory)
+                / "assessments"
+                / assessment_id
+                / "exports"
+            )
+            for index in range(MAX_REPORT_EXPORT_FILES):
+                (export_directory / f"PineAI-{index}.json").write_text(
+                    "{}\n", encoding="utf-8"
+                )
+            with self.assertRaises(BackendError) as raised:
+                store.write_report_export(
+                    assessment_id,
+                    "PineAI-over-limit.json",
+                    "{}\n",
+                )
+            self.assertEqual(raised.exception.code, "report_limit")
+
+            for path in export_directory.iterdir():
+                path.unlink()
+            outside = Path(directory) / "outside.json"
+            outside.write_text("{}\n", encoding="utf-8")
+            link = export_directory / "PineAI-link.json"
+            try:
+                link.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                return
+            with self.assertRaises(BackendError) as raised:
+                store.write_report_export(
+                    assessment_id,
+                    "PineAI-safe.json",
+                    "{}\n",
+                )
+            self.assertEqual(raised.exception.code, "storage_error")
 
 
 if __name__ == "__main__":

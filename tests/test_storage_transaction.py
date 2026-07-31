@@ -256,6 +256,46 @@ class StorageTransactionTests(unittest.TestCase):
             self.assertEqual(len(recovered), 1)
             self.assertEqual(json.loads(target_file.read_text()), {"val": 999})
 
+    def test_corrupt_later_staged_file_never_publishes_earlier_target(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first = root / "a.json"
+            second = root / "b.json"
+            first.write_text('{"state":"old-a"}\n', encoding="utf-8")
+            second.write_text('{"state":"old-b"}\n', encoding="utf-8")
+
+            def stop_after_prepare(stage, index):
+                if stage == "prepared":
+                    raise RuntimeError("leave prepared transaction")
+
+            txn = PrivateTransaction(
+                root, fault_injector=stop_after_prepare
+            )
+            txn.add_json("a.json", {"state": "new-a"})
+            txn.add_json("b.json", {"state": "new-b"})
+            with self.assertRaises(RuntimeError):
+                txn.commit()
+
+            transaction_directory = next(
+                (root / ".transactions").iterdir()
+            )
+            (
+                transaction_directory / "staged" / "0001.json"
+            ).write_bytes(b"corrupt")
+            with self.assertRaises(BackendError) as raised:
+                recover_private_transactions(root)
+            self.assertEqual(
+                raised.exception.code, "transaction_recovery_failed"
+            )
+            self.assertEqual(
+                first.read_text(encoding="utf-8"),
+                '{"state":"old-a"}\n',
+            )
+            self.assertEqual(
+                second.read_text(encoding="utf-8"),
+                '{"state":"old-b"}\n',
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

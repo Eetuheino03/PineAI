@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ASSETS = (
@@ -17,7 +18,10 @@ ASSETS = (
 )
 sys.path.insert(0, str(ASSETS))
 
-from pineai_backend.assessment_store import AssessmentStore  # noqa: E402
+from pineai_backend.assessment_store import (  # noqa: E402
+    MAX_SNAPSHOTS,
+    AssessmentStore,
+)
 from pineai_backend.errors import BackendError  # noqa: E402
 
 
@@ -302,6 +306,55 @@ class AssessmentStoreTests(unittest.TestCase):
                 created["assessment_id"], "baseline_v0001"
             )
             self.assertEqual(loaded["snapshot"], first_snapshot)
+
+    def test_single_scan_baseline_respects_snapshot_capacity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            created = store.create(assessment_value())
+            snapshot_directory = (
+                Path(directory)
+                / "assessments"
+                / created["assessment_id"]
+                / "snapshots"
+            )
+            existing = snapshot("1")
+            for index in range(MAX_SNAPSHOTS - 1):
+                (
+                    snapshot_directory
+                    / "snapshot_{0:016x}.json".format(index)
+                ).write_text("{}", encoding="utf-8")
+            existing_path = (
+                snapshot_directory / (existing["snapshot_id"] + ".json")
+            )
+            existing_path.write_text(
+                json.dumps(existing, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            new_snapshot = snapshot("f")
+            with self.assertRaises(BackendError) as raised:
+                store.create_baseline_version(
+                    created["assessment_id"],
+                    created["revision"],
+                    new_snapshot,
+                )
+            self.assertEqual(raised.exception.code, "snapshot_limit")
+            self.assertFalse(
+                (
+                    snapshot_directory
+                    / (new_snapshot["snapshot_id"] + ".json")
+                ).exists()
+            )
+
+            result = store.create_baseline_version(
+                created["assessment_id"],
+                created["revision"],
+                existing,
+            )
+            self.assertEqual(
+                result["baseline_version"]["snapshot_id"],
+                existing["snapshot_id"],
+            )
 
     def test_persist_analysis_and_finding_lifecycle(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -627,6 +680,20 @@ class AssessmentStoreTests(unittest.TestCase):
             AssessmentStore(directory).create(assessment_value())
             self.assertEqual(legacy.read_bytes(), before)
 
+    @mock.patch(
+        "pineai_backend.assessment_store.os.fchmod",
+        None,
+        create=True,
+    )
+    def test_file_lock_falls_back_when_fchmod_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            created = store.create(assessment_value())
+            loaded = store.get(created["assessment_id"])
+            self.assertEqual(
+                loaded["assessment_id"], created["assessment_id"]
+            )
+
     @unittest.skipIf(os.name == "nt", "POSIX permissions are verified on Linux")
     def test_private_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -728,7 +795,183 @@ class AssessmentStoreTests(unittest.TestCase):
             computed_sum = sum(entry["size"] for entry in store._mtime_cache.values())
             self.assertEqual(store._mtime_cache_total_bytes, computed_sum)
 
+    def test_partial_assessment_update_recovers_before_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            created = AssessmentStore(directory).create(assessment_value())
+            armed = [True]
+
+            def fault_injector(stage, index):
+                if armed[0] and stage == "target_written" and index == 0:
+                    armed[0] = False
+                    raise RuntimeError("simulated process interruption")
+
+            crashing = AssessmentStore(
+                directory, fault_injector=fault_injector
+            )
+            with self.assertRaises(RuntimeError):
+                crashing.update(
+                    created["assessment_id"],
+                    created["revision"],
+                    {"name": "Recovered update"},
+                )
+
+            recovered = AssessmentStore(directory).get(
+                created["assessment_id"]
+            )
+            self.assertEqual(recovered["name"], "Recovered update")
+            self.assertEqual(recovered["revision"], 2)
+            self.assertEqual(recovered["last_event_sequence"], 2)
+            self.assertEqual(
+                recovered["events"][-1]["event_type"],
+                "assessment_updated",
+            )
+            transaction_root = (
+                Path(directory)
+                / "assessments"
+                / created["assessment_id"]
+                / ".transactions"
+            )
+            self.assertEqual(list(transaction_root.iterdir()), [])
+
+    def test_event_cursor_corruption_fails_closed_without_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            created = store.create(assessment_value())
+            base = (
+                Path(directory)
+                / "assessments"
+                / created["assessment_id"]
+            )
+            metadata_path = base / "assessment.json"
+            metadata = json.loads(
+                metadata_path.read_text(encoding="utf-8")
+            )
+            metadata["last_event_sequence"] = 0
+            metadata_path.write_text(
+                json.dumps(metadata, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            events_before = (base / "events.jsonl").read_bytes()
+            with self.assertRaises(BackendError) as raised:
+                store.update(
+                    created["assessment_id"],
+                    created["revision"],
+                    {"name": "Must not be committed"},
+                )
+            self.assertEqual(raised.exception.code, "storage_error")
+            self.assertEqual(
+                (base / "events.jsonl").read_bytes(), events_before
+            )
+            self.assertEqual(
+                json.loads(metadata_path.read_text(encoding="utf-8"))[
+                    "name"
+                ],
+                created["name"],
+            )
+
+    def test_audit_event_corruption_matrix_fails_closed(self):
+        mutations = (
+            lambda event: event.pop("event_type"),
+            lambda event: event.update(event_id="evt_invalid"),
+            lambda event: event.update(recorded_at="not-a-time"),
+            lambda event: event.update(revision=True),
+            lambda event: event.update(data=[]),
+            lambda event: event.update(
+                data={"nested": {"APResults": []}}
+            ),
+            lambda event: event.update(unexpected=True),
+        )
+        for mutate in mutations:
+            with self.subTest(mutation=repr(mutate)):
+                with tempfile.TemporaryDirectory() as directory:
+                    created = AssessmentStore(directory).create(
+                        assessment_value()
+                    )
+                    event_path = (
+                        Path(directory)
+                        / "assessments"
+                        / created["assessment_id"]
+                        / "events.jsonl"
+                    )
+                    event = json.loads(
+                        event_path.read_text(encoding="utf-8")
+                    )
+                    mutate(event)
+                    event_path.write_text(
+                        json.dumps(event) + "\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaises(BackendError) as raised:
+                        AssessmentStore(directory).get(
+                            created["assessment_id"]
+                        )
+                    self.assertEqual(
+                        raised.exception.code, "storage_error"
+                    )
+
+    def test_event_history_rejects_missing_creation_and_revision_jumps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            created = store.create(assessment_value())
+            base = (
+                Path(directory)
+                / "assessments"
+                / created["assessment_id"]
+            )
+            event_path = base / "events.jsonl"
+            event_path.write_bytes(b"")
+            metadata_path = base / "assessment.json"
+            metadata = json.loads(
+                metadata_path.read_text(encoding="utf-8")
+            )
+            metadata["last_event_sequence"] = 0
+            metadata_path.write_text(
+                json.dumps(metadata, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(BackendError) as raised:
+                AssessmentStore(directory).get(created["assessment_id"])
+            self.assertEqual(raised.exception.code, "storage_error")
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = AssessmentStore(directory)
+            created = store.create(assessment_value())
+            updated = store.update(
+                created["assessment_id"],
+                created["revision"],
+                {"name": "Updated"},
+            )
+            base = (
+                Path(directory)
+                / "assessments"
+                / created["assessment_id"]
+            )
+            event_path = base / "events.jsonl"
+            events = [
+                json.loads(line)
+                for line in event_path.read_text(encoding="utf-8").splitlines()
+            ]
+            events[-1]["revision"] = updated["revision"] + 1
+            event_path.write_text(
+                "".join(
+                    json.dumps(event, sort_keys=True) + "\n"
+                    for event in events
+                ),
+                encoding="utf-8",
+            )
+            metadata_path = base / "assessment.json"
+            metadata = json.loads(
+                metadata_path.read_text(encoding="utf-8")
+            )
+            metadata["revision"] = updated["revision"] + 1
+            metadata_path.write_text(
+                json.dumps(metadata, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(BackendError) as raised:
+                AssessmentStore(directory).get(created["assessment_id"])
+            self.assertEqual(raised.exception.code, "storage_error")
+
 
 if __name__ == "__main__":
     unittest.main()
-

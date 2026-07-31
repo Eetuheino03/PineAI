@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 import jsonschema
 
@@ -11,12 +12,22 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "projects" / "PineAI" / "src" / "assets"
 sys.path.insert(0, str(ASSETS))
 
-from pineai_backend.assessment_store import _canonical_digest  # noqa: E402
+from pineai_backend.assessment_store import (  # noqa: E402
+    MAX_DOCUMENT_BYTES,
+    MAX_EVENTS,
+    MAX_SNAPSHOTS,
+    _canonical_digest,
+)
 from pineai_backend.assurance_service import AssuranceService  # noqa: E402
 from pineai_backend.backup import create_backup, restore_backup_staging  # noqa: E402
 from pineai_backend.config import ensure_pseudonymization_key  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
-from pineai_backend.repeatable_audit_store import RepeatableAuditStore  # noqa: E402
+from pineai_backend.repeatable_audit_store import (  # noqa: E402
+    AUDIT_RUN_TERMINAL_EVENT_RESERVE_BYTES,
+    RepeatableAuditStore,
+    _rfc3339_order_key,
+    _validate_rfc3339,
+)
 
 SCHEMA_PATH = ROOT / "docs" / "schemas" / "repeatable-audits-v1.schema.json"
 RECON_FIXTURE_PATH = ROOT / "tests" / "fixtures" / "recon_basic.json"
@@ -344,6 +355,32 @@ def completed_outcome(native):
 
 
 class RepeatableAuditStoreTests(unittest.TestCase):
+    def active_run_fixture(self, directory):
+        ensure_pseudonymization_key(directory)
+        store = RepeatableAuditStore(directory)
+        assessment = store.create(
+            {"name": "Reserve Test", "location": "Lab", "notes": ""}
+        )
+        aid = assessment["assessment_id"]
+        profile = store.create_assurance_profile_version(
+            aid, 1, sample_assurance_profile()
+        )
+        version_id = profile["assurance_profile_version"][
+            "assurance_profile_version_id"
+        ]
+        store.activate_assurance_profile_version(aid, 2, version_id)
+        point = store.create_measurement_point(
+            aid, 3, sample_context(), "Point A"
+        )
+        audit = store.create_audit_run(
+            aid,
+            4,
+            "Reserved run",
+            version_id,
+            [point["measurement_point"]["measurement_point_id"]],
+        )
+        return store, aid, audit["audit_run"], version_id
+
     def test_measurement_point_lifecycle_and_limits(self):
         with tempfile.TemporaryDirectory() as directory:
             ensure_pseudonymization_key(directory)
@@ -500,13 +537,146 @@ class RepeatableAuditStoreTests(unittest.TestCase):
                 "retry_target": "pending",
                 "error_code": "recon_timeout",
                 "error_message": "Recon timed out",
-                    "failed_at": utc_now(),
+                "failed_at": utc_now(),
             })
 
             # Try completing with failed measurement -> fails
             with self.assertRaises(BackendError) as raised:
                 store.complete_audit_run(aid, 7, run_id, 3)
-            self.assertEqual(raised.exception.code, "invalid_audit_run_transition")
+            self.assertEqual(
+                raised.exception.code, "invalid_audit_run_transition"
+            )
+
+    def test_comparison_timestamp_cannot_precede_resolution_at_nanoseconds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            native = setup_native_customer_analysis(directory)
+            store = native["store"]
+            aid = native["assessment_id"]
+            version_id = native["assurance_profile_version_id"]
+            point = store.create_measurement_point(
+                aid,
+                current_revision(store, aid),
+                sample_context(),
+                "Point A",
+            )
+            point_id = point["measurement_point"][
+                "measurement_point_id"
+            ]
+            audit = store.create_audit_run(
+                aid,
+                current_revision(store, aid),
+                "Timestamp order",
+                version_id,
+                [point_id],
+            )["audit_run"]
+            store.start_audit_run(
+                aid,
+                current_revision(store, aid),
+                audit["audit_run_id"],
+                1,
+            )
+            resolved = resolved_outcome(native)
+            resolved["resolved_at"] = (
+                "2099-07-30T10:00:00.000000002Z"
+            )
+            store.resolve_audit_measurement(
+                aid,
+                current_revision(store, aid),
+                audit["audit_run_id"],
+                2,
+                point_id,
+                resolved,
+            )
+            revision_before = current_revision(store, aid)
+            invalid = completed_outcome(native)
+            invalid["completed_at"] = (
+                "2099-07-30T10:00:00.000000001Z"
+            )
+            with self.assertRaises(BackendError) as raised:
+                store.save_audit_measurement_comparison(
+                    aid,
+                    revision_before,
+                    audit["audit_run_id"],
+                    3,
+                    point_id,
+                    invalid,
+                )
+            self.assertEqual(
+                raised.exception.code,
+                "invalid_audit_run_measurement",
+            )
+            self.assertEqual(current_revision(store, aid), revision_before)
+
+            valid = completed_outcome(native)
+            valid["completed_at"] = (
+                "2099-07-30T10:00:00.000000003Z"
+            )
+            result = store.save_audit_measurement_comparison(
+                aid,
+                revision_before,
+                audit["audit_run_id"],
+                3,
+                point_id,
+                valid,
+            )
+            self.assertEqual(
+                result["measurement"]["completed_at"],
+                valid["completed_at"],
+            )
+
+    def test_untyped_ids_and_action_text_return_backend_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ensure_pseudonymization_key(directory)
+            store = RepeatableAuditStore(directory)
+            assessment = store.create(
+                {"name": "Input errors", "location": "", "notes": ""}
+            )
+            aid = assessment["assessment_id"]
+            revision_before = assessment["revision"]
+            for invalid_id in (None, 1, True, [], {}):
+                with self.subTest(kind="point", value=invalid_id):
+                    with self.assertRaises(BackendError) as raised:
+                        store.get_measurement_point(aid, invalid_id)
+                    self.assertEqual(
+                        raised.exception.code,
+                        "invalid_measurement_point",
+                    )
+                with self.subTest(kind="run", value=invalid_id):
+                    with self.assertRaises(BackendError) as raised:
+                        store.get_audit_run(aid, invalid_id)
+                    self.assertEqual(
+                        raised.exception.code, "invalid_audit_run"
+                    )
+            with self.assertRaises(BackendError) as raised:
+                store.create_measurement_point(
+                    aid,
+                    revision_before,
+                    sample_context(),
+                    None,
+                )
+            self.assertEqual(
+                raised.exception.code, "invalid_measurement_point"
+            )
+            with self.assertRaises(BackendError) as raised:
+                store.create_measurement_point(
+                    aid,
+                    revision_before,
+                    dict(sample_context(), interface=None),
+                    "Point",
+                )
+            self.assertEqual(
+                raised.exception.code, "invalid_measurement_point"
+            )
+            with self.assertRaises(BackendError) as raised:
+                store.create_audit_run(
+                    aid,
+                    revision_before,
+                    None,
+                    "assurance_v0001",
+                    ["mp_0000000000000000"],
+                )
+            self.assertEqual(raised.exception.code, "invalid_audit_run")
+            self.assertEqual(current_revision(store, aid), revision_before)
 
     def test_evidence_limit_and_no_raw_recon(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -527,17 +697,43 @@ class RepeatableAuditStoreTests(unittest.TestCase):
                 aid, current_revision(store, aid), run_id, 1
             )
 
-            # Raw recon keys rejected
-            with self.assertRaises(BackendError) as raised:
-                store.resolve_audit_measurement(
-                    aid,
-                    current_revision(store, aid),
-                    run_id,
-                    2,
-                    mp_id,
-                    {"status": "resolved", "recon": {"raw": "data"}},
-                )
-            self.assertEqual(raised.exception.code, "invalid_audit_run_measurement")
+            # Real Hak5 raw Recon aliases are rejected recursively before a
+            # run, event, or revision can be mutated.
+            revision_before = current_revision(store, aid)
+            run_before = store.get_audit_run(aid, run_id)
+            for alias in (
+                "APResults",
+                "OutOfRangeResult",
+                "OutOfRangeResults",
+                "OutOfRangeClientResults",
+                "UnassociatedResult",
+                "UnassociatedResults",
+                "UnassociatedClientResults",
+                "Clients",
+                "out-of-range_client_results",
+            ):
+                with self.subTest(alias=alias):
+                    with self.assertRaises(BackendError) as raised:
+                        store.resolve_audit_measurement(
+                            aid,
+                            revision_before,
+                            run_id,
+                            2,
+                            mp_id,
+                            {
+                                "status": "resolved",
+                                "nested": {alias: []},
+                            },
+                        )
+                    self.assertEqual(
+                        raised.exception.code, "raw_recon_not_allowed"
+                    )
+                    self.assertEqual(
+                        current_revision(store, aid), revision_before
+                    )
+                    self.assertEqual(
+                        store.get_audit_run(aid, run_id), run_before
+                    )
 
             store.resolve_audit_measurement(
                 aid,
@@ -595,16 +791,18 @@ class RepeatableAuditStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             ensure_pseudonymization_key(directory)
             calls = []
+            armed = [False]
 
             def fault_injector(stage, index):
                 calls.append((stage, index))
-                if stage == "prepared":
+                if armed[0] and stage == "prepared":
                     raise RuntimeError("simulated crash after journal prepared")
 
             store = RepeatableAuditStore(directory, fault_injector=fault_injector)
             assessment = store.create({"name": "Fault Test", "location": "", "notes": ""})
             aid = assessment["assessment_id"]
             rev = assessment["revision"]
+            armed[0] = True
 
             with self.assertRaises(RuntimeError):
                 store.create_measurement_point(aid, rev, sample_context(), "Point Fault")
@@ -618,7 +816,9 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             self.assertEqual(points[0]["name"], "Point Fault")
 
     def test_backup_and_v063_compatibility(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as workspace:
+            directory = str(Path(workspace) / "state")
+            Path(directory).mkdir()
             ensure_pseudonymization_key(directory)
             store = RepeatableAuditStore(directory)
             assessment = store.create({"name": "Backup Test", "location": "Lab", "notes": ""})
@@ -633,11 +833,11 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             mp_res = store.create_measurement_point(aid, 3, sample_context(), "Point A")
             store.create_audit_run(aid, 4, "Run 1", vid, [mp_res["measurement_point"]["measurement_point_id"]])
 
-            backup_path = Path(directory) / "backup.tar.gz"
+            backup_path = Path(workspace) / "backup.tar.gz"
             manifest = create_backup(directory, backup_path)
             self.assertEqual(manifest["backup_type"], "pineai_device_continuity")
 
-            restore_dir = Path(directory) / "restored"
+            restore_dir = Path(workspace) / "restored"
             restore_backup_staging(backup_path, restore_dir)
 
             restored_store = RepeatableAuditStore(restore_dir)
@@ -845,6 +1045,9 @@ class RepeatableAuditStoreTests(unittest.TestCase):
             mp_id = mp_res["measurement_point"]["measurement_point_id"]
 
             store.create_audit_run(aid, 4, "Run 1", vid, [mp_id])
+            audit_run = store.list_audit_runs(aid)["audit_runs"][0][
+                "audit_run"
+            ]
 
             manifest_path = Path(directory) / "assessments" / aid / "audit_runs_manifest.json"
             self.assertTrue(manifest_path.exists())
@@ -859,6 +1062,396 @@ class RepeatableAuditStoreTests(unittest.TestCase):
 
             # Manifest must NOT have been written back to disk
             self.assertFalse(manifest_path.exists())
+
+            # The next mutation commits the reconstructed manifest atomically.
+            store.start_audit_run(
+                aid,
+                5,
+                audit_run["audit_run_id"],
+                audit_run["revision"],
+            )
+            self.assertTrue(manifest_path.exists())
+            persisted = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                persisted["runs"][audit_run["audit_run_id"]],
+                "in_progress",
+            )
+            self.assertEqual(persisted["active_closure_reserve"], 1)
+
+    def test_event_capacity_boundaries_preserve_active_run_closure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ensure_pseudonymization_key(directory)
+            store = RepeatableAuditStore(directory)
+            assessment = store.create(
+                {"name": "Capacity", "location": "Lab", "notes": ""}
+            )
+            aid = assessment["assessment_id"]
+
+            with mock.patch.object(
+                store,
+                "_event_closure_reserve_unlocked",
+                return_value=1,
+            ):
+                store._require_event_slot_unlocked(
+                    aid,
+                    {"last_event_sequence": MAX_EVENTS - 2},
+                )
+
+            for used, reserve in (
+                (MAX_EVENTS - 1, 1),
+                (MAX_EVENTS, 0),
+            ):
+                with self.subTest(used=used, reserve=reserve):
+                    with mock.patch.object(
+                        store,
+                        "_event_closure_reserve_unlocked",
+                        return_value=reserve,
+                    ):
+                        with self.assertRaises(BackendError) as raised:
+                            store._require_event_slot_unlocked(
+                                aid,
+                                {"last_event_sequence": used},
+                            )
+                    self.assertEqual(raised.exception.code, "event_limit")
+
+            metadata = {"last_event_sequence": MAX_EVENTS - 1}
+            with mock.patch.object(
+                store,
+                "_event_closure_reserve_unlocked",
+                return_value=1,
+            ):
+                store._require_event_slot_unlocked(
+                    aid, metadata, terminal_audit_run_event=True
+                )
+                with self.assertRaises(BackendError) as raised:
+                    store._require_event_slot_unlocked(aid, metadata)
+            self.assertEqual(raised.exception.code, "event_limit")
+
+            with mock.patch.object(
+                store,
+                "_event_closure_reserve_unlocked",
+                return_value=0,
+            ):
+                with self.assertRaises(BackendError) as raised:
+                    store._require_event_slot_unlocked(
+                        aid,
+                        {
+                            "last_event_sequence": MAX_EVENTS - 2,
+                            "_pending_storage_schema_migration_from": "1.0",
+                        },
+                        extra_closure_reserve=1,
+                    )
+            self.assertEqual(raised.exception.code, "event_limit")
+
+    def test_baseline_mutation_cannot_consume_active_run_closure_slot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, aid, _audit_run, _version_id = self.active_run_fixture(
+                directory
+            )
+            base = Path(directory) / "assessments" / aid
+            metadata_path = base / "assessment.json"
+            metadata = json.loads(
+                metadata_path.read_text(encoding="utf-8")
+            )
+            timestamp = metadata["updated_at"]
+            events = []
+            for sequence in range(1, MAX_EVENTS):
+                events.append(
+                    {
+                        "sequence": sequence,
+                        "event_id": (
+                            "evt_{0:08x}-0000-4000-8000-{0:012x}".format(
+                                sequence
+                            )
+                        ),
+                        "event_type": (
+                            "assessment_created"
+                            if sequence == 1
+                            else "capacity_padding"
+                        ),
+                        "recorded_at": timestamp,
+                        "revision": sequence,
+                    }
+                )
+            event_path = base / "events.jsonl"
+            event_bytes = "".join(
+                json.dumps(
+                    event,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+                for event in events
+            ).encode("utf-8")
+            event_path.write_bytes(event_bytes)
+            metadata["revision"] = MAX_EVENTS - 1
+            metadata["last_event_sequence"] = MAX_EVENTS - 1
+            metadata_path.write_text(
+                json.dumps(metadata, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(BackendError) as raised:
+                store.create_baseline_version(
+                    aid,
+                    MAX_EVENTS - 1,
+                    make_valid_snapshot("e"),
+                )
+            self.assertEqual(raised.exception.code, "event_limit")
+            self.assertEqual(event_path.read_bytes(), event_bytes)
+            self.assertEqual(
+                list((base / "baselines").glob("*.json")),
+                [],
+            )
+
+    def test_event_byte_reserve_preserves_active_run_closure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, aid, audit_run, _version_id = self.active_run_fixture(
+                directory
+            )
+            base = Path(directory) / "assessments" / aid
+            event_path = base / "events.jsonl"
+            events = [
+                json.loads(line)
+                for line in event_path.read_text(encoding="utf-8").splitlines()
+            ]
+            events[-1].setdefault("data", {})["padding"] = ""
+
+            def encode():
+                return "".join(
+                    json.dumps(
+                        event,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                    for event in events
+                ).encode("utf-8")
+
+            target_size = (
+                MAX_DOCUMENT_BYTES
+                - AUDIT_RUN_TERMINAL_EVENT_RESERVE_BYTES
+            )
+            unpadded = encode()
+            events[-1]["data"]["padding"] = "x" * (
+                target_size - len(unpadded)
+            )
+            padded = encode()
+            self.assertEqual(len(padded), target_size)
+            event_path.write_bytes(padded)
+            metadata_before = (
+                base / "assessment.json"
+            ).read_bytes()
+
+            metadata = json.loads(metadata_before)
+            with self.assertRaises(BackendError) as raised:
+                store.update(
+                    aid,
+                    metadata["revision"],
+                    {"name": "Must remain unchanged"},
+                )
+            self.assertEqual(raised.exception.code, "event_limit")
+            self.assertEqual(
+                (base / "assessment.json").read_bytes(),
+                metadata_before,
+            )
+            self.assertEqual(event_path.read_bytes(), padded)
+
+            cancelled = store.cancel_audit_run(
+                aid,
+                metadata["revision"],
+                audit_run["audit_run_id"],
+                audit_run["revision"],
+                reason="\U0001f512" * 512,
+            )
+            self.assertEqual(
+                cancelled["audit_run"]["status"], "cancelled"
+            )
+            self.assertLessEqual(
+                len(event_path.read_bytes()), MAX_DOCUMENT_BYTES
+            )
+
+    def test_equal_timestamp_pagination_uses_ascending_id_tiebreak(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ensure_pseudonymization_key(directory)
+            store = RepeatableAuditStore(directory)
+            assessment = store.create(
+                {"name": "Ordering", "location": "Lab", "notes": ""}
+            )
+            aid = assessment["assessment_id"]
+            profile = store.create_assurance_profile_version(
+                aid, 1, sample_assurance_profile()
+            )
+            version_id = profile["assurance_profile_version"][
+                "assurance_profile_version_id"
+            ]
+            store.activate_assurance_profile_version(aid, 2, version_id)
+            fixed = "2026-07-31T10:00:00.123456Z"
+            with mock.patch(
+                "pineai_backend.repeatable_audit_store._utc_now",
+                return_value=fixed,
+            ):
+                first = store.create_measurement_point(
+                    aid, 3, sample_context(), "Point 1"
+                )
+                second = store.create_measurement_point(
+                    aid, 4, sample_context(), "Point 2"
+                )
+                point_ids = [
+                    first["measurement_point"]["measurement_point_id"],
+                    second["measurement_point"]["measurement_point_id"],
+                ]
+                run_one = store.create_audit_run(
+                    aid, 5, "Run 1", version_id, [point_ids[0]]
+                )
+                run_two = store.create_audit_run(
+                    aid, 6, "Run 2", version_id, [point_ids[0]]
+                )
+
+            listed_points = store.list_measurement_points(
+                aid, limit=1, offset=0
+            )
+            self.assertEqual(
+                listed_points["measurement_points"][0][
+                    "measurement_point_id"
+                ],
+                sorted(point_ids)[0],
+            )
+            self.assertTrue(listed_points["has_more"])
+            run_ids = [
+                run_one["audit_run"]["audit_run_id"],
+                run_two["audit_run"]["audit_run_id"],
+            ]
+            listed_runs = store.list_audit_runs(aid, limit=1, offset=0)
+            self.assertEqual(
+                listed_runs["audit_runs"][0]["audit_run"]["audit_run_id"],
+                sorted(run_ids)[0],
+            )
+            self.assertTrue(listed_runs["has_more"])
+
+    def test_capacity_rejects_snapshot_count_above_frozen_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ensure_pseudonymization_key(directory)
+            store = RepeatableAuditStore(directory)
+            assessment = store.create(
+                {"name": "Capacity", "location": "Lab", "notes": ""}
+            )
+            aid = assessment["assessment_id"]
+            snapshot_directory = (
+                Path(directory) / "assessments" / aid / "snapshots"
+            )
+            for index in range(MAX_SNAPSHOTS + 1):
+                (
+                    snapshot_directory
+                    / "snapshot_{0:016x}.json".format(index)
+                ).write_text("{}", encoding="utf-8")
+            with self.assertRaises(BackendError) as raised:
+                store.get_assessment_capacity(aid)
+            self.assertEqual(raised.exception.code, "storage_error")
+
+    def test_existing_audit_run_manifest_corruption_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ensure_pseudonymization_key(directory)
+            store = RepeatableAuditStore(directory)
+            assessment = store.create(
+                {
+                    "name": "Strict Manifest Test",
+                    "location": "Lab",
+                    "notes": "",
+                }
+            )
+            aid = assessment["assessment_id"]
+            profile = store.create_assurance_profile_version(
+                aid, 1, sample_assurance_profile()
+            )
+            version_id = profile["assurance_profile_version"][
+                "assurance_profile_version_id"
+            ]
+            store.activate_assurance_profile_version(aid, 2, version_id)
+            point = store.create_measurement_point(
+                aid, 3, sample_context(), "Point A"
+            )
+            store.create_audit_run(
+                aid,
+                4,
+                "Run 1",
+                version_id,
+                [point["measurement_point"]["measurement_point_id"]],
+            )
+            manifest_path = (
+                Path(directory)
+                / "assessments"
+                / aid
+                / "audit_runs_manifest.json"
+            )
+            valid = json.loads(manifest_path.read_text(encoding="utf-8"))
+            invalid_documents = [
+                b"{",
+                json.dumps(dict(valid, unexpected=True)).encode("utf-8"),
+                json.dumps(dict(valid, schema_version="9.9")).encode("utf-8"),
+                json.dumps(dict(valid, active_closure_reserve=True)).encode(
+                    "utf-8"
+                ),
+                json.dumps(dict(valid, active_closure_reserve=0)).encode(
+                    "utf-8"
+                ),
+                json.dumps(
+                    dict(valid, runs={"ar_0000000000000000": "unknown"})
+                ).encode("utf-8"),
+                json.dumps(dict(valid, runs={})).encode("utf-8"),
+            ]
+            for payload in invalid_documents:
+                with self.subTest(payload=payload[:80]):
+                    manifest_path.write_bytes(payload)
+                    with self.assertRaises(BackendError) as raised:
+                        store.get_assessment_capacity(aid)
+                    self.assertEqual(
+                        raised.exception.code,
+                        "invalid_audit_run_manifest",
+                    )
+
+    def test_rfc3339_fractional_precision_orders_exactly(self):
+        accepted = [
+            "2026-07-30T10:00:00.1Z",
+            "2026-07-30T10:00:00.1234567Z",
+            "2026-07-30T10:00:00.123456789Z",
+            "2026-07-30T12:00:00.123456789+02:00",
+            "2026-07-30t10:00:00.123456789z",
+        ]
+        for value in accepted:
+            self.assertEqual(
+                _validate_rfc3339(value, "timestamp", "invalid_test"),
+                value,
+            )
+        with self.assertRaises(BackendError) as raised:
+            _validate_rfc3339(
+                "2026-07-30T10:00:00.1234567890Z",
+                "timestamp",
+                "invalid_test",
+            )
+        self.assertEqual(raised.exception.code, "invalid_test")
+        with self.assertRaises(BackendError):
+            _validate_rfc3339(
+                "٢٠٢٦-٠٧-٣٠T١٠:٠٠:٠٠Z",
+                "timestamp",
+                "invalid_test",
+            )
+        with self.assertRaises(BackendError):
+            _validate_rfc3339(
+                "2026-12-31T23:59:60Z",
+                "timestamp",
+                "invalid_test",
+            )
+        self.assertLess(
+            _rfc3339_order_key("2026-07-30T10:00:00.123456788Z"),
+            _rfc3339_order_key("2026-07-30T10:00:00.123456789Z"),
+        )
+        self.assertEqual(
+            _rfc3339_order_key("2026-07-30T10:00:00.123456789Z"),
+            _rfc3339_order_key(
+                "2026-07-30T12:00:00.123456789+02:00"
+            ),
+        )
 
 
 if __name__ == "__main__":
