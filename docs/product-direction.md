@@ -174,25 +174,32 @@ High-value, computationally lightweight field capabilities.
 
 ---
 
-### v0.9.0 — Companion & Sensor Expansion
+### v0.9.0 — Companion MVP & Sensor Expansion
 
-Heavyweight features offloaded to an optional Docker companion running on a laptop, NUC, or server.
+Proposed optional component architecture specified in detail in [docs/companion-architecture.md](file:///c:/Users/eetu.heino/OneDrive%20-%20Brand%20ID%20Oy/Documents/PineAI/docs/companion-architecture.md).
+
+#### Deployment & Architecture Principles
+- **Single-Container Default**: `pineai-companion` runs as one Docker container using SQLite metadata and filesystem object storage. No mandatory external PostgreSQL, Redis, RabbitMQ, Nginx, or Traefik.
+- **Shared Companion Core**: Single unified Python backend (`pineai_companion_core`) serving Docker, Windows (Tauri/desktop shell), and Linux desktop deployments.
+- **Outbound-Only Ingress**: Embedded ingress provider adapter (`cloudflared` bundled binary default, `ngrok` SDK supported alt) provides public HTTPS push without port forwarding, public IP, router config, or VPS.
+- **Ingest Isolation**: Admin Web UI and API bind strictly to `127.0.0.1:8741`. Ingress tunnel routes only to public ingest allowlist (`127.0.0.1:8742`).
+- **Mark VII Outbox**: Bounded queue on Mark VII (max 5 bundles / 64 MiB ceiling) with exponential backoff retries.
 
 #### WiFi Pineapple Mark VII Role
 - Recon integration & deterministic normalization.
 - Baseline creation, comparison, and evidence lifecycle.
 - Compact HTML/JSON report generation.
-- Fully self-contained offline operation.
+- Fully self-contained offline operation (100% functional without Companion).
 
 #### Optional Companion Role
 - API key storage and remote AI request handling.
 - Large-scale historical analytics and fleet-wide audits.
-- PCAP and raw packet parsing (TCPDump / hcxdumptool).
-- Cryptographic report signing.
+- Isolated PCAP and raw packet parsing in unprivileged worker subprocesses.
+- Cryptographic Ed25519 report signing.
 - Multi-device management and long-term storage.
-- Local LLM execution on operator's heavy hardware.
+- Local LLM execution on operator's heavy host hardware.
 
----
+----
 
 ## Lightweight High-Value Features
 

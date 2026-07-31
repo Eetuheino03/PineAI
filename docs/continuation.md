@@ -217,3 +217,7 @@ No physical Mark VII, SSH, module socket, Recon radio, capture, or firmware
 test was performed in this audit. Hardware validation remains a separate,
 explicitly pending gate and is not required to complete the workstation-only
 PR correction cycle.
+
+## Proposed Component Architecture Checkpoint (v0.9.0 Companion)
+
+The optional single-container **PineAI / PineAssure Companion** architecture specification is documented in [docs/companion-architecture.md](companion-architecture.md). It defines direct Mark VII HTTPS bundle pushing via outbound-only ingress tunnels without public IP, router port forwarding, or stored root SSH credentials. The design remains proposed, non-authoritative toward Mark VII local engine, and does not claim physical hardware validation.

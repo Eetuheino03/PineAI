@@ -300,3 +300,13 @@ PineAI v0.7.0 introduces multi-point offline wireless change auditing (`Measurem
 * **Capacity & Storage Bounds**: Assessment-wide snapshot/comparison pools (100 each), 128MB RAM hardware constraints, dynamic event closure reserve, and 3 discriminated failed measurement branches.
 * **Transaction Recovery**: Standardized recovery hooks (`staged`, `prepared`, `target_written`, `committed`, `before_cleanup`, `cleanup_failed`) and abandoned pre-prepare transaction cleanup.
 * **Hardware Validation Gate**: Physical Mark VII validation for `v0.6.3` remains pending. Contract design for `v0.7.0` is frozen as a pre-implementation specification by user authorization.
+
+## PineAI / PineAssure Companion System Architecture (Proposed v0.9.0)
+
+The optional **PineAI Companion** allows a WiFi Pineapple Mark VII to push sealed, privacy-filtered audit bundles directly to an operator-controlled Companion instance over an outbound-only ingress tunnel without public IP addresses, router port forwarding, or stored root SSH credentials.
+
+* **Detailed Specification**: See [docs/companion-architecture.md](companion-architecture.md).
+* **Companion Core**: Shared Python backend (`pineai_companion_core`) serving single-container Docker, native Windows desktop, and native Linux desktop distributions.
+* **Mark VII Outbox**: Bounded local delivery outbox under `/root/.PineAI/outbox/` (max 5 bundles / 64 MiB RAM/disk ceiling) with exponential backoff retry.
+* **Ingress Isolation**: Admin UI binds to `127.0.0.1:8741`. Ingress adapter exposes strictly an allowlisted ingest service (`127.0.0.1:8742`).
+* **Offline Authority**: Mark VII retains 100% deterministic authority. The Companion is strictly an optional storage, analytics, and reporting enhancement.
