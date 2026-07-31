@@ -1,9 +1,8 @@
-# PineAI
+# PineAssure — Wireless Assurance for WiFi Pineapple
 
-PineAI Baseline & Drift is a portable, offline wireless change-auditing
-module for the WiFi Pineapple Mark VII. It answers what a site looked like in
-an approved state, what changed, how trustworthy the comparison is, and which
-evidence proves each result.
+**Baseline. Detect drift. Prove changes.**
+
+PineAssure is a portable, offline wireless change-auditing module for the WiFi Pineapple Mark VII. It answers what a site looked like in an approved state, what changed, how trustworthy the comparison is, and which evidence proves each result.
 
 ![PineAI Banner](docs/asset.png)
 
