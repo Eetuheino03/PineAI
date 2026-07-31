@@ -40,6 +40,8 @@ jobs:
           else
             git diff-tree --check --root -r HEAD
           fi
+      - name: Validate documentation and JSON contracts
+        run: python scripts/validate_docs.py
       - name: Run Python static checks
         run: ruff check projects/PineAI/src tests scripts
       - name: Run Angular lint

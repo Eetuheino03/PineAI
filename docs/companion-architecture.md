@@ -1,7 +1,8 @@
 # PineAI / PineAssure Companion Architecture Guide
 
-> **Status**: Proposed / Design Specification (Target: `v0.9.0` MVP)  
-> **Authority**: Non-authoritative optional enhancement. WiFi Pineapple Mark VII retains 100% offline deterministic authority.  
+> **Status**: Proposed / Design Specification (Target: `v0.9.0` MVP)
+>
+> **Authority**: Non-authoritative optional enhancement. WiFi Pineapple Mark VII retains 100% offline deterministic authority.
 > **Hardware Validation**: Physical WiFi Pineapple Mark VII validation remains pending for release artifacts; this design document does not claim physical device validation.
 
 ---
