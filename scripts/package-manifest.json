@@ -1,0 +1,127 @@
+{
+  "schema_version": "1.0",
+  "module_root": "PineAI",
+  "files": [
+    {
+      "path": "PineAI.umd.js",
+      "source": null,
+      "generated": true,
+      "mode": "0644"
+    },
+    {
+      "path": "module.py",
+      "source": "projects/PineAI/src/module.py",
+      "mode": "0755"
+    },
+    {
+      "path": "module.json",
+      "source": "projects/PineAI/src/module.json",
+      "mode": "0644"
+    },
+    {
+      "path": "module.svg",
+      "source": "projects/PineAI/src/module.svg",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/README",
+      "source": "projects/PineAI/src/assets/README",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_cli.py",
+      "source": "projects/PineAI/src/assets/pineai_cli.py",
+      "mode": "0755"
+    },
+    {
+      "path": "assets/pineai_backend/__init__.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/__init__.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/ai_analysis.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/ai_analysis.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/assessment_store.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/assessment_store.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/assurance.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/assurance.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/assurance_profiles.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/assurance_profiles.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/assurance_service.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/assurance_service.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/backup.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/backup.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/config.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/config.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/consensus.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/consensus.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/customer_analysis.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/customer_analysis.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/customer_store.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/customer_store.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/errors.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/errors.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/openai_client.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/openai_client.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/platform.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/platform.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/recon.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/recon.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/repeatable_audit_store.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/repeatable_audit_store.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/reports.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/reports.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/storage_transaction.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/storage_transaction.py",
+      "mode": "0644"
+    }
+  ]
+}

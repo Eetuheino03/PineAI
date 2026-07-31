@@ -153,3 +153,67 @@ The verified `PineAI-0.6.3.tar.gz` artifact and its matching SHA-256 sidecar wil
 - **v0.7.0 Contract Branch**: `docs/repeatable-field-audits-contract-v0.7.0`
 - **Contracts Frozen**: API specification (`docs/repeatable-audits-api-v1.md`), JSON Schemas (`repeatable-audits-v1.schema.json`, `audit-run-report-v1.schema.json`), and schema test suites (`test_repeatable_audits_schema.py`, `test_audit_run_report_schema.py`).
 
+## PR #47 workstation audit checkpoint
+
+PR `#47` remains a draft on branch
+`feature/repeatable-field-audits-store-v0.7.0`. The audit corrected the
+internal persistence and recovery implementation without changing module
+version `0.6.3` or exposing the frozen v0.7 module actions.
+
+Correctness and security corrections include:
+
+- strict AuditRun manifest validation and read-only reconstruction;
+- closure reserve derived from the validated run map;
+- atomic AuditRun lifecycle mutations and native artifact persistence;
+- exact immutable CustomerAuditStore snapshot, comparison, occurrence, and
+  digest validation;
+- strict RFC 3339 timestamps and action-specific errors;
+- Windows-safe file descriptors and bounded retry of an atomic replacement
+  temporarily denied by a scanner or sync provider;
+- safe configuration, backup, CLI, and parser error messages;
+- a terminal-event byte reserve that covers the maximum accepted UTF-8
+  cancellation reason;
+- transient assessment lock files no longer binding an uninitialized identity;
+- canonical package staging that rejects output symlinks.
+
+Committed-head workstation validation:
+
+- WSL Python 3.13: Ruff, compileall, and 218 Python tests passed;
+- Windows Python 3.8.20: Ruff, compileall, and 218 Python tests passed, with
+  13 intentional POSIX/socket-only skips;
+- Windows Node 16.20.2 / Angular 9: lint passed, 26 ChromeHeadless tests
+  passed, and the production build passed;
+- Angular coverage: statements 42.35%, branches 27.57%, functions 48.18%,
+  and lines 42.21%;
+- no Angular e2e target exists in `angular.json`, so an e2e run is not a
+  defined repository gate;
+- `git diff --check`, shell syntax, secret patterns, unsafe subprocess,
+  archive traversal, raw Recon, permissions, and package-path checks passed.
+
+The non-mutating dependency audit reports 177 findings in the full legacy
+Angular 9 development tree (12 low, 73 moderate, 74 high, and 18 critical).
+The production tree reports three high findings in direct Angular 9
+dependencies. npm only offers an incompatible major Angular upgrade, so no
+automatic dependency mutation was made in this PR.
+
+Workstation benchmark results are functional measurements, not product
+performance claims:
+
+- local adapter: 6,100 action calls completed without a failed sample;
+- three 100-iteration aggregate action-median measurements had 8.05% CV;
+- realistic store workload: 2,535.953 ms, 6.533 ms reopen, 38 files, and
+  217,008 persisted bytes;
+- frozen-limit workload: 44,880.169 ms, 363.087 ms reopen, and the exact
+  64 active / 90 total measurement-point / 128 AuditRun boundaries;
+- every result explicitly has `hardware_validated=false`,
+  `protocol_validated=false`, and `performance_thresholds_applied=false`.
+
+The canonical local package contains 24 runtime files and passed source,
+bundle, owner, mode, path, special-file, source-map, bytecode, secret, compile,
+and isolated-import checks. Its SHA-256 is
+`7050a647ec6593b1e9c20b51e0315fe3af078495b7db726569f762b20463d1c3`.
+
+No physical Mark VII, SSH, module socket, Recon radio, capture, or firmware
+test was performed in this audit. Hardware validation remains a separate,
+explicitly pending gate and is not required to complete the workstation-only
+PR correction cycle.

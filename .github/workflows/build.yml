@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 16
@@ -22,6 +24,22 @@ jobs:
       - run: npm ci
       - name: Install Python test dependencies
         run: python -m pip install -r requirements-dev.txt
+      - name: Verify Python dependency state
+        run: python -m pip check
+      - name: Check whitespace errors
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$BASE_SHA...HEAD"
+          elif [[ -n "$BEFORE_SHA" ]] &&
+               [[ ! "$BEFORE_SHA" =~ ^0+$ ]]; then
+            git diff --check "$BEFORE_SHA..HEAD"
+          else
+            git diff-tree --check --root -r HEAD
+          fi
       - name: Run Python static checks
         run: ruff check projects/PineAI/src tests scripts
       - name: Run Angular lint
@@ -29,7 +47,13 @@ jobs:
       - name: Run backend tests
         run: python -m unittest discover -s tests -v
       - name: Run Angular frontend tests
-        run: npm test -- --watch=false --browsers=ChromeHeadlessCI --progress=false
+        run: |
+          npm test -- \
+            --watch=false \
+            --browsers=ChromeHeadlessCI \
+            --progress=false \
+            --code-coverage
+          test -s coverage/PineAI/lcov.info
       - name: Validate local benchmark harness
         run: |
           python scripts/benchmark_backend.py \
@@ -37,55 +61,92 @@ jobs:
             --iterations 5 \
             --json > benchmark.json
           python -m json.tool benchmark.json > /dev/null
+          python scripts/benchmark_backend.py \
+            --mode repeatable-store \
+            --scenario minimal \
+            --iterations 1 \
+            --json > repeatable-benchmark.json
+          python scripts/benchmark_backend.py \
+            --mode repeatable-store \
+            --scenario realistic \
+            --iterations 1 \
+            --json > repeatable-realistic-benchmark.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for name in (
+              "benchmark.json",
+              "repeatable-benchmark.json",
+              "repeatable-realistic-benchmark.json",
+          ):
+              payload = json.loads(Path(name).read_text(encoding="utf-8"))
+              if payload.get("functional_workload_passed") is not True:
+                  raise SystemExit("{0} workload failed".format(name))
+              if payload.get("performance_thresholds_applied") is not False:
+                  raise SystemExit("{0} threshold claim is invalid".format(name))
+              if payload.get("hardware_validated") is not False:
+                  raise SystemExit("{0} hardware claim is invalid".format(name))
+              if payload.get("protocol_validated") is not False:
+                  raise SystemExit("{0} protocol claim is invalid".format(name))
+          PY
       - name: Compile Python sources
-        run: python -m compileall -q projects/PineAI/src/module.py projects/PineAI/src/assets
+        run: python -m compileall -q projects/PineAI/src tests scripts
       - name: Resolve module version
         run: |
-          VERSION="$(python -c 'import json; print(json.load(open("projects/PineAI/src/module.json"))["version"])')"
+          VERSION="$(
+            python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          value = json.loads(
+              Path("projects/PineAI/src/module.json").read_text(encoding="utf-8")
+          ).get("version")
+          if not isinstance(value, str) or not re.fullmatch(
+              r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)",
+              value,
+          ):
+              raise SystemExit("module version is not strict SemVer")
+          print(value)
+          PY
+          )"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Scan tracked source for likely committed API keys
         run: |
-          if git grep -nE 'sk-(proj-)?[A-Za-z0-9_-]{20,}'; then
+          if git grep -nE \
+            'sk-(proj-)?[A-Za-z0-9_-]{20,}|BEGIN (OPENSSH |RSA |EC |DSA |ENCRYPTED )?PRIVATE KEY'; then
             echo "A likely API key was found in tracked source."
             exit 1
           fi
+      - name: Record non-mutating npm dependency audits
+        run: |
+          npm audit --json > npm-audit-full.json || true
+          npm audit --omit=dev --json > npm-audit-production.json || true
+          python -m json.tool npm-audit-full.json > /dev/null
+          python -m json.tool npm-audit-production.json > /dev/null
       - name: Build Hak5 module package layout
         run: PATH="$PWD/node_modules/.bin:$PATH" ./build.sh package
       - name: Verify release package
         run: |
           PACKAGE="PineAI-${VERSION}.tar.gz"
-          test -f dist/PineAI/PineAI.umd.js
-          test -f dist/PineAI/module.py
-          test -f dist/PineAI/module.json
-          test -f dist/PineAI/module.svg
-          test -f dist/PineAI/assets/pineai_backend/assurance.py
-          test -f dist/PineAI/assets/pineai_backend/recon.py
-          test -f dist/PineAI/assets/pineai_backend/assessment_store.py
-          test -f dist/PineAI/assets/pineai_backend/assurance_service.py
-          test -f dist/PineAI/assets/pineai_backend/assurance_profiles.py
-          test -f dist/PineAI/assets/pineai_backend/consensus.py
-          test -f dist/PineAI/assets/pineai_backend/customer_analysis.py
-          test -f dist/PineAI/assets/pineai_backend/customer_store.py
-          test -f dist/PineAI/assets/pineai_backend/storage_transaction.py
-          test -f dist/PineAI/assets/pineai_backend/platform.py
-          test -f dist/PineAI/assets/pineai_backend/backup.py
-          test -f dist/PineAI/assets/pineai_backend/ai_analysis.py
-          test -f dist/PineAI/assets/pineai_backend/reports.py
-          test -f dist/PineAI/assets/pineai_backend/openai_client.py
-          test -f dist/PineAI/assets/pineai_cli.py
-          test ! -e dist/PineAI/assets/pineai_backend/advisor.py
-          test ! -e dist/PineAI/assets/pineai_backend/adaptive_recon.py
-          test ! -e dist/PineAI/assets/pineai_backend/engagement_store.py
-          test ! -e dist/PineAI/assets/pineai_backend/profiler.py
-          test -z "$(find dist/PineAI -type f -name '*.pyc' -print -quit)"
           test -f "$PACKAGE"
-          test "$(tar -tzf "$PACKAGE" | sed -n '1p')" = "PineAI/"
-          tar -tzf "$PACKAGE" PineAI/PineAI.umd.js > /dev/null
-          test "$(tar --numeric-owner -tvzf "$PACKAGE" PineAI/module.py | awk '{print $1, $2}')" = "-rwxr-xr-x 0/0"
-          test "$(tar --numeric-owner -tvzf "$PACKAGE" PineAI/module.json | awk '{print $1, $2}')" = "-rw-r--r-- 0/0"
-          bash scripts/verify-package.sh "$PACKAGE"
+          bash scripts/verify-package.sh \
+            "$PACKAGE" \
+            dist/PineAI/PineAI.umd.js
           sha256sum "$PACKAGE" > "$PACKAGE.sha256"
           sha256sum -c "$PACKAGE.sha256"
+      - name: Upload test, benchmark, and dependency evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: PineAI-validation-evidence
+          path: |
+            benchmark.json
+            repeatable-benchmark.json
+            repeatable-realistic-benchmark.json
+            coverage/PineAI/lcov.info
+            npm-audit-full.json
+            npm-audit-production.json
       - uses: actions/upload-artifact@v4
         with:
           name: PineAI-${{ env.VERSION }}
