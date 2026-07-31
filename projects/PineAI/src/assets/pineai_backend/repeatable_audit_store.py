@@ -16,6 +16,7 @@ from .assessment_store import (
     ASSESSMENT_ID_PATTERN,
     FINDING_ID_PATTERN,
     MAX_COMPARISONS,
+    MAX_DOCUMENT_BYTES,
     MAX_EVENTS,
     MAX_SNAPSHOTS,
     _canonical_digest,
@@ -64,6 +65,10 @@ MAX_EVIDENCE_IDS_PER_AUDIT_MEASUREMENT = 100
 MAX_OCCURRENCES = 100
 MAX_AUDIT_RUN_MANIFEST_BYTES = 64 * 1024
 MAX_NATIVE_ARTIFACT_DOCUMENT_BYTES = 4 * 1024 * 1024
+# A cancellation reason may contain 512 four-byte UTF-8 code points. Keep
+# enough additional space for the canonical event envelope so every accepted
+# active run can still be sealed when the event document is near capacity.
+AUDIT_RUN_TERMINAL_EVENT_RESERVE_BYTES = 4096
 NATIVE_OCCURRENCE_SECTION_LIMITS = {
     "observed_changes": 2000,
     "policy_deviations": 7000,
@@ -213,8 +218,9 @@ def _generate_arm_id() -> str:
 
 
 _RFC3339_PATTERN = re.compile(
-    r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?"
-    r"(Z|[+-]\d{2}:\d{2})$"
+    r"^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([0-9]{2}):"
+    r"([0-9]{2}):([0-9]{2})(?:\.([0-9]{1,9}))?"
+    r"([Zz]|[+-][0-9]{2}:[0-9]{2})$"
 )
 
 
@@ -266,6 +272,9 @@ def _validate_rfc3339(
             "{0} contains an invalid calendar date".format(param_name),
         )
 
+    # PineAI's persisted canonical profile deliberately excludes leap-second
+    # notation because it cannot validate the external leap-second table
+    # offline without introducing mutable time authority.
     if hour > 23 or minute > 59 or second > 59:
         raise BackendError(
             error_code,
@@ -273,7 +282,7 @@ def _validate_rfc3339(
         )
 
     # Validate timezone offset bounds
-    if tz_part != "Z":
+    if tz_part.upper() != "Z":
         tz_hour = int(tz_part[1:3])
         tz_min = int(tz_part[4:6])
         if tz_hour > 23 or tz_min > 59:
@@ -301,7 +310,7 @@ def _rfc3339_order_key(value: str):
         raise ValueError("invalid RFC 3339 value")
     fraction = int((match.group(7) or "").ljust(9, "0"))
     zone = match.group(8)
-    if zone == "Z":
+    if zone.upper() == "Z":
         offset_seconds = 0
     else:
         sign = 1 if zone[0] == "+" else -1
@@ -343,6 +352,23 @@ def _audit_run_terminal_times(audit_run: Dict[str, Any]) -> List[str]:
             if isinstance(value, str):
                 values.append(value)
     return [value for value in values if isinstance(value, str)]
+
+
+def _clean_action_text(
+    value: Any,
+    field: str,
+    maximum: int,
+    required: bool,
+    error_code: str,
+) -> str:
+    try:
+        return _clean_text(
+            value, field, maximum, required=required
+        )
+    except BackendError as error:
+        if error.code != "invalid_profile":
+            raise
+        raise BackendError(error_code, str(error)) from error
 
 
 def _sanitize_audit_run(audit_run: Dict[str, Any]) -> Dict[str, Any]:
@@ -430,10 +456,25 @@ SINGLE_SCAN_FIELDS = {
 }
 
 
+def _canonical_measurement_identity(value: Dict[str, Any]) -> Dict[str, Any]:
+    measurement = dict(value)
+    legacy = measurement.get("audit_measurement_id")
+    current = measurement.get("measurement_id")
+    if legacy is not None:
+        if current is not None and current != legacy:
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "measurement identity aliases conflict",
+            )
+        measurement.setdefault("measurement_id", legacy)
+    return measurement
+
+
 def _validate_audit_run_measurement(m: Dict[str, Any]) -> None:
     """Validate measurement fields strictly against the 8 variant schemas."""
     if not isinstance(m, dict):
         raise BackendError("invalid_audit_run_measurement", "measurement must be an object")
+    m = _canonical_measurement_identity(m)
 
     mid = m.get("measurement_id") or m.get("audit_measurement_id")
     if not mid or not isinstance(mid, str) or not AUDIT_MEASUREMENT_ID_PATTERN.match(mid):
@@ -706,12 +747,15 @@ def _validate_audit_run_measurement(m: Dict[str, Any]) -> None:
             else:
                 raise BackendError("invalid_audit_run_measurement", "invalid baseline_type")
         else:
-            raise BackendError("invalid_audit_run_transition", "unknown failed_stage")
+            raise BackendError(
+                "invalid_audit_run_measurement", "unknown failed_stage"
+            )
 
 
 def _validate_persisted_measurement(m: Dict[str, Any]) -> None:
     if not isinstance(m, dict):
         raise BackendError("invalid_audit_run_measurement", "measurement must be an object")
+    m = _canonical_measurement_identity(m)
 
     status = m.get("status")
     if status == "pending":
@@ -1022,6 +1066,24 @@ def _validate_private_audit_run_document(
 
     lower_bound = started_time or created_time
     for measurement in measurements:
+        measurement_created = lower_bound
+        if isinstance(measurement.get("created_at"), str):
+            measurement_created = _rfc3339_order_key(
+                measurement["created_at"]
+            )
+            if measurement_created < created_time:
+                raise BackendError(
+                    "invalid_audit_run",
+                    "measurement created_at precedes the audit run",
+                )
+            if (
+                completed_time is not None
+                and measurement_created > completed_time
+            ):
+                raise BackendError(
+                    "invalid_audit_run",
+                    "measurement created_at follows the sealed audit run",
+                )
         timestamp_field = None
         if measurement.get("status") == "resolved":
             timestamp_field = "resolved_at"
@@ -1033,7 +1095,7 @@ def _validate_private_audit_run_document(
             measurement_time = _rfc3339_order_key(
                 measurement[timestamp_field]
             )
-            if measurement_time < lower_bound:
+            if measurement_time < max(lower_bound, measurement_created):
                 raise BackendError(
                     "invalid_audit_run",
                     "{0} precedes the audit run".format(timestamp_field),
@@ -1158,6 +1220,13 @@ def _validate_measurement_points_document(
             _validate_rfc3339(
                 archived_at, "archived_at", "invalid_measurement_point"
             )
+            if _rfc3339_order_key(archived_at) < _rfc3339_order_key(
+                point["created_at"]
+            ):
+                raise BackendError(
+                    "invalid_measurement_point",
+                    "archived_at precedes measurement point creation",
+                )
         revision = point.get("revision")
         if (
             not isinstance(revision, int)
@@ -1187,7 +1256,7 @@ def _to_public_measurement(m: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(m, dict):
         raise BackendError("invalid_audit_run_measurement", "measurement must be an object")
 
-    m_copy = dict(m)
+    m_copy = _canonical_measurement_identity(m)
     if "audit_measurement_id" in m_copy and "measurement_id" not in m_copy:
         m_copy["measurement_id"] = m_copy.pop("audit_measurement_id")
     else:
@@ -1250,15 +1319,52 @@ def _validate_expected_measurement_context(
             ),
         )
 
-    res = {
-        "location_id": _clean_text(context.get("location_id"), "location_id", 128, required=True),
-        "scan_profile_id": _clean_text(context.get("scan_profile_id"), "scan_profile_id", 128, required=True),
-        "radio_profile_id": _clean_text(context.get("radio_profile_id"), "radio_profile_id", 128, required=True),
-        "interface": _clean_text(context.get("interface"), "interface", 64, required=True),
-        "declared_bands": _text_list(context.get("declared_bands"), "declared_bands", allowed={"2.4", "5"}, maximum=2),
-        "declared_channels": _integer_list(context.get("declared_channels"), "declared_channels", 1, 196),
-        "scan_time": context.get("scan_time"),
-    }
+    try:
+        res = {
+            "location_id": _clean_text(
+                context.get("location_id"),
+                "location_id",
+                128,
+                required=True,
+            ),
+            "scan_profile_id": _clean_text(
+                context.get("scan_profile_id"),
+                "scan_profile_id",
+                128,
+                required=True,
+            ),
+            "radio_profile_id": _clean_text(
+                context.get("radio_profile_id"),
+                "radio_profile_id",
+                128,
+                required=True,
+            ),
+            "interface": _clean_text(
+                context.get("interface"),
+                "interface",
+                64,
+                required=True,
+            ),
+            "declared_bands": _text_list(
+                context.get("declared_bands"),
+                "declared_bands",
+                allowed={"2.4", "5"},
+                maximum=2,
+            ),
+            "declared_channels": _integer_list(
+                context.get("declared_channels"),
+                "declared_channels",
+                1,
+                196,
+            ),
+            "scan_time": context.get("scan_time"),
+        }
+    except BackendError as error:
+        if error.code != "invalid_profile":
+            raise
+        raise BackendError(
+            "invalid_measurement_point", str(error)
+        ) from error
     if not res["declared_bands"]:
         raise BackendError("invalid_measurement_point", "declared_bands must not be empty")
     if not res["declared_channels"]:
@@ -1305,11 +1411,15 @@ class RepeatableAuditStore(CustomerAuditStore):
             reserve -= 1
         reserve += extra_closure_reserve
         sequence = metadata.get("last_event_sequence", 0)
+        required_events = 1 + int(
+            metadata.get("_pending_storage_schema_migration_from")
+            is not None
+        )
         if (
             not isinstance(sequence, int)
             or isinstance(sequence, bool)
             or sequence < 0
-            or sequence + 1 + reserve > MAX_EVENTS
+            or sequence + required_events + reserve > MAX_EVENTS
         ):
             raise BackendError("event_limit", "event capacity limit exceeded")
 
@@ -1319,16 +1429,40 @@ class RepeatableAuditStore(CustomerAuditStore):
         metadata: Dict[str, Any],
         event_type: str,
         data: Optional[Dict[str, Any]],
+        extra_closure_reserve: int = 0,
     ):
+        terminal = event_type in {
+            "audit_run_cancelled",
+            "audit_run_completed",
+        }
         self._require_event_slot_unlocked(
             assessment_id,
             metadata,
-            terminal_audit_run_event=event_type
-            in {"audit_run_cancelled", "audit_run_completed"},
+            terminal_audit_run_event=terminal,
+            extra_closure_reserve=extra_closure_reserve,
         )
-        return super()._transaction_event(
+        event, event_bytes = super()._transaction_event(
             assessment_id, metadata, event_type, data
         )
+        remaining_reserve = self._event_closure_reserve_unlocked(
+            assessment_id
+        )
+        if terminal and remaining_reserve:
+            remaining_reserve -= 1
+        remaining_reserve += extra_closure_reserve
+        if (
+            len(event_bytes)
+            + (
+                remaining_reserve
+                * AUDIT_RUN_TERMINAL_EVENT_RESERVE_BYTES
+            )
+            > MAX_DOCUMENT_BYTES
+        ):
+            raise BackendError(
+                "event_limit",
+                "event storage cannot preserve active audit run closure",
+            )
+        return event, event_bytes
 
     def _append_event(
         self,
@@ -1517,7 +1651,7 @@ class RepeatableAuditStore(CustomerAuditStore):
     ) -> Dict[str, Any]:
         if (
             not isinstance(data, dict)
-            or not NATIVE_OCCURRENCE_REQUIRED_FIELDS.issubset(set(data))
+            or set(data) != NATIVE_OCCURRENCE_REQUIRED_FIELDS
         ):
             raise BackendError(
                 "invalid_occurrence_set",
@@ -2237,10 +2371,18 @@ class RepeatableAuditStore(CustomerAuditStore):
     def _authoritative_audit_runs_unlocked(
         self, assessment_id: str
     ) -> Dict[str, Dict[str, Any]]:
-        base = self._ensure_assessment_directories(assessment_id)
+        base, _, _, _, _ = self._assessment_paths(assessment_id)
+        if base.is_symlink() or not base.is_dir():
+            raise BackendError(
+                "assessment_not_found", "assessment was not found"
+            )
         runs_dir = base / "audit_runs"
-        if not runs_dir.exists():
+        if not runs_dir.exists() and not runs_dir.is_symlink():
             return {}
+        if runs_dir.is_symlink() or not runs_dir.is_dir():
+            raise BackendError(
+                "invalid_audit_run", "audit run directory is invalid"
+            )
         entries = []
         try:
             with os.scandir(str(runs_dir)) as iterator:
@@ -2311,30 +2453,36 @@ class RepeatableAuditStore(CustomerAuditStore):
         or updated manifest is the responsibility of mutating operations
         that include the manifest in their PrivateTransaction commit.
         """
-        base = self._ensure_assessment_directories(assessment_id)
+        base, _, _, _, _ = self._assessment_paths(assessment_id)
+        if base.is_symlink() or not base.is_dir():
+            raise BackendError(
+                "assessment_not_found", "assessment was not found"
+            )
         manifest_file = base / "audit_runs_manifest.json"
-        persisted = None
         if manifest_file.exists() or manifest_file.is_symlink():
-            try:
-                persisted = _validate_audit_runs_manifest(
-                    _read_bounded_json_file(
-                        self,
-                        manifest_file,
-                        MAX_AUDIT_RUN_MANIFEST_BYTES,
-                        "invalid_audit_run_manifest",
-                        "invalid_audit_run_manifest",
-                        "audit run manifest",
-                    )
+            persisted = _validate_audit_runs_manifest(
+                _read_bounded_json_file(
+                    self,
+                    manifest_file,
+                    MAX_AUDIT_RUN_MANIFEST_BYTES,
+                    "invalid_audit_run_manifest",
+                    "invalid_audit_run_manifest",
+                    "audit run manifest",
                 )
-            except BackendError:
-                persisted = None
+            )
+            reconstructed = self._reconstruct_audit_runs_manifest_unlocked(
+                assessment_id
+            )
+            if persisted["runs"] != reconstructed["runs"]:
+                raise BackendError(
+                    "invalid_audit_run_manifest",
+                    "audit run manifest does not match authoritative records",
+                )
+            return persisted
 
-        reconstructed = self._reconstruct_audit_runs_manifest_unlocked(
+        return self._reconstruct_audit_runs_manifest_unlocked(
             assessment_id
         )
-        if persisted is not None and persisted["runs"] == reconstructed["runs"]:
-            return persisted
-        return reconstructed
 
     def _update_audit_runs_manifest_unlocked(self, assessment_id: str, audit_run_id: str, status: str) -> Dict[str, Any]:
         manifest = self._read_audit_runs_manifest_unlocked(assessment_id)
@@ -2352,32 +2500,21 @@ class RepeatableAuditStore(CustomerAuditStore):
 
     def _get_assessment_capacity_unlocked(self, assessment_id: str) -> Dict[str, Any]:
         base = self._ensure_assessment_directories(assessment_id)
-
-        def _strict_count(directory: Path, pattern: re.Pattern, label: str) -> int:
-            if not directory.exists():
-                return 0
-            count = 0
-            for entry in os.scandir(str(directory)):
-                if (
-                    not pattern.match(entry.name)
-                    or not entry.is_file(follow_symlinks=False)
-                ):
-                    raise BackendError(
-                        "storage_error",
-                        "{0} directory contains an invalid entry".format(label),
-                    )
-                count += 1
-            return count
-
-        snapshots = _strict_count(
-            base / "snapshots",
-            re.compile(r"^snapshot_[0-9a-f]{16}\.json$"),
-            "snapshot",
+        snapshots = len(
+            self._bounded_document_paths(
+                base / "snapshots",
+                re.compile(r"^snapshot_[0-9a-f]{16}\.json$"),
+                MAX_SNAPSHOTS,
+                "snapshot",
+            )
         )
-        comparisons = _strict_count(
-            base / "comparisons",
-            re.compile(r"^comparison_[0-9a-f]{16}\.json$"),
-            "comparison",
+        comparisons = len(
+            self._bounded_document_paths(
+                base / "comparisons",
+                re.compile(r"^comparison_[0-9a-f]{16}\.json$"),
+                MAX_COMPARISONS,
+                "comparison",
+            )
         )
 
         metadata = self._read_metadata(assessment_id)
@@ -2411,17 +2548,6 @@ class RepeatableAuditStore(CustomerAuditStore):
     def get_assessment_capacity(self, assessment_id: str) -> Dict[str, Any]:
         with self._lock(assessment_id):
             return self._get_assessment_capacity_unlocked(assessment_id)
-
-    def _check_non_terminal_event_capacity(
-        self, assessment_id: str, extra_closure_reserve: int = 0
-    ) -> int:
-        capacity = self._get_assessment_capacity_unlocked(assessment_id)
-        closure_reserve = capacity["event_reserved_for_run_closure"] + extra_closure_reserve
-        event_used = capacity["event_used"]
-        last_seq = event_used
-        if last_seq + 1 + closure_reserve > MAX_EVENTS:
-            raise BackendError("event_limit", "event capacity limit exceeded")
-        return last_seq
 
     # -------------------------------------------------------------------------
     # MeasurementPoint Operations
@@ -2472,8 +2598,16 @@ class RepeatableAuditStore(CustomerAuditStore):
             raise BackendError("invalid_page_token", "invalid pagination parameters")
         with self._lock(assessment_id):
             all_pts = self._list_measurement_points_unlocked(assessment_id, include_archived=include_archived)
-            sorted_pts = sorted(all_pts, key=lambda p: (p.get("created_at", ""), p.get("measurement_point_id", "")))
-            sorted_pts.sort(key=lambda p: p.get("created_at", ""), reverse=True)
+            sorted_pts = sorted(
+                sorted(
+                    all_pts,
+                    key=lambda point: point["measurement_point_id"],
+                ),
+                key=lambda point: _rfc3339_order_key(
+                    point["created_at"]
+                ),
+                reverse=True,
+            )
             total = len(sorted_pts)
             paginated = sorted_pts[offset:offset + limit]
             return {
@@ -2488,7 +2622,12 @@ class RepeatableAuditStore(CustomerAuditStore):
     def _get_measurement_point_unlocked(
         self, assessment_id: str, measurement_point_id: str
     ) -> Dict[str, Any]:
-        if not MEASUREMENT_POINT_ID_PATTERN.match(measurement_point_id):
+        if (
+            not isinstance(measurement_point_id, str)
+            or not MEASUREMENT_POINT_ID_PATTERN.match(
+                measurement_point_id
+            )
+        ):
             raise BackendError("invalid_measurement_point", "invalid measurement_point_id format")
         doc = self._read_measurement_points_doc(assessment_id)
         for p in doc.get("measurement_points", []):
@@ -2515,13 +2654,24 @@ class RepeatableAuditStore(CustomerAuditStore):
         description: Optional[str] = None,
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
-        clean_name = _clean_text(name, "name", 128, required=True)
-        clean_desc = _clean_text(description, "description", 512, required=False) if description is not None else None
+        clean_name = _clean_action_text(
+            name, "name", 128, True, "invalid_measurement_point"
+        )
+        clean_desc = (
+            _clean_action_text(
+                description,
+                "description",
+                512,
+                False,
+                "invalid_measurement_point",
+            )
+            if description is not None
+            else None
+        )
 
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_assessment_revision)
-            self._check_non_terminal_event_capacity(assessment_id)
 
             doc = self._read_measurement_points_doc(assessment_id)
             existing_points = doc.get("measurement_points", [])
@@ -2594,6 +2744,16 @@ class RepeatableAuditStore(CustomerAuditStore):
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_measurement_point_revision)
+        if (
+            not isinstance(measurement_point_id, str)
+            or not MEASUREMENT_POINT_ID_PATTERN.match(
+                measurement_point_id
+            )
+        ):
+            raise BackendError(
+                "invalid_measurement_point",
+                "invalid measurement_point_id format",
+            )
         if not isinstance(updates, dict) or not updates:
             raise BackendError("invalid_measurement_point", "updates must be a non-empty object")
 
@@ -2604,7 +2764,6 @@ class RepeatableAuditStore(CustomerAuditStore):
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_assessment_revision)
-            self._check_non_terminal_event_capacity(assessment_id)
 
             doc = self._read_measurement_points_doc(assessment_id)
             points = doc.get("measurement_points", [])
@@ -2626,10 +2785,22 @@ class RepeatableAuditStore(CustomerAuditStore):
 
             updated_mp = _json_clone(target_mp, "invalid_measurement_point", "measurement_point")
             if "name" in updates:
-                updated_mp["name"] = _clean_text(updates["name"], "name", 128, required=True)
+                updated_mp["name"] = _clean_action_text(
+                    updates["name"],
+                    "name",
+                    128,
+                    True,
+                    "invalid_measurement_point",
+                )
             if "description" in updates:
                 updated_mp["description"] = (
-                    _clean_text(updates["description"], "description", 512, required=False)
+                    _clean_action_text(
+                        updates["description"],
+                        "description",
+                        512,
+                        False,
+                        "invalid_measurement_point",
+                    )
                     if updates["description"] is not None
                     else None
                 )
@@ -2683,11 +2854,20 @@ class RepeatableAuditStore(CustomerAuditStore):
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_measurement_point_revision)
+        if (
+            not isinstance(measurement_point_id, str)
+            or not MEASUREMENT_POINT_ID_PATTERN.match(
+                measurement_point_id
+            )
+        ):
+            raise BackendError(
+                "invalid_measurement_point",
+                "invalid measurement_point_id format",
+            )
 
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_assessment_revision)
-            self._check_non_terminal_event_capacity(assessment_id)
 
             doc = self._read_measurement_points_doc(assessment_id)
             points = doc.get("measurement_points", [])
@@ -2709,7 +2889,9 @@ class RepeatableAuditStore(CustomerAuditStore):
 
             updated_mp = _json_clone(target_mp, "invalid_measurement_point", "measurement_point")
             updated_mp["status"] = "archived"
-            updated_mp["archived_at"] = _utc_now()
+            updated_mp["archived_at"] = _timestamp_not_before(
+                target_mp.get("created_at")
+            )
             updated_mp["revision"] += 1
 
             updated_points = list(points)
@@ -2768,8 +2950,14 @@ class RepeatableAuditStore(CustomerAuditStore):
             raise BackendError("invalid_page_token", "invalid pagination parameters")
         with self._lock(assessment_id):
             all_runs = self._list_audit_runs_unlocked(assessment_id)
-            sorted_runs = sorted(all_runs, key=lambda r: (r.get("created_at", ""), r.get("audit_run_id", "")))
-            sorted_runs.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+            sorted_runs = sorted(
+                sorted(
+                    all_runs,
+                    key=lambda run: run["audit_run_id"],
+                ),
+                key=lambda run: _rfc3339_order_key(run["created_at"]),
+                reverse=True,
+            )
             total = len(sorted_runs)
             paginated = sorted_runs[offset:offset + limit]
             items = [
@@ -2792,7 +2980,10 @@ class RepeatableAuditStore(CustomerAuditStore):
             }
 
     def _get_audit_run_unlocked(self, assessment_id: str, audit_run_id: str) -> Dict[str, Any]:
-        if not AUDIT_RUN_ID_PATTERN.match(audit_run_id):
+        if (
+            not isinstance(audit_run_id, str)
+            or not AUDIT_RUN_ID_PATTERN.match(audit_run_id)
+        ):
             raise BackendError("invalid_audit_run", "invalid audit_run_id format")
         base = self._ensure_assessment_directories(assessment_id)
         path = base / "audit_runs" / "{0}.json".format(audit_run_id)
@@ -2838,7 +3029,9 @@ class RepeatableAuditStore(CustomerAuditStore):
         due_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
-        clean_title = _clean_text(title, "title", 128, required=True)
+        clean_title = _clean_action_text(
+            title, "title", 128, True, "invalid_audit_run"
+        )
         if due_at is not None:
             _validate_iso_datetime(due_at, "due_at", error_code="invalid_audit_run")
         if not pinned_assurance_profile_version_id or not isinstance(pinned_assurance_profile_version_id, str):
@@ -2857,7 +3050,6 @@ class RepeatableAuditStore(CustomerAuditStore):
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_assessment_revision)
-            self._check_non_terminal_event_capacity(assessment_id, extra_closure_reserve=1)
 
             existing_runs = self._list_audit_runs_unlocked(assessment_id)
             if len(existing_runs) >= MAX_AUDIT_RUNS_PER_ASSESSMENT:
@@ -2937,6 +3129,7 @@ class RepeatableAuditStore(CustomerAuditStore):
                 metadata,
                 "audit_run_created",
                 {"audit_run_id": ar_id},
+                extra_closure_reserve=1,
             )
 
             manifest = self._update_audit_runs_manifest_unlocked(assessment_id, ar_id, "draft")
@@ -2970,13 +3163,15 @@ class RepeatableAuditStore(CustomerAuditStore):
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_audit_run_revision)
-        if not AUDIT_RUN_ID_PATTERN.match(audit_run_id):
+        if (
+            not isinstance(audit_run_id, str)
+            or not AUDIT_RUN_ID_PATTERN.match(audit_run_id)
+        ):
             raise BackendError("invalid_audit_run", "audit_run_id format is invalid")
 
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_assessment_revision)
-            self._check_non_terminal_event_capacity(assessment_id)
 
             audit_run = self._get_audit_run_unlocked(assessment_id, audit_run_id)
             if audit_run.get("status") in ("completed", "cancelled"):
@@ -3032,10 +3227,19 @@ class RepeatableAuditStore(CustomerAuditStore):
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_audit_run_revision)
-        if not AUDIT_RUN_ID_PATTERN.match(audit_run_id):
+        if (
+            not isinstance(audit_run_id, str)
+            or not AUDIT_RUN_ID_PATTERN.match(audit_run_id)
+        ):
             raise BackendError("invalid_audit_run", "audit_run_id format is invalid")
         clean_reason = (
-            _clean_text(reason, "reason", 512, required=False)
+            _clean_action_text(
+                reason,
+                "reason",
+                512,
+                False,
+                "invalid_audit_run",
+            )
             if reason is not None
             else None
         )
@@ -3093,7 +3297,10 @@ class RepeatableAuditStore(CustomerAuditStore):
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_audit_run_revision)
-        if not AUDIT_RUN_ID_PATTERN.match(audit_run_id):
+        if (
+            not isinstance(audit_run_id, str)
+            or not AUDIT_RUN_ID_PATTERN.match(audit_run_id)
+        ):
             raise BackendError("invalid_audit_run", "audit_run_id format is invalid")
 
         with self._lock(assessment_id):
@@ -3159,6 +3366,28 @@ class RepeatableAuditStore(CustomerAuditStore):
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_audit_run_revision)
+        if not isinstance(outcome, dict):
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "resolution outcome must be an object",
+            )
+        if (
+            not isinstance(audit_run_id, str)
+            or not AUDIT_RUN_ID_PATTERN.match(audit_run_id)
+        ):
+            raise BackendError(
+                "invalid_audit_run", "audit_run_id format is invalid"
+            )
+        if (
+            not isinstance(measurement_point_id, str)
+            or not MEASUREMENT_POINT_ID_PATTERN.match(
+                measurement_point_id
+            )
+        ):
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "measurement_point_id is invalid",
+            )
         _ensure_no_raw_recon(outcome)
 
         status = outcome.get("status")
@@ -3167,7 +3396,6 @@ class RepeatableAuditStore(CustomerAuditStore):
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_assessment_revision)
-            self._check_non_terminal_event_capacity(assessment_id)
 
             audit_run = self._get_audit_run_unlocked(assessment_id, audit_run_id)
             if audit_run.get("status") in ("completed", "cancelled"):
@@ -3308,11 +3536,27 @@ class RepeatableAuditStore(CustomerAuditStore):
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_audit_run_revision)
+        if (
+            not isinstance(audit_run_id, str)
+            or not AUDIT_RUN_ID_PATTERN.match(audit_run_id)
+        ):
+            raise BackendError(
+                "invalid_audit_run", "audit_run_id format is invalid"
+            )
+        if (
+            not isinstance(measurement_point_id, str)
+            or not MEASUREMENT_POINT_ID_PATTERN.match(
+                measurement_point_id
+            )
+        ):
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "measurement_point_id is invalid",
+            )
 
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_assessment_revision)
-            self._check_non_terminal_event_capacity(assessment_id)
 
             audit_run = self._get_audit_run_unlocked(assessment_id, audit_run_id)
             if audit_run.get("status") in ("completed", "cancelled"):
@@ -3350,7 +3594,11 @@ class RepeatableAuditStore(CustomerAuditStore):
                     "audit_run_id": audit_run_id,
                     "measurement_point_id": measurement_point_id,
                     "status": "pending",
-                    "created_at": _utc_now(),
+                    "created_at": _timestamp_not_before(
+                        target_m.get("created_at"),
+                        target_m.get("resolved_at"),
+                        target_m.get("failed_at"),
+                    ),
                     "expected_measurement_context": _json_clone(
                         target_m["expected_measurement_context"],
                         "invalid_audit_run_measurement",
@@ -3417,6 +3665,28 @@ class RepeatableAuditStore(CustomerAuditStore):
     ) -> Dict[str, Any]:
         _validate_revision(expected_assessment_revision)
         _validate_revision(expected_audit_run_revision)
+        if not isinstance(outcome, dict):
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "comparison outcome must be an object",
+            )
+        if (
+            not isinstance(audit_run_id, str)
+            or not AUDIT_RUN_ID_PATTERN.match(audit_run_id)
+        ):
+            raise BackendError(
+                "invalid_audit_run", "audit_run_id format is invalid"
+            )
+        if (
+            not isinstance(measurement_point_id, str)
+            or not MEASUREMENT_POINT_ID_PATTERN.match(
+                measurement_point_id
+            )
+        ):
+            raise BackendError(
+                "invalid_audit_run_measurement",
+                "measurement_point_id is invalid",
+            )
         _ensure_no_raw_recon(outcome)
 
         status = outcome.get("status")
@@ -3436,7 +3706,6 @@ class RepeatableAuditStore(CustomerAuditStore):
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_assessment_revision)
-            self._check_non_terminal_event_capacity(assessment_id)
 
             audit_run = self._get_audit_run_unlocked(assessment_id, audit_run_id)
             if audit_run.get("status") in ("completed", "cancelled"):
@@ -3464,6 +3733,23 @@ class RepeatableAuditStore(CustomerAuditStore):
                 raise BackendError(
                     "audit_measurement_not_resolved",
                     "cannot save comparison for a measurement that is not resolved",
+                )
+            outcome_time_field = (
+                "completed_at" if status == "completed" else "failed_at"
+            )
+            outcome_time = _validate_rfc3339(
+                outcome.get(outcome_time_field),
+                outcome_time_field,
+                "invalid_audit_run_measurement",
+            )
+            if _rfc3339_order_key(outcome_time) < _rfc3339_order_key(
+                target_m["resolved_at"]
+            ):
+                raise BackendError(
+                    "invalid_audit_run_measurement",
+                    "{0} precedes resolved_at".format(
+                        outcome_time_field
+                    ),
                 )
 
             # Read and verify immutable native artifacts only after acquiring the

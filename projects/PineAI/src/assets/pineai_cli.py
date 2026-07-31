@@ -35,9 +35,9 @@ from pineai_backend.errors import BackendError  # noqa: E402
 def _read_json(path: str) -> Any:
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as failure:
+    except (OSError, ValueError):
         raise BackendError(
-            "invalid_input", "could not read JSON input: {0}".format(failure)
+            "invalid_input", "could not read JSON input"
         )
 
 

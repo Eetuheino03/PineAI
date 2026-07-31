@@ -50,7 +50,7 @@ def _sha256(data: bytes) -> str:
 
 def _fsync_directory(path: Path) -> None:
     """Best-effort directory durability for Linux/Mark VII filesystems."""
-    flags = os.O_RDONLY
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_DIRECTORY"):
         flags |= os.O_DIRECTORY
     descriptor = None
@@ -165,7 +165,7 @@ def _read_regular_file(
         or (expected_size is not None and details.st_size != expected_size)
     ):
         raise BackendError(error_code, error_message)
-    flags = os.O_RDONLY
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = None
@@ -498,6 +498,21 @@ class PrivateTransaction:
             )
         journal = cls._read_journal(directory)
 
+        committed = directory / "COMMITTED"
+        committed_details = _path_details(committed)
+        if committed_details is not None and (
+            stat.S_ISLNK(committed_details.st_mode)
+            or not stat.S_ISREG(committed_details.st_mode)
+        ):
+            raise BackendError(
+                "transaction_recovery_failed",
+                "a storage transaction commit marker is invalid",
+            )
+
+        # Validate every target and every required staged document before
+        # publishing the first byte. A corrupt later entry must not leave an
+        # earlier target updated.
+        publish = []
         for index, entry in enumerate(journal["entries"]):
             try:
                 relative = _safe_relative_path(entry["target"], root=root)
@@ -567,6 +582,9 @@ class PrivateTransaction:
                     "transaction_recovery_failed",
                     "a staged transaction document failed verification",
                 )
+            publish.append((index, target, payload))
+
+        for index, target, payload in publish:
             try:
                 _private_directory(target.parent)
             except BackendError as error:
@@ -577,16 +595,6 @@ class PrivateTransaction:
             write_private_file(target, payload)
             _trigger("target_written", index)
 
-        committed = directory / "COMMITTED"
-        committed_details = _path_details(committed)
-        if committed_details is not None and (
-            stat.S_ISLNK(committed_details.st_mode)
-            or not stat.S_ISREG(committed_details.st_mode)
-        ):
-            raise BackendError(
-                "transaction_recovery_failed",
-                "a storage transaction commit marker is invalid",
-            )
         write_private_file(committed, b"committed\n")
         _trigger("committed", -1)
         _trigger("before_cleanup", -1)

@@ -8,6 +8,7 @@ import datetime
 import json
 import os
 import re
+import stat
 import threading
 import uuid
 from contextlib import contextmanager
@@ -21,7 +22,6 @@ from .assessment_store import (
     FINDING_CORE_FIELDS,
     MAX_BASELINE_VERSIONS,
     MAX_COMPARISONS,
-    MAX_EVENTS,
     MAX_FINDINGS,
     MAX_SNAPSHOTS,
     AssessmentStore,
@@ -35,6 +35,7 @@ from .assessment_store import (
     _validate_snapshot,
 )
 from .config import resolve_config_dir, write_private_file
+from .consensus import build_consensus_baseline
 from .errors import BackendError
 from .storage_transaction import PrivateTransaction, recover_private_transactions
 
@@ -58,6 +59,8 @@ MAX_MEASUREMENT_PROFILES = 100
 MAX_ASSURANCE_PROFILES = 100
 MAX_PROFILE_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_OCCURRENCES = 100
+MAX_REPORT_EXPORT_BYTES = 8 * 1024 * 1024
+MAX_REPORT_EXPORT_FILES = 16
 ANALYSIS_PIN_FIELDS = {
     "baseline_version_id",
     "baseline_digest",
@@ -67,10 +70,111 @@ ANALYSIS_PIN_FIELDS = {
     "assurance_profile_version_id",
     "assurance_profile_digest",
 }
+MEASUREMENT_PROFILE_METADATA_FIELDS = {
+    "schema_version",
+    "measurement_profile_id",
+    "revision",
+    "active_version_id",
+    "status",
+    "created_at",
+    "updated_at",
+}
+MEASUREMENT_PROFILE_VERSION_FIELDS = {
+    "schema_version",
+    "measurement_profile_id",
+    "version_id",
+    "revision",
+    "created_at",
+    "profile",
+    "digest",
+}
+CONSENSUS_BASELINE_RECORD_FIELDS = {
+    "schema_version",
+    "assessment_id",
+    "baseline_version_id",
+    "baseline_type",
+    "version",
+    "label",
+    "created_at",
+    "baseline_model_id",
+    "baseline_model_digest",
+    "source_snapshot_ids",
+    "source_snapshot_digests",
+    "sample_count",
+    "summary",
+    "measurement_context",
+    "max_source_age_hours",
+}
+ASSURANCE_PROFILE_RECORD_FIELDS = {
+    "schema_version",
+    "assessment_id",
+    "assurance_profile_version_id",
+    "version",
+    "label",
+    "created_at",
+    "digest",
+    "profile",
+}
+OCCURRENCE_INPUT_FIELDS = {
+    "observed_changes",
+    "inventory_reconciliation",
+    "policy_deviations",
+    "security_findings",
+    "policy_evaluation_status",
+    "lifecycle_findings",
+    "evidence",
+    "quality_factors",
+    "policy_reference",
+    "limitations",
+}
+OCCURRENCE_SYSTEM_FIELDS = {
+    "schema_version",
+    "comparison_id",
+    "assessment_id",
+    "recorded_at",
+    "baseline_reference",
+    "pinned_versions",
+    "comparability",
+    "lifecycle",
+}
+OCCURRENCE_ID_FIELDS = {"occurrence_set_id", "occurrence_digest"}
+OCCURRENCE_STORED_FIELDS = (
+    OCCURRENCE_INPUT_FIELDS | OCCURRENCE_SYSTEM_FIELDS | OCCURRENCE_ID_FIELDS
+)
+_RFC3339_PATTERN = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+    r"[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+)
+
+
+def _require_rfc3339(value: Any, code: str, field: str) -> None:
+    if not isinstance(value, str) or not _RFC3339_PATTERN.match(value):
+        raise BackendError(code, "{0} is invalid".format(field))
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.datetime.fromisoformat(normalized)
+    except ValueError as failure:
+        raise BackendError(code, "{0} is invalid".format(field)) from failure
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise BackendError(code, "{0} is invalid".format(field))
 
 
 def _private_directory(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
+    try:
+        details = path.lstat()
+    except FileNotFoundError:
+        path.mkdir(parents=True, exist_ok=False)
+        details = path.lstat()
+    except OSError as error:
+        raise BackendError(
+            "storage_error", "private storage directory is unavailable"
+        ) from error
+    if stat.S_ISLNK(details.st_mode) or not stat.S_ISDIR(details.st_mode):
+        raise BackendError(
+            "storage_error",
+            "private storage directory must be a real directory",
+        )
     try:
         os.chmod(str(path), 0o700)
     except OSError:
@@ -304,36 +408,12 @@ class CustomerAuditStore(AssessmentStore):
         event_type: str,
         data: Optional[Dict[str, Any]],
     ):
-        if metadata.get("last_event_sequence", 0) >= MAX_EVENTS:
-            raise BackendError("event_limit", "event capacity limit exceeded")
-        now = _utc_now()
-        metadata["revision"] += 1
-        metadata["updated_at"] = now
         metadata["schema_version"] = ASSESSMENT_SCHEMA_VERSION
         metadata["storage_writer_version"] = ASSESSMENT_SCHEMA_VERSION
         metadata.setdefault("active_assurance_profile_version", None)
-        metadata["last_event_sequence"] += 1
-        event = {
-            "sequence": metadata["last_event_sequence"],
-            "event_id": "evt_{0}".format(uuid.uuid4()),
-            "event_type": event_type,
-            "recorded_at": now,
-            "revision": metadata["revision"],
-        }
-        if data:
-            event["data"] = data
-        _, _, event_path, _, _ = self._assessment_paths(assessment_id)
-        previous = event_path.read_bytes() if event_path.exists() else b""
-        line = (
-            json.dumps(
-                event,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-            + b"\n"
+        return super()._transaction_event(
+            assessment_id, metadata, event_type, data
         )
-        return event, previous + line
 
     def _transaction(
         self, root: Path, json_documents: Dict[str, Any], bytes_documents=None
@@ -352,8 +432,6 @@ class CustomerAuditStore(AssessmentStore):
             with os.scandir(str(self.measurement_directory)) as iterator:
                 for entry in iterator:
                     if entry.name in (".lock", ".transactions"):
-                        continue
-                    if not entry.name.startswith("mprofile_"):
                         continue
                     if (
                         not MEASUREMENT_PROFILE_ID.match(entry.name)
@@ -425,6 +503,99 @@ class CustomerAuditStore(AssessmentStore):
                 "immutable document already exists with different content",
             )
         return False
+
+    def _validate_profile_metadata_record(
+        self, profile_id: str, value: Any
+    ) -> Dict[str, Any]:
+        if (
+            not isinstance(value, dict)
+            or set(value) != MEASUREMENT_PROFILE_METADATA_FIELDS
+            or value.get("schema_version")
+            != MEASUREMENT_PROFILE_SCHEMA_VERSION
+            or value.get("measurement_profile_id") != profile_id
+            or not isinstance(value.get("revision"), int)
+            or isinstance(value.get("revision"), bool)
+            or value["revision"] < 1
+            or value["revision"] > 9999
+            or value.get("status") not in {"active", "archived"}
+            or not isinstance(value.get("active_version_id"), str)
+            or not MEASUREMENT_PROFILE_VERSION_ID.match(
+                value["active_version_id"]
+            )
+            or int(value["active_version_id"][-4:]) > value["revision"]
+        ):
+            raise BackendError(
+                "storage_error", "measurement profile metadata is invalid"
+            )
+        _require_rfc3339(
+            value.get("created_at"), "storage_error", "created_at"
+        )
+        _require_rfc3339(
+            value.get("updated_at"), "storage_error", "updated_at"
+        )
+        return value
+
+    def _validate_profile_version_record(
+        self, profile_id: str, version_id: str, value: Any
+    ) -> Dict[str, Any]:
+        revision = int(version_id[-4:])
+        if (
+            not isinstance(value, dict)
+            or set(value) != MEASUREMENT_PROFILE_VERSION_FIELDS
+            or value.get("schema_version")
+            != MEASUREMENT_PROFILE_SCHEMA_VERSION
+            or value.get("measurement_profile_id") != profile_id
+            or value.get("version_id") != version_id
+            or value.get("revision") != revision
+            or not isinstance(value.get("profile"), dict)
+            or not isinstance(value.get("digest"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", value["digest"])
+            or value["digest"] != _canonical_digest(value["profile"])
+        ):
+            raise BackendError(
+                "storage_error", "measurement profile version is invalid"
+            )
+        if validate_measurement_profile(value["profile"]) != value["profile"]:
+            raise BackendError(
+                "storage_error",
+                "measurement profile version is not canonical",
+            )
+        _require_rfc3339(
+            value.get("created_at"), "storage_error", "created_at"
+        )
+        return value
+
+    def _validate_assurance_profile_record(
+        self,
+        assessment_id: str,
+        version_id: str,
+        value: Any,
+    ) -> Dict[str, Any]:
+        version = int(version_id[-4:])
+        if (
+            not isinstance(value, dict)
+            or set(value) != ASSURANCE_PROFILE_RECORD_FIELDS
+            or value.get("schema_version")
+            != ASSURANCE_PROFILE_SCHEMA_VERSION
+            or value.get("assessment_id") != assessment_id
+            or value.get("assurance_profile_version_id") != version_id
+            or value.get("version") != version
+            or not isinstance(value.get("label"), str)
+            or len(value["label"]) > 128
+            or any(ord(character) < 32 for character in value["label"])
+            or not isinstance(value.get("profile"), dict)
+            or not isinstance(value.get("digest"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", value["digest"])
+            or value["digest"] != _canonical_digest(value["profile"])
+        ):
+            raise BackendError(
+                "storage_error", "assurance profile version is invalid"
+            )
+        _ensure_no_raw_recon(value["profile"])
+        _require_rfc3339(
+            value.get("created_at"), "storage_error", "created_at"
+        )
+        return value
 
     def _validate_analysis_pins_unlocked(
         self,
@@ -513,27 +684,16 @@ class CustomerAuditStore(AssessmentStore):
                 raise BackendError(
                     "invalid_analysis", "assurance profile pin is invalid"
                 )
-            path = self._assurance_profile_path(
-                assessment_id, assurance_version
-            )
-            if path.is_symlink() or not path.is_file():
-                raise BackendError(
-                    "invalid_analysis", "assurance profile pin is unavailable"
+            try:
+                record = self._read_assurance_profile_record_unlocked(
+                    assessment_id, assurance_version
                 )
-            record = self._read_json(
-                path,
-                "invalid_analysis",
-                "assurance profile pin is unavailable",
-            )
-            if (
-                not isinstance(record, dict)
-                or record.get("assessment_id") != assessment_id
-                or record.get("assurance_profile_version_id")
-                != assurance_version
-                or record.get("digest") != assurance_digest
-                or not isinstance(record.get("profile"), dict)
-                or record.get("digest") != _canonical_digest(record["profile"])
-            ):
+            except BackendError as failure:
+                raise BackendError(
+                    "invalid_analysis",
+                    "assurance profile pin is unavailable",
+                ) from failure
+            if record.get("digest") != assurance_digest:
                 raise BackendError(
                     "invalid_analysis",
                     "assurance profile pin does not match storage",
@@ -556,25 +716,20 @@ class CustomerAuditStore(AssessmentStore):
     def _profile_meta(self, profile_id: str) -> Dict[str, Any]:
         base = self._profile_base(profile_id)
         try:
-            value = json.loads((base / "profile.json").read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            raise BackendError(
+            payload, _ = self._read_private_bytes(
+                base / "profile.json",
                 "measurement_profile_not_found",
                 "measurement profile was not found",
+                MAX_PROFILE_DOCUMENT_BYTES,
             )
-        except (OSError, ValueError):
+            value = json.loads(payload.decode("utf-8"))
+        except BackendError:
+            raise
+        except (UnicodeError, ValueError):
             raise BackendError(
                 "storage_error", "measurement profile metadata is invalid"
             )
-        if (
-            not isinstance(value, dict)
-            or value.get("measurement_profile_id") != profile_id
-            or not isinstance(value.get("revision"), int)
-        ):
-            raise BackendError(
-                "storage_error", "measurement profile metadata is invalid"
-            )
-        return value
+        return self._validate_profile_metadata_record(profile_id, value)
 
     @_measurement_profile_mutation
     def _profile_version(self, profile_id: str, version_id: str) -> Dict[str, Any]:
@@ -585,22 +740,28 @@ class CustomerAuditStore(AssessmentStore):
                 "invalid_measurement_profile_version",
                 "measurement profile version is invalid",
             )
+        path = (
+            self._profile_base(profile_id)
+            / "versions"
+            / (version_id + ".json")
+        )
         try:
-            value = json.loads(
-                (self._profile_base(profile_id) / "versions" / (
-                    version_id + ".json"
-                )).read_text(encoding="utf-8")
-            )
-        except FileNotFoundError:
-            raise BackendError(
+            payload, _ = self._read_private_bytes(
+                path,
                 "measurement_profile_not_found",
                 "measurement profile version was not found",
+                MAX_PROFILE_DOCUMENT_BYTES,
             )
-        except (OSError, ValueError):
+            value = json.loads(payload.decode("utf-8"))
+        except BackendError:
+            raise
+        except (UnicodeError, ValueError):
             raise BackendError(
                 "storage_error", "measurement profile version is invalid"
             )
-        return value
+        return self._validate_profile_version_record(
+            profile_id, version_id, value
+        )
 
     @_measurement_profile_mutation
     def create_measurement_profile(self, value: Any) -> Dict[str, Any]:
@@ -768,23 +929,138 @@ class CustomerAuditStore(AssessmentStore):
                 "storage_error", "baseline version is invalid"
             )
         if record.get("baseline_type") == "consensus":
-            model_id = record.get("baseline_model_id")
-            if not isinstance(model_id, str) or not BASELINE_MODEL_ID.match(
-                model_id
-            ):
-                raise BackendError(
-                    "storage_error", "baseline model reference is invalid"
-                )
+            self._read_consensus_model_unlocked(
+                assessment_id, baseline_version_id, record
+            )
             return record
-        snapshot_id = record.get("snapshot_id")
-        if not isinstance(snapshot_id, str) or not re.match(
-            r"^snapshot_[0-9a-f]{16}$", snapshot_id
+        record = super()._read_baseline_record(
+            assessment_id, baseline_version_id
+        )
+        snapshot = _validate_snapshot(
+            self._read_json(
+                self._snapshot_path(
+                    assessment_id, record["snapshot_id"]
+                ),
+                "storage_error",
+                "baseline snapshot was not found",
+            )
+        )
+        if (
+            record.get("snapshot_digest") != snapshot["snapshot_digest"]
+            or record.get("summary") != snapshot["summary"]
+            or record.get("scan_metadata") != snapshot["scan_metadata"]
+            or record.get("comparability_profile")
+            != snapshot["comparability_profile"]
         ):
             raise BackendError(
-                "storage_error", "baseline version is invalid"
+                "storage_error",
+                "baseline version does not match its immutable snapshot",
             )
         record.setdefault("baseline_type", "single_scan")
         return record
+
+    def _read_consensus_model_unlocked(
+        self,
+        assessment_id: str,
+        baseline_version_id: str,
+        record: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        model_id = record.get("baseline_model_id")
+        model_digest = record.get("baseline_model_digest")
+        version = int(baseline_version_id[-4:])
+        if (
+            set(record) != CONSENSUS_BASELINE_RECORD_FIELDS
+            or record.get("schema_version") != CUSTOMER_AUDIT_SCHEMA_VERSION
+            or record.get("assessment_id") != assessment_id
+            or record.get("baseline_version_id") != baseline_version_id
+            or record.get("baseline_type") != "consensus"
+            or record.get("version") != version
+            or not isinstance(record.get("label"), str)
+            or len(record["label"]) > 128
+            or any(ord(character) < 32 for character in record["label"])
+            or not isinstance(model_id, str)
+            or not BASELINE_MODEL_ID.match(model_id)
+            or not isinstance(model_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", model_digest)
+            or not isinstance(record.get("source_snapshot_ids"), list)
+            or not isinstance(record.get("source_snapshot_digests"), list)
+            or not isinstance(record.get("sample_count"), int)
+            or isinstance(record.get("sample_count"), bool)
+            or record["sample_count"] < 2
+            or record["sample_count"] > 5
+            or len(record["source_snapshot_ids"]) != record["sample_count"]
+            or len(record["source_snapshot_digests"])
+            != record["sample_count"]
+            or len(set(record["source_snapshot_ids"]))
+            != record["sample_count"]
+            or len(set(record["source_snapshot_digests"]))
+            != record["sample_count"]
+        ):
+            raise BackendError(
+                "storage_error", "consensus baseline record is invalid"
+            )
+        _require_rfc3339(
+            record.get("created_at"), "storage_error", "created_at"
+        )
+        base = self._ensure_assessment_directories(assessment_id)
+        model = self._read_json(
+            base / "baseline_models" / (model_id + ".json"),
+            "storage_error",
+            "baseline model is unavailable",
+        )
+        snapshots = []
+        for snapshot_id, snapshot_digest in zip(
+            record["source_snapshot_ids"],
+            record["source_snapshot_digests"],
+        ):
+            snapshot = _validate_snapshot(
+                self._read_json(
+                    self._snapshot_path(assessment_id, snapshot_id),
+                    "storage_error",
+                    "consensus source snapshot is unavailable",
+                )
+            )
+            if (
+                snapshot["snapshot_id"] != snapshot_id
+                or snapshot["snapshot_digest"] != snapshot_digest
+            ):
+                raise BackendError(
+                    "storage_error",
+                    "consensus source snapshot reference is invalid",
+                )
+            snapshots.append(snapshot)
+        try:
+            expected_model = build_consensus_baseline(
+                snapshots,
+                consensus_policy_id=model.get(
+                    "consensus_policy", {}
+                ).get("policy_id"),
+                max_source_age_hours=model.get("max_source_age_hours"),
+            )
+        except BackendError as failure:
+            raise BackendError(
+                "storage_error", "baseline model is invalid"
+            ) from failure
+        source_snapshots = expected_model["source_snapshots"]
+        if (
+            model != expected_model
+            or model_id != expected_model["baseline_model_id"]
+            or model_digest != expected_model["baseline_model_digest"]
+            or record["source_snapshot_ids"]
+            != [item["snapshot_id"] for item in source_snapshots]
+            or record["source_snapshot_digests"]
+            != [item["snapshot_digest"] for item in source_snapshots]
+            or record["summary"] != expected_model["summary"]
+            or record["measurement_context"]
+            != expected_model["measurement_context"]
+            or record["max_source_age_hours"]
+            != expected_model["max_source_age_hours"]
+        ):
+            raise BackendError(
+                "storage_error",
+                "baseline model failed immutable integrity validation",
+            )
+        return model
 
     def create_consensus_baseline_version(
         self,
@@ -803,6 +1079,24 @@ class CustomerAuditStore(AssessmentStore):
             "consensus baseline",
             MAX_PROFILE_DOCUMENT_BYTES,
         )
+        try:
+            expected_model = build_consensus_baseline(
+                normalized_snapshots,
+                consensus_policy_id=model.get(
+                    "consensus_policy", {}
+                ).get("policy_id"),
+                max_source_age_hours=model.get("max_source_age_hours"),
+            )
+        except BackendError as failure:
+            raise BackendError(
+                "invalid_consensus_baseline",
+                "baseline model does not match the supplied snapshots",
+            ) from failure
+        if model != expected_model:
+            raise BackendError(
+                "invalid_consensus_baseline",
+                "baseline model does not match the supplied snapshots",
+            )
         model_id = model.get("baseline_model_id")
         if not isinstance(model_id, str) or not BASELINE_MODEL_ID.match(model_id):
             raise BackendError(
@@ -834,7 +1128,12 @@ class CustomerAuditStore(AssessmentStore):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_revision)
             base = self._ensure_assessment_directories(assessment_id)
-            baseline_paths = sorted((base / "baselines").glob("baseline_v*.json"))
+            baseline_paths = self._bounded_document_paths(
+                base / "baselines",
+                re.compile(r"^baseline_v[0-9]{4}\.json$"),
+                MAX_BASELINE_VERSIONS,
+                "baseline",
+            )
             if len(baseline_paths) >= MAX_BASELINE_VERSIONS:
                 raise BackendError(
                     "baseline_limit",
@@ -859,7 +1158,12 @@ class CustomerAuditStore(AssessmentStore):
                 ):
                     new_snapshot_count += 1
             existing_snapshot_count = len(
-                list((base / "snapshots").glob("snapshot_*.json"))
+                self._bounded_document_paths(
+                    base / "snapshots",
+                    re.compile(r"^snapshot_[0-9a-f]{16}\.json$"),
+                    MAX_SNAPSHOTS,
+                    "snapshot",
+                )
             )
             if existing_snapshot_count + new_snapshot_count > MAX_SNAPSHOTS:
                 raise BackendError(
@@ -882,10 +1186,12 @@ class CustomerAuditStore(AssessmentStore):
                 "baseline_model_id": model_id,
                 "baseline_model_digest": model.get("baseline_model_digest"),
                 "source_snapshot_ids": [
-                    item["snapshot_id"] for item in normalized_snapshots
+                    item["snapshot_id"]
+                    for item in model["source_snapshots"]
                 ],
                 "source_snapshot_digests": [
-                    item["snapshot_digest"] for item in normalized_snapshots
+                    item["snapshot_digest"]
+                    for item in model["source_snapshots"]
                 ],
                 "sample_count": len(normalized_snapshots),
                 "summary": model.get("summary", {}),
@@ -929,33 +1235,41 @@ class CustomerAuditStore(AssessmentStore):
     def get_baseline_version(
         self, assessment_id: str, baseline_version_id: str
     ) -> Dict[str, Any]:
-        record = self._read_baseline_record(assessment_id, baseline_version_id)
-        if record.get("baseline_type") != "consensus":
-            result = super().get_baseline_version(
+        with self._lock(assessment_id):
+            record = self._read_baseline_record(
                 assessment_id, baseline_version_id
             )
-            result.setdefault("baseline_type", "single_scan")
-            result.setdefault("legacy", record.get("schema_version") in ("1.0", "1.1"))
-            return result
-        model_id = record.get("baseline_model_id")
-        if not isinstance(model_id, str) or not BASELINE_MODEL_ID.match(model_id):
-            raise BackendError("storage_error", "baseline model reference is invalid")
-        base = self._ensure_assessment_directories(assessment_id)
-        try:
-            model = json.loads(
-                (base / "baseline_models" / (model_id + ".json")).read_text(
-                    encoding="utf-8"
+            if record.get("baseline_type") != "consensus":
+                result = super().get_baseline_version(
+                    assessment_id, baseline_version_id
                 )
+                result.setdefault("baseline_type", "single_scan")
+                result.setdefault(
+                    "legacy",
+                    record.get("schema_version") in ("1.0", "1.1"),
+                )
+                return result
+            model_id = record.get("baseline_model_id")
+            if (
+                not isinstance(model_id, str)
+                or not BASELINE_MODEL_ID.match(model_id)
+            ):
+                raise BackendError(
+                    "storage_error",
+                    "baseline model reference is invalid",
+                )
+            model = self._read_consensus_model_unlocked(
+                assessment_id, baseline_version_id, record
             )
-        except (OSError, ValueError):
-            raise BackendError("storage_error", "baseline model is unavailable")
-        result = dict(record)
-        result["is_active"] = (
-            self._read_metadata(assessment_id)["active_baseline_version"]
-            == baseline_version_id
-        )
-        result["baseline_model"] = model
-        return result
+            result = dict(record)
+            result["is_active"] = (
+                self._read_metadata(assessment_id)[
+                    "active_baseline_version"
+                ]
+                == baseline_version_id
+            )
+            result["baseline_model"] = model
+            return result
 
     def activate_baseline_version(
         self,
@@ -1017,6 +1331,18 @@ class CustomerAuditStore(AssessmentStore):
         base = self._ensure_assessment_directories(assessment_id)
         return base / "assurance_profiles" / (version_id + ".json")
 
+    def _read_assurance_profile_record_unlocked(
+        self, assessment_id: str, version_id: str
+    ) -> Dict[str, Any]:
+        record = self._read_json(
+            self._assurance_profile_path(assessment_id, version_id),
+            "assurance_profile_not_found",
+            "assurance profile version was not found",
+        )
+        return self._validate_assurance_profile_record(
+            assessment_id, version_id, record
+        )
+
     def create_assurance_profile_version(
         self,
         assessment_id: str,
@@ -1035,14 +1361,22 @@ class CustomerAuditStore(AssessmentStore):
                 "invalid_assurance_profile",
                 "assurance profile must be an object",
             )
-        if not isinstance(label, str) or len(label) > 128:
+        _ensure_no_raw_recon(normalized)
+        if (
+            not isinstance(label, str)
+            or len(label) > 128
+            or any(ord(character) < 32 for character in label)
+        ):
             raise BackendError("invalid_assurance_profile", "label is invalid")
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_revision)
             base = self._ensure_assessment_directories(assessment_id)
-            paths = sorted(
-                (base / "assurance_profiles").glob("assurance_v*.json")
+            paths = self._bounded_document_paths(
+                base / "assurance_profiles",
+                re.compile(r"^assurance_v[0-9]{4}\.json$"),
+                MAX_ASSURANCE_PROFILES,
+                "assurance profile",
             )
             if len(paths) >= MAX_ASSURANCE_PROFILES:
                 raise BackendError(
@@ -1093,52 +1427,44 @@ class CustomerAuditStore(AssessmentStore):
     def list_assurance_profile_versions(
         self, assessment_id: str
     ) -> List[Dict[str, Any]]:
-        metadata = self._read_metadata(assessment_id)
-        base = self._ensure_assessment_directories(assessment_id)
-        results = []
-        for path in sorted(
-            (base / "assurance_profiles").glob("assurance_v*.json")
-        ):
-            if not ASSURANCE_PROFILE_VERSION_ID.match(path.stem):
-                continue
-            record = self.get_assurance_profile_version(
-                assessment_id, path.stem
-            )
-            record.pop("profile", None)
-            results.append(record)
-        for record in results:
-            record["is_active"] = (
-                metadata["active_assurance_profile_version"]
-                == record["assurance_profile_version_id"]
-            )
-        return results
+        with self._lock(assessment_id):
+            metadata = self._read_metadata(assessment_id)
+            base = self._ensure_assessment_directories(assessment_id)
+            results = []
+            for path in self._bounded_document_paths(
+                base / "assurance_profiles",
+                re.compile(r"^assurance_v[0-9]{4}\.json$"),
+                MAX_ASSURANCE_PROFILES,
+                "assurance profile",
+            ):
+                if not ASSURANCE_PROFILE_VERSION_ID.match(path.stem):
+                    continue
+                record = self.get_assurance_profile_version(
+                    assessment_id, path.stem
+                )
+                record.pop("profile", None)
+                results.append(record)
+            for record in results:
+                record["is_active"] = (
+                    metadata["active_assurance_profile_version"]
+                    == record["assurance_profile_version_id"]
+                )
+            return results
 
     def get_assurance_profile_version(
         self, assessment_id: str, version_id: str
     ) -> Dict[str, Any]:
-        self._read_metadata(assessment_id)
-        try:
-            record = json.loads(
-                self._assurance_profile_path(
-                    assessment_id, version_id
-                ).read_text(encoding="utf-8")
+        with self._lock(assessment_id):
+            metadata = self._read_metadata(assessment_id)
+            record = self._read_assurance_profile_record_unlocked(
+                assessment_id, version_id
             )
-        except FileNotFoundError:
-            raise BackendError(
-                "assurance_profile_not_found",
-                "assurance profile version was not found",
+            record = dict(record)
+            record["is_active"] = (
+                metadata["active_assurance_profile_version"]
+                == version_id
             )
-        except (OSError, ValueError):
-            raise BackendError(
-                "storage_error", "assurance profile version is invalid"
-            )
-        record["is_active"] = (
-            self._read_metadata(assessment_id)[
-                "active_assurance_profile_version"
-            ]
-            == version_id
-        )
-        return record
+            return record
 
     def activate_assurance_profile_version(
         self,
@@ -1150,7 +1476,7 @@ class CustomerAuditStore(AssessmentStore):
         with self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_revision)
-            record = self.get_assurance_profile_version(
+            record = self._read_assurance_profile_record_unlocked(
                 assessment_id, version_id
             )
             coverage_mode = record.get("profile", {}).get(
@@ -1243,6 +1569,11 @@ class CustomerAuditStore(AssessmentStore):
             raise BackendError(
                 "invalid_occurrence_set", "occurrence set must be an object"
             )
+        if set(occurrence) != OCCURRENCE_INPUT_FIELDS:
+            raise BackendError(
+                "invalid_occurrence_set",
+                "occurrence set fields are invalid",
+            )
         if not isinstance(pinned_versions, dict):
             raise BackendError(
                 "invalid_analysis", "pinned_versions must be an object"
@@ -1278,9 +1609,14 @@ class CustomerAuditStore(AssessmentStore):
                 )
 
             base = self._ensure_assessment_directories(assessment_id)
-            if len(list((base / "comparisons").glob("comparison_*.json"))) >= (
-                MAX_COMPARISONS
-            ):
+            if len(
+                self._bounded_document_paths(
+                    base / "comparisons",
+                    re.compile(r"^comparison_[0-9a-f]{16}\.json$"),
+                    MAX_COMPARISONS,
+                    "comparison",
+                )
+            ) >= MAX_COMPARISONS:
                 raise BackendError(
                     "comparison_limit",
                     "assessment comparison limit was reached",
@@ -1292,7 +1628,12 @@ class CustomerAuditStore(AssessmentStore):
                 snapshot_path, normalized_snapshot, "snapshot_conflict"
             )
             if snapshot_is_new and len(
-                list((base / "snapshots").glob("snapshot_*.json"))
+                self._bounded_document_paths(
+                    base / "snapshots",
+                    re.compile(r"^snapshot_[0-9a-f]{16}\.json$"),
+                    MAX_SNAPSHOTS,
+                    "snapshot",
+                )
             ) >= MAX_SNAPSHOTS:
                 raise BackendError(
                     "snapshot_limit",
@@ -1412,6 +1753,11 @@ class CustomerAuditStore(AssessmentStore):
             )
             occurrence["occurrence_set_id"] = occurrence_id
             occurrence["occurrence_digest"] = occurrence_digest
+            if set(occurrence) != OCCURRENCE_STORED_FIELDS:
+                raise BackendError(
+                    "invalid_occurrence_set",
+                    "stored occurrence set fields are invalid",
+                )
             occurrence_path = (
                 base / "occurrences" / (occurrence_id + ".json")
             )
@@ -1419,7 +1765,12 @@ class CustomerAuditStore(AssessmentStore):
                 occurrence_path, occurrence, "occurrence_conflict"
             )
             if occurrence_is_new and len(
-                list((base / "occurrences").glob("occurrence_*.json"))
+                self._bounded_document_paths(
+                    base / "occurrences",
+                    re.compile(r"^occurrence_[0-9a-f]{16}\.json$"),
+                    MAX_OCCURRENCES,
+                    "occurrence",
+                )
             ) >= MAX_OCCURRENCES:
                 raise BackendError(
                     "occurrence_limit",
@@ -1525,6 +1876,16 @@ class CustomerAuditStore(AssessmentStore):
         record.setdefault("schema_version", OCCURRENCE_SCHEMA_VERSION)
         record.setdefault("assessment_id", assessment_id)
         record.setdefault("comparison_id", comparison_id)
+        supplied_id = record.get("occurrence_set_id")
+        supplied_digest = record.get("occurrence_digest")
+        if set(record) not in (
+            OCCURRENCE_STORED_FIELDS,
+            OCCURRENCE_STORED_FIELDS - OCCURRENCE_ID_FIELDS,
+        ):
+            raise BackendError(
+                "invalid_occurrence_set",
+                "occurrence set fields are invalid",
+            )
         if (
             record.get("schema_version") != OCCURRENCE_SCHEMA_VERSION
             or record.get("assessment_id") != assessment_id
@@ -1538,6 +1899,14 @@ class CustomerAuditStore(AssessmentStore):
         record.pop("occurrence_digest", None)
         digest = _canonical_digest(record)
         occurrence_id = "occurrence_{0}".format(digest[:16])
+        if supplied_id not in (None, occurrence_id) or supplied_digest not in (
+            None,
+            digest,
+        ):
+            raise BackendError(
+                "invalid_occurrence_set",
+                "occurrence set identity is invalid",
+            )
         record["occurrence_set_id"] = occurrence_id
         record["occurrence_digest"] = digest
 
@@ -1569,7 +1938,12 @@ class CustomerAuditStore(AssessmentStore):
                 path, record, "occurrence_conflict"
             )
             if is_new and len(
-                list((base / "occurrences").glob("occurrence_*.json"))
+                self._bounded_document_paths(
+                    base / "occurrences",
+                    re.compile(r"^occurrence_[0-9a-f]{16}\.json$"),
+                    MAX_OCCURRENCES,
+                    "occurrence",
+                )
             ) >= MAX_OCCURRENCES:
                 raise BackendError(
                     "occurrence_limit",
@@ -1596,8 +1970,11 @@ class CustomerAuditStore(AssessmentStore):
             if direct:
                 candidates = [base / "occurrences" / (direct + ".json")]
             else:
-                candidates = sorted(
-                    (base / "occurrences").glob("occurrence_*.json")
+                candidates = self._bounded_document_paths(
+                    base / "occurrences",
+                    re.compile(r"^occurrence_[0-9a-f]{16}\.json$"),
+                    MAX_OCCURRENCES,
+                    "occurrence",
                 )
             for path in candidates:
                 if path.is_symlink() or not path.is_file():
@@ -1609,7 +1986,10 @@ class CustomerAuditStore(AssessmentStore):
                     "storage_error",
                     "occurrence set is unavailable",
                 )
-                if not isinstance(record, dict):
+                if (
+                    not isinstance(record, dict)
+                    or set(record) != OCCURRENCE_STORED_FIELDS
+                ):
                     raise BackendError(
                         "storage_error", "occurrence set is invalid"
                     )
@@ -1643,8 +2023,11 @@ class CustomerAuditStore(AssessmentStore):
         with self._lock(assessment_id):
             self._read_metadata(assessment_id)
             base = self._ensure_assessment_directories(assessment_id)
-            paths = sorted(
-                (base / "occurrences").glob("occurrence_*.json")
+            paths = self._bounded_document_paths(
+                base / "occurrences",
+                re.compile(r"^occurrence_[0-9a-f]{16}\.json$"),
+                MAX_OCCURRENCES,
+                "occurrence",
             )
             if len(paths) > MAX_OCCURRENCES:
                 raise BackendError(
@@ -1674,6 +2057,7 @@ class CustomerAuditStore(AssessmentStore):
                 reproduced = _canonical_digest(digest_input)
                 if (
                     not isinstance(record, dict)
+                    or set(record) != OCCURRENCE_STORED_FIELDS
                     or record.get("occurrence_set_id") != path.stem
                     or path.stem
                     != "occurrence_{0}".format(reproduced[:16])
@@ -1721,6 +2105,12 @@ class CustomerAuditStore(AssessmentStore):
             raise BackendError(
                 "invalid_report", "report content must be text"
             )
+        encoded = content.encode("utf-8")
+        if len(encoded) > MAX_REPORT_EXPORT_BYTES:
+            raise BackendError(
+                "report_limit",
+                "report export exceeds the safe size limit",
+            )
         if (
             not isinstance(ttl_seconds, int)
             or isinstance(ttl_seconds, bool)
@@ -1733,15 +2123,74 @@ class CustomerAuditStore(AssessmentStore):
         base = self._ensure_assessment_directories(assessment_id)
         export_directory = base / "exports"
         now = datetime.datetime.now(datetime.timezone.utc)
-        for path in export_directory.glob("PineAI-*"):
+        self._ensure_private_directory(export_directory)
+        paths = []
+        try:
+            with os.scandir(str(export_directory)) as iterator:
+                for entry in iterator:
+                    if (
+                        not re.match(
+                            r"^PineAI-[A-Za-z0-9._-]{1,160}"
+                            r"\.(?:json|html)$",
+                            entry.name,
+                        )
+                        or not entry.is_file(follow_symlinks=False)
+                    ):
+                        raise BackendError(
+                            "storage_error",
+                            "report export storage contains an invalid entry",
+                        )
+                    paths.append(Path(entry.path))
+                    if len(paths) > MAX_REPORT_EXPORT_FILES:
+                        raise BackendError(
+                            "report_limit",
+                            "report export file limit was exceeded",
+                        )
+        except BackendError:
+            raise
+        except OSError as error:
+            raise BackendError(
+                "storage_error",
+                "report export storage is unreadable",
+            ) from error
+        retained_paths = []
+        for existing_path in paths:
             try:
-                age = now.timestamp() - path.stat().st_mtime
+                details = existing_path.lstat()
+                if (
+                    stat.S_ISLNK(details.st_mode)
+                    or not stat.S_ISREG(details.st_mode)
+                ):
+                    raise BackendError(
+                        "storage_error",
+                        "report export path is invalid",
+                )
+                age = now.timestamp() - details.st_mtime
                 if age > ttl_seconds:
-                    path.unlink()
+                    existing_path.unlink()
+                else:
+                    retained_paths.append(existing_path)
+            except BackendError:
+                raise
             except OSError:
-                pass
+                raise BackendError(
+                    "storage_error",
+                    "report export could not be inspected",
+                )
         path = export_directory / filename
-        write_private_file(path, content.encode("utf-8"))
+        if (
+            not path.exists()
+            and len(retained_paths) >= MAX_REPORT_EXPORT_FILES
+        ):
+            raise BackendError(
+                "report_limit",
+                "report export file limit was exceeded",
+            )
+        if path.is_symlink():
+            raise BackendError(
+                "storage_error", "report export path is invalid"
+            )
+        write_private_file(path, encoded)
         return {
             "filename": str(path),
             "expires_at": (

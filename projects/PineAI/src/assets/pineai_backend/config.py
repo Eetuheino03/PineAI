@@ -7,6 +7,7 @@ import os
 import secrets
 import stat
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -98,7 +99,15 @@ def resolve_config_dir(config_dir: Optional[str] = None) -> Path:
 
 
 def _ensure_private_directory(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
+    try:
+        details = path.lstat()
+    except FileNotFoundError:
+        path.mkdir(parents=True, exist_ok=False)
+        details = path.lstat()
+    except OSError as error:
+        raise ConfigError("Private PineAI directory is unavailable") from error
+    if stat.S_ISLNK(details.st_mode) or not stat.S_ISDIR(details.st_mode):
+        raise ConfigError("Private PineAI directory must be a real directory")
     try:
         os.chmod(str(path), 0o700)
     except OSError:
@@ -107,7 +116,7 @@ def _ensure_private_directory(path: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
-    flags = os.O_RDONLY
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_DIRECTORY"):
         flags |= os.O_DIRECTORY
     descriptor = None
@@ -136,7 +145,19 @@ def _atomic_private_write(path: Path, data: bytes) -> None:
             os.chmod(temporary_name, 0o600)
         except OSError:
             pass
-        os.replace(temporary_name, str(path))
+        replace_deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                os.replace(temporary_name, str(path))
+                break
+            except PermissionError:
+                # Windows scanners and sync providers can briefly retain a
+                # read handle after validation. Retrying the same atomic
+                # replacement preserves the transaction boundary without
+                # falling back to a non-atomic write.
+                if time.monotonic() >= replace_deadline:
+                    raise
+                time.sleep(0.05)
         try:
             os.chmod(str(path), 0o600)
         except OSError:
@@ -158,7 +179,7 @@ def _read_private_bytes(path: Path, maximum_bytes: int) -> bytes:
         or details.st_size > maximum_bytes
     ):
         raise ConfigError("Private PineAI file path or size is invalid")
-    flags = os.O_RDONLY
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = None
@@ -190,6 +211,8 @@ def write_private_file(path: Path, data: bytes) -> None:
 
 
 def _validate_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(settings, dict) or set(settings) - set(DEFAULTS):
+        raise ConfigError("configuration contains unsupported fields")
     result = dict(DEFAULTS)
     result.update(settings)
 
@@ -222,8 +245,8 @@ def load_settings(config_dir: Optional[str] = None) -> Dict[str, Any]:
         raw = json.loads(
             _read_private_bytes(path, MAX_SETTINGS_BYTES).decode("utf-8")
         )
-    except (ConfigError, UnicodeError, ValueError) as error:
-        raise ConfigError("Could not read PineAI configuration: {0}".format(error))
+    except (ConfigError, UnicodeError, ValueError):
+        raise ConfigError("Could not read PineAI configuration")
     if not isinstance(raw, dict):
         raise ConfigError("PineAI configuration must be a JSON object")
     return _validate_settings(raw)
@@ -258,8 +281,8 @@ def delete_api_key(config_dir: Optional[str] = None) -> None:
         _fsync_directory(path.parent)
     except FileNotFoundError:
         return
-    except OSError as error:
-        raise ConfigError("Could not delete OpenAI API key: {0}".format(error))
+    except OSError:
+        raise ConfigError("Could not delete OpenAI API key")
 
 
 def load_api_key(config_dir: Optional[str] = None) -> Optional[str]:
@@ -274,8 +297,8 @@ def load_api_key(config_dir: Optional[str] = None) -> Optional[str]:
         value = _read_private_bytes(path, MAX_API_KEY_BYTES).decode(
             "utf-8"
         ).strip()
-    except (ConfigError, UnicodeError) as error:
-        raise ConfigError("Could not read OpenAI API key: {0}".format(error))
+    except (ConfigError, UnicodeError):
+        raise ConfigError("Could not read OpenAI API key")
     return value or None
 
 
@@ -284,15 +307,23 @@ def _identity_bound_data_exists(directory: Path) -> bool:
     # Measurement profiles have UUID/revision identities and can safely exist
     # before the first HMAC-backed assessment. Assessment snapshots, evidence,
     # baselines, occurrences and findings cannot.
-    for name in ("assessments",):
-        root = directory / name
-        if not root.exists():
-            continue
-        try:
-            if any(path.is_file() for path in root.rglob("*")):
-                return True
-        except OSError:
+    root = directory / "assessments"
+    if not root.exists() and not root.is_symlink():
+        return False
+    try:
+        root_details = root.lstat()
+        if stat.S_ISLNK(root_details.st_mode) or not stat.S_ISDIR(
+            root_details.st_mode
+        ):
             return True
+        for path in root.rglob("*"):
+            details = path.lstat()
+            if stat.S_ISLNK(details.st_mode):
+                return True
+            if stat.S_ISREG(details.st_mode) and path.name != ".lock":
+                return True
+    except OSError:
+        return True
     return False
 
 

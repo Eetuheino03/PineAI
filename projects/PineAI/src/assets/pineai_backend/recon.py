@@ -186,9 +186,9 @@ def validate_and_normalize_scan(
                 scan, ensure_ascii=False, separators=(",", ":")
             ).encode("utf-8")
         )
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError):
         raise ReconValidationError(
-            "scan must be JSON serializable: {0}".format(error)
+            "scan must be JSON serializable"
         )
     if encoded_size > MAX_INPUT_BYTES:
         raise ReconValidationError("scan exceeds the 8 MiB input limit")

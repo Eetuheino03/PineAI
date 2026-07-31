@@ -24,7 +24,12 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 
-from .config import resolve_config_dir
+from .assessment_store import _ensure_no_raw_recon
+from .config import (
+    _read_pseudonymization_key,
+    _validate_settings,
+    resolve_config_dir,
+)
 from .errors import BackendError
 from .storage_transaction import recover_private_transactions
 
@@ -37,11 +42,13 @@ ALLOWED_DIRECTORIES = ("assessments", "measurement_profiles")
 ALLOWED_FILES = ("config.json", "pseudonymization.key")
 SECRET_EXCLUDED_NAMES = {"openai.key"}
 TRANSIENT_EXCLUDED_NAMES = {".lock", ".transactions"}
+TRANSIENT_EXCLUDED_NAMES.add("exports")
 EXCLUDED_NAMES = SECRET_EXCLUDED_NAMES | TRANSIENT_EXCLUDED_NAMES
 MAX_MEMBERS = 10000
 MAX_FILES = 9000
 MAX_MEMBER_BYTES = 16 * 1024 * 1024
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 544 * 1024 * 1024
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 COPY_CHUNK_BYTES = 64 * 1024
 MAX_ASSESSMENTS_FOR_BACKUP = 1000
@@ -90,29 +97,135 @@ def _sha256_stream(handle: BinaryIO) -> Tuple[str, int]:
 
 def _sha256_path(path: Path) -> Tuple[str, int]:
     try:
-        with path.open("rb") as handle:
-            return _sha256_stream(handle)
+        before = path.lstat()
     except OSError as failure:
         raise BackendError(
             "backup_io_error",
-            "could not read backup source file: {0}".format(failure),
+            "could not inspect backup source file",
+        ) from failure
+    if (
+        stat.S_ISLNK(before.st_mode)
+        or not stat.S_ISREG(before.st_mode)
+        or before.st_size > MAX_MEMBER_BYTES
+    ):
+        raise BackendError(
+            "backup_unsafe_source",
+            "backup source must be a bounded regular file",
         )
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = None
+    try:
+        descriptor = os.open(str(path), flags)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_size != before.st_size
+            or getattr(opened, "st_ino", 0)
+            != getattr(before, "st_ino", 0)
+        ):
+            raise BackendError(
+                "backup_source_changed",
+                "backup source changed while it was being opened",
+            )
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            return _sha256_stream(handle)
+    except BackendError:
+        raise
+    except OSError as failure:
+        raise BackendError(
+            "backup_io_error",
+            "could not read backup source file",
+        ) from failure
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _archive_sha256(path: Path) -> str:
+    with _open_archive_source(path) as handle:
+        digest, _size = _archive_stream_sha256(handle)
+        return digest
+
+
+def _archive_stream_sha256(handle: BinaryIO) -> Tuple[str, int]:
     digest = hashlib.sha256()
+    size = 0
+    while True:
+        chunk = handle.read(COPY_CHUNK_BYTES)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > MAX_ARCHIVE_BYTES:
+            raise BackendError(
+                "backup_limit", "backup archive exceeds the safe size limit"
+            )
+        digest.update(chunk)
+    return digest.hexdigest(), size
+
+
+@contextmanager
+def _open_archive_source(path: Path):
     try:
-        with path.open("rb") as handle:
-            while True:
-                chunk = handle.read(COPY_CHUNK_BYTES)
-                if not chunk:
-                    break
-                digest.update(chunk)
+        before = path.lstat()
     except OSError as failure:
         raise BackendError(
-            "backup_io_error", "could not read backup archive: {0}".format(failure)
+            "backup_invalid", "backup input must be a regular file"
+        ) from failure
+    if (
+        stat.S_ISLNK(before.st_mode)
+        or not stat.S_ISREG(before.st_mode)
+        or before.st_size > MAX_ARCHIVE_BYTES
+    ):
+        code = (
+            "backup_limit"
+            if stat.S_ISREG(before.st_mode)
+            and before.st_size > MAX_ARCHIVE_BYTES
+            else "backup_invalid"
         )
-    return digest.hexdigest()
+        raise BackendError(code, "backup input must be a bounded regular file")
+
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = None
+    try:
+        descriptor = os.open(str(path), flags)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_size != before.st_size
+            or getattr(opened, "st_dev", 0) != getattr(before, "st_dev", 0)
+            or getattr(opened, "st_ino", 0) != getattr(before, "st_ino", 0)
+        ):
+            raise BackendError(
+                "backup_source_changed",
+                "backup archive changed while it was being opened",
+            )
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            yield handle
+            after = os.fstat(handle.fileno())
+            if (
+                after.st_size != opened.st_size
+                or getattr(after, "st_dev", 0) != getattr(opened, "st_dev", 0)
+                or getattr(after, "st_ino", 0) != getattr(opened, "st_ino", 0)
+            ):
+                raise BackendError(
+                    "backup_source_changed",
+                    "backup archive changed while it was being read",
+                )
+    except BackendError:
+        raise
+    except OSError as failure:
+        raise BackendError(
+            "backup_io_error", "could not read backup archive"
+        ) from failure
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _validate_relative_path(value: Any, directory: bool = False) -> str:
@@ -172,7 +285,12 @@ def _assessment_names(root: Path) -> List[str]:
                     continue
                 if (
                     not entry.is_dir(follow_symlinks=False)
-                    or entry.name in ("", ".", "..")
+                    or not re.match(
+                        r"^assessment_[0-9a-f]{8}-[0-9a-f]{4}-"
+                        r"4[0-9a-f]{3}-[89ab][0-9a-f]{3}-"
+                        r"[0-9a-f]{12}$",
+                        entry.name,
+                    )
                 ):
                     raise BackendError(
                         "backup_unsafe_source",
@@ -193,6 +311,7 @@ def _assessment_names(root: Path) -> List[str]:
 
 
 def _assert_no_active_transactions(root: Path) -> None:
+    visited = 0
     for allowed in ALLOWED_DIRECTORIES:
         directory = root / allowed
         if not directory.exists():
@@ -200,6 +319,12 @@ def _assert_no_active_transactions(root: Path) -> None:
         for current_root, directory_names, _ in os.walk(
             str(directory), topdown=True, followlinks=False
         ):
+            visited += 1
+            if visited > MAX_MEMBERS:
+                raise BackendError(
+                    "backup_limit",
+                    "backup source directory limit was exceeded",
+                )
             current = Path(current_root)
             if ".transactions" in directory_names:
                 transaction_root = current / ".transactions"
@@ -226,6 +351,142 @@ def _assert_no_active_transactions(root: Path) -> None:
             directory_names[:] = [
                 name for name in directory_names if name != ".lock"
             ]
+
+
+def _validate_source_path_contract(relative: str) -> None:
+    parts = PurePosixPath(relative).parts
+    if len(parts) == 1:
+        if parts[0] not in ALLOWED_FILES:
+            raise BackendError(
+                "backup_unsafe_source",
+                "backup source contains an unsupported top-level file",
+            )
+        return
+    if parts[0] == "measurement_profiles":
+        if (
+            len(parts) < 2
+            or not re.match(
+                r"^mprofile_[0-9a-f]{8}-[0-9a-f]{4}-"
+                r"4[0-9a-f]{3}-[89ab][0-9a-f]{3}-"
+                r"[0-9a-f]{12}$",
+                parts[1],
+            )
+        ):
+            raise BackendError(
+                "backup_unsafe_source",
+                "measurement profile storage contains an invalid identity",
+            )
+        valid = (
+            len(parts) == 3 and parts[2] == "profile.json"
+        ) or (
+            len(parts) == 4
+            and parts[2] == "versions"
+            and re.match(r"^mprofile_r[0-9]{4}\.json$", parts[3])
+        )
+        if not valid:
+            raise BackendError(
+                "backup_unsafe_source",
+                "measurement profile storage contains an unsupported file",
+            )
+        return
+    if parts[0] == "assessments":
+        if (
+            len(parts) < 2
+            or not re.match(
+                r"^assessment_[0-9a-f]{8}-[0-9a-f]{4}-"
+                r"4[0-9a-f]{3}-[89ab][0-9a-f]{3}-"
+                r"[0-9a-f]{12}$",
+                parts[1],
+            )
+        ):
+            raise BackendError(
+                "backup_unsafe_source",
+                "assessment storage contains an invalid identity",
+            )
+        top_level = {
+            "assessment.json",
+            "events.jsonl",
+            "findings.json",
+            "measurement_points.json",
+            "audit_runs_manifest.json",
+        }
+        document_patterns = {
+            "baselines": r"^baseline_v[0-9]{4}\.json$",
+            "snapshots": r"^snapshot_[0-9a-f]{16}\.json$",
+            "comparisons": r"^comparison_[0-9a-f]{16}\.json$",
+            "baseline_models": r"^bmodel_[0-9a-f]{16}\.json$",
+            "assurance_profiles": r"^assurance_v[0-9]{4}\.json$",
+            "occurrences": r"^occurrence_[0-9a-f]{16}\.json$",
+            "audit_runs": r"^ar_[0-9a-f]{16}\.json$",
+        }
+        valid = (
+            len(parts) == 3 and parts[2] in top_level
+        ) or (
+            len(parts) == 4
+            and parts[2] in document_patterns
+            and re.match(
+                document_patterns[parts[2]],
+                parts[3],
+            )
+        )
+        if not valid:
+            raise BackendError(
+                "backup_unsafe_source",
+                "assessment storage contains an unsupported file",
+            )
+        return
+    raise BackendError(
+        "backup_unsafe_source",
+        "backup source file is outside the storage contract",
+    )
+
+
+def _validate_source_content(path: Path, relative: str, size: int) -> None:
+    if relative == "pseudonymization.key":
+        try:
+            _read_pseudonymization_key(path)
+        except Exception as error:
+            raise BackendError(
+                "backup_identity_invalid",
+                "pseudonymization.key is invalid",
+            ) from error
+        return
+    if relative.endswith("events.jsonl"):
+        try:
+            with _safe_source_handle(path, size) as handle:
+                payload = handle.read(MAX_MEMBER_BYTES + 1)
+            if len(payload) != size or len(payload) > MAX_MEMBER_BYTES:
+                raise ValueError()
+            for line in payload.decode("utf-8").splitlines():
+                if line.strip():
+                    _ensure_no_raw_recon(json.loads(line))
+        except BackendError:
+            raise
+        except Exception as error:
+            raise BackendError(
+                "backup_unsafe_source",
+                "backup source JSONL is invalid",
+            ) from error
+        return
+    if not relative.endswith(".json"):
+        return
+    try:
+        with _safe_source_handle(path, size) as handle:
+            payload = handle.read(MAX_MEMBER_BYTES + 1)
+        if len(payload) != size or len(payload) > MAX_MEMBER_BYTES:
+            raise ValueError()
+        value = json.loads(payload.decode("utf-8"))
+        if relative == "config.json":
+            _validate_settings(value)
+        else:
+            _ensure_no_raw_recon(value)
+    except BackendError:
+        raise
+    except Exception as error:
+        raise BackendError(
+            "backup_unsafe_source",
+            "backup source JSON is invalid",
+        ) from error
 
 
 @contextmanager
@@ -264,6 +525,7 @@ def _source_entries(
     directories = set(ALLOWED_DIRECTORIES)
     files = []
     total_bytes = 0
+    visited_directories = 0
 
     for name in ALLOWED_DIRECTORIES:
         directory = root / name
@@ -277,6 +539,12 @@ def _source_entries(
         for current_root, directory_names, file_names in os.walk(
             str(directory), topdown=True, followlinks=False
         ):
+            visited_directories += 1
+            if visited_directories > MAX_MEMBERS:
+                raise BackendError(
+                    "backup_limit",
+                    "backup source directory limit was exceeded",
+                )
             current = Path(current_root)
             relative_directory = current.relative_to(root).as_posix()
             _validate_relative_path(relative_directory, directory=True)
@@ -306,10 +574,10 @@ def _source_entries(
                     )
                 try:
                     file_stat = path.stat()
-                except OSError as failure:
+                except OSError:
                     raise BackendError(
                         "backup_io_error",
-                        "could not inspect backup source: {0}".format(failure),
+                        "could not inspect backup source",
                     )
                 if not stat.S_ISREG(file_stat.st_mode):
                     raise BackendError(
@@ -319,6 +587,7 @@ def _source_entries(
                 relative = _validate_relative_path(
                     path.relative_to(root).as_posix()
                 )
+                _validate_source_path_contract(relative)
                 sha256, size = _sha256_path(path)
                 if size != file_stat.st_size:
                     raise BackendError(
@@ -337,6 +606,12 @@ def _source_entries(
                         "sha256": sha256,
                     }
                 )
+                _validate_source_content(path, relative, size)
+                if len(files) > MAX_FILES:
+                    raise BackendError(
+                        "backup_limit",
+                        "backup contains too many files",
+                    )
 
     for name in ALLOWED_FILES:
         path = root / name
@@ -348,6 +623,8 @@ def _source_entries(
                 "{0} must be a regular file".format(name),
             )
         sha256, size = _sha256_path(path)
+        _validate_source_path_contract(name)
+        _validate_source_content(path, name, size)
         total_bytes += size
         if total_bytes > MAX_TOTAL_BYTES:
             raise BackendError(
@@ -401,7 +678,7 @@ def _tar_info(name: str, size: int = 0, directory: bool = False) -> tarfile.TarI
 
 
 def _safe_source_handle(path: Path, expected_size: int) -> BinaryIO:
-    flags = os.O_RDONLY
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:
@@ -416,10 +693,10 @@ def _safe_source_handle(path: Path, expected_size: int) -> BinaryIO:
         return os.fdopen(descriptor, "rb")
     except BackendError:
         raise
-    except OSError as failure:
+    except OSError:
         raise BackendError(
             "backup_io_error",
-            "could not open backup source file: {0}".format(failure),
+            "could not open backup source file",
         )
 
 
@@ -433,11 +710,23 @@ def create_backup(
             "backup_identity_missing",
             "pseudonymization.key is required for a continuity backup",
         )
-    with _locked_backup_source(root):
-        return _create_backup_unlocked(root, output)
+    temporary = None
+    try:
+        with _locked_backup_source(root):
+            temporary, result = _prepare_backup_unlocked(root, output)
+        _publish_prepared_backup(temporary, Path(output))
+        return result
+    finally:
+        if temporary is not None and temporary.exists():
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
 
-def _create_backup_unlocked(root: Path, output: str) -> Dict[str, Any]:
+def _prepare_backup_unlocked(
+    root: Path, output: str
+) -> Tuple[Path, Dict[str, Any]]:
     output_path = Path(output)
     if output_path.exists() or output_path.is_symlink():
         raise BackendError(
@@ -505,30 +794,13 @@ def _create_backup_unlocked(root: Path, output: str) -> Dict[str, Any]:
                             ),
                             handle,
                         )
-        except (OSError, tarfile.TarError) as failure:
+        except (OSError, tarfile.TarError):
             raise BackendError(
                 "backup_io_error",
-                "could not create backup archive: {0}".format(failure),
+                "could not create backup archive",
             )
 
         verification = verify_backup(str(temporary))
-        try:
-            # A same-directory hard link publishes the completed inode without
-            # ever overwriting a path created by another process.
-            os.link(str(temporary), str(output_path))
-        except FileExistsError:
-            raise BackendError(
-                "backup_output_exists", "backup output path already exists"
-            )
-        except OSError as failure:
-            raise BackendError(
-                "backup_io_error",
-                "could not publish backup archive: {0}".format(failure),
-            )
-        try:
-            os.chmod(str(output_path), 0o600)
-        except OSError:
-            pass
         result = {
             "schema_version": BACKUP_SCHEMA_VERSION,
             "backup_type": BACKUP_TYPE,
@@ -539,13 +811,34 @@ def _create_backup_unlocked(root: Path, output: str) -> Dict[str, Any]:
             "payload_sha256": verification["payload_sha256"],
             "excluded": sorted(EXCLUDED_NAMES),
         }
-        return result
-    finally:
+        return temporary, result
+    except Exception:
         if temporary.exists():
             try:
                 temporary.unlink()
             except OSError:
                 pass
+        raise
+
+
+def _publish_prepared_backup(temporary: Path, output_path: Path) -> None:
+    try:
+        # A same-directory hard link publishes the completed inode without
+        # overwriting a path created by another process.
+        os.link(str(temporary), str(output_path))
+    except FileExistsError:
+        raise BackendError(
+            "backup_output_exists", "backup output path already exists"
+        )
+    except OSError:
+        raise BackendError(
+            "backup_io_error",
+            "could not publish backup archive",
+        )
+    try:
+        os.chmod(str(output_path), 0o600)
+    except OSError:
+        pass
 
 
 def _member_relative(name: str, directory: bool = False) -> str:
@@ -567,9 +860,9 @@ def _read_manifest(archive: tarfile.TarFile, member: tarfile.TarInfo) -> Dict[st
         raise BackendError("backup_invalid", "backup manifest is unreadable")
     try:
         raw = handle.read(MAX_MANIFEST_BYTES + 1)
-    except OSError as failure:
+    except OSError:
         raise BackendError(
-            "backup_io_error", "could not read backup manifest: {0}".format(failure)
+            "backup_io_error", "could not read backup manifest"
         )
     if len(raw) > MAX_MANIFEST_BYTES:
         raise BackendError("backup_limit", "backup manifest is too large")
@@ -691,15 +984,30 @@ def re_full_sha256(value: str) -> bool:
     )
 
 
-def _open_archive(path: Path) -> tarfile.TarFile:
-    if path.is_symlink() or not path.is_file():
-        raise BackendError("backup_invalid", "backup input must be a regular file")
-    try:
-        return tarfile.open(str(path), mode="r:gz")
-    except (OSError, tarfile.TarError) as failure:
-        raise BackendError(
-            "backup_invalid", "could not open backup archive: {0}".format(failure)
-        )
+@contextmanager
+def _open_archive(path: Path):
+    with _open_archive_source(path) as source:
+        initial_digest, initial_size = _archive_stream_sha256(source)
+        source.seek(0)
+        try:
+            archive = tarfile.open(fileobj=source, mode="r:gz")
+        except (OSError, tarfile.TarError) as failure:
+            raise BackendError(
+                "backup_invalid", "could not open backup archive"
+            ) from failure
+        try:
+            archive._pineai_archive_sha256 = initial_digest
+            archive._pineai_archive_size = initial_size
+            yield archive
+        finally:
+            archive.close()
+        source.seek(0)
+        final_digest, final_size = _archive_stream_sha256(source)
+        if final_size != initial_size or final_digest != initial_digest:
+            raise BackendError(
+                "backup_source_changed",
+                "backup archive changed while it was being processed",
+            )
 
 
 def _bounded_members(archive: tarfile.TarFile) -> List[tarfile.TarInfo]:
@@ -716,10 +1024,10 @@ def _bounded_members(archive: tarfile.TarFile) -> List[tarfile.TarInfo]:
                 )
     except BackendError:
         raise
-    except (OSError, tarfile.TarError) as failure:
+    except (OSError, tarfile.TarError):
         raise BackendError(
             "backup_invalid",
-            "could not read backup archive: {0}".format(failure),
+            "could not read backup archive",
         )
     if not members:
         raise BackendError("backup_limit", "backup member count is invalid")
@@ -730,6 +1038,7 @@ def verify_backup(input_path: str) -> Dict[str, Any]:
     """Verify archive structure, allowlisted paths, sizes, and every file hash."""
     path = Path(input_path)
     with _open_archive(path) as archive:
+        archive_sha256 = archive._pineai_archive_sha256
         members = _bounded_members(archive)
 
         seen_names = set()
@@ -807,7 +1116,7 @@ def verify_backup(input_path: str) -> Dict[str, Any]:
         "backup_type": BACKUP_TYPE,
         "verified": True,
         "input": str(path),
-        "archive_sha256": _archive_sha256(path),
+        "archive_sha256": archive_sha256,
         "payload_sha256": manifest["payload_sha256"],
         "file_count": manifest["file_count"],
         "total_bytes": manifest["total_bytes"],
@@ -818,10 +1127,10 @@ def verify_backup(input_path: str) -> Dict[str, Any]:
 def _target_is_empty(target: Path) -> bool:
     try:
         return target.is_dir() and not any(target.iterdir())
-    except OSError as failure:
+    except OSError:
         raise BackendError(
             "backup_restore_target_invalid",
-            "could not inspect restore target: {0}".format(failure),
+            "could not inspect restore target",
         )
 
 
@@ -839,7 +1148,12 @@ def _write_member(
         os.chmod(str(destination.parent), 0o700)
     except OSError:
         pass
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_BINARY", 0)
+    )
     descriptor = None
     digest = hashlib.sha256()
     size = 0
@@ -867,10 +1181,10 @@ def _write_member(
             pass
     except BackendError:
         raise
-    except OSError as failure:
+    except OSError:
         raise BackendError(
             "backup_io_error",
-            "could not restore backup file: {0}".format(failure),
+            "could not restore backup file",
         )
     finally:
         if descriptor is not None:
@@ -898,10 +1212,10 @@ def restore_backup_staging(input_path: str, target: str) -> Dict[str, Any]:
     try:
         active_root = resolve_config_dir().resolve()
         requested_target = target_path.resolve()
-    except OSError as failure:
+    except OSError:
         raise BackendError(
             "backup_restore_target_invalid",
-            "could not resolve restore target: {0}".format(failure),
+            "could not resolve restore target",
         )
     overlaps_active = requested_target == active_root
     try:
@@ -948,6 +1262,14 @@ def restore_backup_staging(input_path: str, target: str) -> Dict[str, Any]:
                 pass
 
         with _open_archive(Path(input_path)) as archive:
+            if (
+                archive._pineai_archive_sha256
+                != verification["archive_sha256"]
+            ):
+                raise BackendError(
+                    "backup_source_changed",
+                    "backup archive changed before restore",
+                )
             members = {
                 _member_relative(member.name): member
                 for member in _bounded_members(archive)
@@ -970,21 +1292,14 @@ def restore_backup_staging(input_path: str, target: str) -> Dict[str, Any]:
             try:
                 target_path.rmdir()
                 removed_empty_target = True
-            except OSError as failure:
+            except OSError:
                 raise BackendError(
                     "backup_restore_target_invalid",
-                    "could not prepare restore target: {0}".format(failure),
+                    "could not prepare restore target",
                 )
-        if _archive_sha256(Path(input_path)) != verification["archive_sha256"]:
-            if removed_empty_target:
-                target_path.mkdir(mode=0o700)
-            raise BackendError(
-                "backup_source_changed",
-                "backup archive changed during restore",
-            )
         try:
             os.replace(str(staging), str(target_path))
-        except OSError as failure:
+        except OSError:
             if removed_empty_target and not target_path.exists():
                 try:
                     target_path.mkdir(mode=0o700)
@@ -992,9 +1307,7 @@ def restore_backup_staging(input_path: str, target: str) -> Dict[str, Any]:
                     pass
             raise BackendError(
                 "backup_io_error",
-                "could not publish restore staging directory: {0}".format(
-                    failure
-                ),
+                "could not publish restore staging directory",
             )
         try:
             os.chmod(str(target_path), 0o700)
