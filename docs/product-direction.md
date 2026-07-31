@@ -1,8 +1,8 @@
-# PineAssure product direction
+﻿# PineAssure product direction
 
 ## Full Product Name & Slogan
 
-**Full Product Name**: PineAssure — Wireless Assurance for WiFi Pineapple  
+**Full Product Name**: PineAssure â€” Wireless Assurance for WiFi Pineapple
 **Short Slogan**: Baseline. Detect drift. Prove changes.
 
 ### Rationale
@@ -26,7 +26,7 @@ PineAssure answers one core audit question:
 
 The product positioning is:
 
-**PineAssure — Wireless Assurance for WiFi Pineapple**  
+**PineAssure â€” Wireless Assurance for WiFi Pineapple**
 *Baseline. Detect drift. Prove changes.*
 
 ---
@@ -61,7 +61,7 @@ An optional AI provider may:
 - HTTP response: hard max 512 KiB (bounded chunked read).
 - Finding targets: default max 20, hard max 50 (aligned across config and service layer).
 - Request timeout: 15 seconds, max 1 retry.
-- Output tokens: explanations 800–1500, query planning 300–600, run debrief 1500–2500.
+- Output tokens: explanations 800â€“1500, query planning 300â€“600, run debrief 1500â€“2500.
 - AI output is stored strictly as separate annotations (`annotations/ai_<digest>.json`) and never mutates finding, occurrence, or lifecycle state directly.
 - API Key handling: SSH configuration via `pineai configure --set-openai-key` (or `pineassure`), Web UI key entry disabled by default over HTTP with warning, field cleared immediately, no localStorage/log persistence, `store: false` enabled.
 
@@ -69,7 +69,7 @@ An optional AI provider may:
 
 ## Technical & Version Roadmap
 
-### v0.6.4 — Device Validation & Resource Safety (Mandatory prerequisite for v0.7)
+### v0.6.4 â€” Device Validation & Resource Safety (Mandatory prerequisite for v0.7)
 
 Must be completed and verified before v0.7.
 
@@ -99,7 +99,7 @@ Must be completed and verified before v0.7.
 
 ---
 
-### v0.7.0 — Repeatable Field Audit MVP
+### v0.7.0 â€” Repeatable Field Audit MVP
 
 Simplifies the contract to match initial operational field audit needs on resource-constrained hardware.
 
@@ -148,7 +148,7 @@ audit_runs/
 
 ---
 
-### v0.7.1 — Operational Assurance
+### v0.7.1 â€” Operational Assurance
 
 High-value, computationally lightweight field capabilities.
 
@@ -159,7 +159,7 @@ High-value, computationally lightweight field capabilities.
 
 ---
 
-### v0.8.0 — AI Analyst
+### v0.8.0 â€” AI Analyst
 
 *(Prioritized before Sensor Expansion to keep Mark VII CPU load low while leveraging provider-side processing).*
 
@@ -174,7 +174,7 @@ High-value, computationally lightweight field capabilities.
 
 ---
 
-### v0.9.0 — Companion MVP & Sensor Expansion
+### v0.9.0 â€” Companion MVP & Sensor Expansion
 
 Proposed optional component architecture specified in detail in [docs/companion-architecture.md](file:///c:/Users/eetu.heino/OneDrive%20-%20Brand%20ID%20Oy/Documents/PineAI/docs/companion-architecture.md).
 
@@ -223,12 +223,12 @@ Features that add significant operational value with minimal hardware overhead o
 
 To ensure device safety, performance, and clear product scope, the following MUST NOT be added to the Mark VII core:
 
-- ❌ On-device local LLM execution.
-- ❌ Embeddings or vector databases.
-- ❌ Autonomous agent execution loops.
-- ❌ Automated deauthentication, evil twin, or active radio manipulation.
-- ❌ Always-on WIDS (Wireless Intrusion Detection System).
-- ❌ Heavy PCAP parsing on-device.
-- ❌ Map / GPS dashboard rendering on Mark VII.
-- ❌ Multi-device fleet databases on Mark VII.
-- ❌ Persistent client MAC tracking.
+- âŒ On-device local LLM execution.
+- âŒ Embeddings or vector databases.
+- âŒ Autonomous agent execution loops.
+- âŒ Automated deauthentication, evil twin, or active radio manipulation.
+- âŒ Always-on WIDS (Wireless Intrusion Detection System).
+- âŒ Heavy PCAP parsing on-device.
+- âŒ Map / GPS dashboard rendering on Mark VII.
+- âŒ Multi-device fleet databases on Mark VII.
+- âŒ Persistent client MAC tracking.
