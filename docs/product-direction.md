@@ -62,8 +62,8 @@ disk limits. Hardware telemetry must be used before those pools are expanded.
 
 `MeasurementPoint` stores only operator and physical-location context:
 
-- stable identifier, name, description, and location label;
-- physical notes and operator instructions;
+- stable identifier and required `location_label`;
+- optional `physical_notes` and `operator_instructions`;
 - active or archived status, revision, and timestamps.
 
 `MeasurementProfile` stores technical execution context:
@@ -81,6 +81,14 @@ disk limits. Hardware telemetry must be used before those pools are expanded.
 
 These values are immutable for the lifetime of the run. Resolving a saved Recon
 observation cannot replace them.
+
+The baseline's `measurement_context.measurement_point_id` must match the
+assigned physical point when the run is created. The current snapshot context
+is then rebuilt from that immutable assignment and the MeasurementProfile pin;
+caller-supplied scan context cannot move evidence to another point. A resolved
+measurement also pins `snapshot_record_digest` over the complete canonical
+normalized snapshot, and reopen, comparison, and report paths reject altered
+snapshot content.
 
 ### Operator workflow
 
@@ -111,6 +119,7 @@ assessments/<assessment_id>/audit_runs/<audit_run_id>/
 Updating one point must not rewrite other measurement files. Cross-file
 mutations use the existing transaction journal, commit marker, atomic replace,
 and recovery model. Raw Hak5 Recon JSON is processed in memory and never stored.
+The root/SSH continuity backup includes this complete split tree.
 
 ### Strict exclusions
 

@@ -1,11 +1,13 @@
-# PineAI Baseline & Drift frontend
+# PineAssure 0.7.0 frontend
 
-The Angular 9 frontend implements an offline-first wireless assurance
-workflow:
+PineAssure is the display brand. The Angular library, Hak5 request envelope,
+and module route retain the technical ID `PineAI`. The Angular 9 frontend
+implements an offline-first wireless assurance workflow:
 
 ```text
 Assessment -> saved Recon scan -> resolved assets -> baseline
            -> comparison -> findings -> report
+           -> MeasurementPoints -> AuditRun -> sealed run report
 ```
 
 AI is optional and never controls this sequence.
@@ -15,7 +17,7 @@ AI is optional and never controls this sequence.
 - **Overview** — runtime health, active assessment and baseline, latest
   comparison, open finding counts, and the next deterministic workflow step.
 - **Recon** — saved Hak5 Recon scans, metadata, load state, and resolver
-  preview. There are no start or stop controls in `0.6.3`.
+  preview. There are no start or stop controls in `0.7.0`.
 - **Assessments** — create, edit, archive, and select one wireless environment.
 - **Baselines** — create immutable versions, inspect them, and explicitly
   activate one with revision checking.
@@ -27,6 +29,9 @@ AI is optional and never controls this sequence.
   labelled AI prose.
 - **Activity** — append-only assessment events.
 - **Settings** — language, optional SSID sharing, and OpenAI key status.
+- **Repeatable Audit** — location-only MeasurementPoints, draft/run lifecycle,
+  one-at-a-time saved-scan resolution, comparison persistence, retry controls,
+  run progress, and terminal deterministic report export.
 
 The layout must remain usable in the narrow Mark VII management view. Status
 must be communicated with text in addition to color, all interactive elements
@@ -53,6 +58,14 @@ The frontend uses:
 - `list_findings`, `update_finding`
 - `prepare_ai_analysis`, `generate_ai_analysis`
 - `generate_report`
+- `repeatable_audit_capabilities`, `resource_telemetry`
+- `create_measurement_point`, `list_measurement_points`,
+  `get_measurement_point`, `update_measurement_point`,
+  `archive_measurement_point`
+- `create_audit_run`, `list_audit_runs`, `get_audit_run`,
+  `start_audit_run`, `cancel_audit_run`, `complete_audit_run`
+- `resolve_audit_measurement`, `save_audit_measurement_comparison`,
+  `retry_audit_measurement`, `generate_audit_run_report`
 
 Backend failures have this safe shape:
 
@@ -253,29 +266,68 @@ never required for the offline workflow.
 - Render prompt-injection-like SSIDs, vendor names, labels, and notes only as
   escaped data.
 
+## Repeatable Field Audit UI
+
+The default workflow keeps legacy Customer Audit operations available while
+adding an explicit field-run surface:
+
+1. Select an active assessment.
+2. Create or select one or more location-only MeasurementPoints. The editable
+   fields are `location_label`, optional `physical_notes`, and optional
+   `operator_instructions`; technical scan settings never belong to a point.
+3. Create a draft AuditRun with 1-16 assignments. Each assignment selects a
+   point, an immutable MeasurementProfile version, and a baseline version. The
+   run also pins one AssuranceProfile version. The baseline must identify the
+   same physical MeasurementPoint; the backend rejects cross-point assignments.
+4. Review `ready_to_start`, provenance digests, resource admission, and
+   capacity before explicitly starting the run.
+5. For the current measurement, select a saved Recon observation and submit
+   raw scan data only to `resolve_audit_measurement`. The backend persists the
+   normalized candidate, not raw Recon JSON. Any measurement context in the
+   saved scan is untrusted input: the backend replaces it with the immutable
+   assigned point and MeasurementProfile context. The resulting
+   `snapshot_record_digest` protects the complete normalized record. Keep the
+   operator-declared provenance warning visible before resolution: Hak5 saved
+   Recon does not independently bind the interface, bands, channels, duration,
+   or radio profile to the scan, so the UI must not call those settings
+   device-verified.
+6. Review comparability and deterministic changes, then explicitly save the
+   comparison. Independently failed resolution or comparison may be retried.
+7. Complete the run only after every measurement is `completed`, or cancel it
+   explicitly. There is no paused state; reopening the module resumes by
+   reading durable backend state.
+8. Generate a report only for a `completed` or `cancelled` run and choose the
+   required privacy profile: `local_full` or `share_safe`.
+
+The UI must treat backend workflow and capacity fields as observational. It
+must never synthesize revisions, IDs, readiness, or free-form report privacy
+values. Mutations use `expected_assessment_revision` and, where required,
+`expected_measurement_point_revision`, `expected_audit_run_revision`, and
+`expected_measurement_revision`.
+
+See [repeatable-audits-api-v1.md](repeatable-audits-api-v1.md) and the
+[versioned JSON schema](schemas/repeatable-audits-v1.schema.json) for exact
+request and response fields.
+
 ## Physical Mark VII smoke test
 
-After installing the `0.6.3` archive:
+After installing the exact `0.7.0` release-candidate archive:
 
 1. Confirm the module loads with AI unconfigured.
-2. Confirm backend version `0.6.3` and assurance schema version `1.1`.
+2. Confirm display brand PineAssure, technical module ID `PineAI`, backend
+   version `0.7.0`, and assurance schema version `1.2`.
 3. List and load a saved Recon scan.
-4. Resolve it and create an assessment baseline.
-5. Confirm the baseline requires a separate activation.
-6. Compare a later scan and verify comparability, diff, and findings.
-7. Save the analysis, acknowledge one finding, and refresh the module.
-8. Export JSON and HTML and verify both checksums.
-9. Confirm all deterministic operations still work with no network access.
-10. Verify assessment directories are `0700` and files are `0600`.
+4. Confirm the existing Customer Audit workflow remains usable offline.
+5. Create a disposable location-only point and a draft run from controlled
+   fixture data; confirm no mutation occurs merely by moving between views.
+6. Verify revision conflict, start, reopen/resume, retry, terminal transition,
+   and both report privacy profiles.
+7. Confirm all deterministic operations still work with no network access.
+8. Verify private directories are `0700` and files are `0600`.
 
-This physical smoke test is pending for `v0.6.3`. Until it is completed, the
-GitHub release remains a pre-release and must not be described as
-hardware-verified.
+This physical smoke test is pending for `v0.7.0`. Until the exact published
+asset passes it, the release remains a pre-release and must not be described
+as hardware-verified.
 
-## v0.7.0 Repeatable Field Audits UI Extensions (Contract Frozen)
-
-PineAI v0.7.0 contracts specify minimal Guided and Expert UI extensions for audit runs:
-* **Guided Mode**: Step-by-step audit run execution wizard (`create_audit_run`, `start_audit_run`, per-point `resolve_audit_measurement` + `save_audit_measurement_comparison`, `complete_audit_run`). Displays derived `ready_to_start` status banner before starting run.
-* **Expert Mode**: Compact table views of `MeasurementPoints` and multi-point `AuditRuns`. Provides progress counters (completed / total points), pinned contract digests, and `generate_audit_run_report` export buttons for sealed runs.
-* **Contract Specification**: `docs/repeatable-audits-api-v1.md`
-* **JSON Schemas**: `docs/schemas/repeatable-audits-v1.schema.json` and `docs/schemas/audit-run-report-v1.schema.json`
+The detailed device procedure and rollback boundary are in
+[mark-vii-validation-v0.7.md](mark-vii-validation-v0.7.md).

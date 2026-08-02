@@ -175,6 +175,9 @@ Correctness and security corrections include:
   cancellation reason;
 - transient assessment lock files no longer binding an uninitialized identity;
 - canonical package staging that rejects output symlinks.
+- optional AI context for persisted comparisons is reconstructed from the
+  immutable occurrence set; the explicitly labelled legacy fallback cannot
+  select findings from another comparison.
 
 Committed-head workstation validation:
 
@@ -221,3 +224,132 @@ PR correction cycle.
 ## Proposed Component Architecture Checkpoint (v0.9.0 Companion)
 
 The optional single-container **PineAI / PineAssure Companion** architecture specification is documented in [docs/companion-architecture.md](companion-architecture.md). It defines direct Mark VII HTTPS bundle pushing via outbound-only ingress tunnels without public IP, router port forwarding, or stored root SSH credentials. The design remains proposed, non-authoritative toward Mark VII local engine, and does not claim physical hardware validation.
+
+## v0.7.0 updated product-direction checkpoint
+
+- Working branch: `feature/repeatable-field-audits-store-v0.7.0`.
+- Updated-direction reference commit: `4dc574c708956506c3324a8443c543aa9e580202`.
+- Display brand: PineAssure. Technical module, package, state-directory and CLI
+  compatibility identity: PineAI.
+- Release target: `v0.7.0-rc.1` with `hardware validation pending`; no stable
+  tag until the exact assets pass the physical Mark VII procedure.
+- Frozen limits: 16 active and 32 total MeasurementPoints, 16 assignments per
+  AuditRun, 32 AuditRuns per assessment, one `in_progress` run and one scan
+  operation at a time.
+- Public outer action schema remains `1.0`; split AuditRun manifest and
+  AuditRunMeasurement records use schema `1.1`.
+- MeasurementPoint is location-only. AuditRun creation atomically pins point,
+  MeasurementProfile, baseline and AssuranceProfile provenance.
+- The assigned baseline measurement context must identify the same physical
+  MeasurementPoint. Resolution always rebuilds current measurement context
+  from the immutable assignment instead of trusting the scan payload.
+- Resolved v1.1 measurements pin `snapshot_record_digest` over the complete
+  canonical normalized snapshot. Reopen, comparison, and report paths reject
+  later content changes with `pinned_reference_mismatch`.
+- New standalone baseline and analysis snapshots also carry
+  `snapshot_record_digest`. Older snapshots without it remain readable and
+  can be reused only when their canonical content is identical; they are
+  never rewritten in place and reports label them with
+  `legacy_snapshot_integrity_unbound`.
+- Root/SSH continuity backups include split AuditRun manifests and measurement
+  documents; backup verification and staging restore preserve them and apply
+  the same path/content contract as backup creation.
+- Saved-Recon `date`, `started_at`, and `completed_at` metadata is validated as
+  nullable strict RFC 3339 before an immutable snapshot is built;
+  `started_at <= completed_at` is enforced when both are present.
+- Split manifest and measurement timestamps are revalidated for monotonic
+  ordering on every reopen, and draft-run readiness rechecks every frozen
+  point, profile, baseline, and assurance pin against its immutable record.
+- Reports are available for terminal `completed` and `cancelled` runs and use
+  only `local_full` or `share_safe`.
+- Report privacy redacts structured SSID fields and SSID literals in defined
+  prose without mutating schema, ID, status, time, or digest values.
+- Optional provider responses are capped at 1 MiB; Customer Audit and AuditRun
+  reports reject over-budget aggregates before retaining the remaining
+  history or immutable artifacts.
+- Backup verification validates each tar header's path, type, mode, duplicate
+  identity, declared size, and cumulative payload before advancing through the
+  compressed member body.
+
+Documentation and release-tool work completed in the current worktree:
+
+- updated product direction, architecture, API, release notes and readiness
+  audit;
+- v1.1 request/response and canonical report schemas with replacement contract
+  tests;
+- UTF-8/LF, whitespace, JSON and relative-link validation in CI;
+- deterministic CycloneDX generation from the verified archive;
+- passive package, resource and transaction-recovery harnesses plus a physical
+  validation procedure;
+- conditional dependency-risk acceptance and product-direction assessment.
+
+Latest focused verification before the physical development-package pass:
+
+- 25 v0.7 contract/report schema tests pass on Windows;
+- 45 store/router strictness tests pass on Windows and 13 focused regression
+  tests pass in WSL;
+- documentation encoding, links, whitespace and JSON pass;
+- Ruff passes for the changed schema tests and release scripts;
+- the disposable transaction recovery prepare/verify round trip passes;
+- Mark VII shell wrappers pass `bash -n`;
+- no physical Mark VII validation had been performed at that checkpoint.
+
+Physical development-package checkpoint (2026-08-02):
+
+- a Mark VII running OpenWrt 21.02.1 and Python 3.9.7 exercised development
+  package SHA-256
+  `03771364154a29df3ba11422f6e35121f1ac081c51658bbb9a9f80914e871132`;
+- passive package smoke, 56-action import/health, storage integrity,
+  JSON/HTML report generation, backup/restore-staging, exact transaction
+  recovery, 100-iteration adapter workload, and the realistic store workload
+  passed in disposable `/tmp` state;
+- the staged frontend bundle was served byte-identically from port 1471, CLI
+  status/capabilities worked offline, and the original installed module was
+  restored with its backup checksums verified;
+- the package exposed a stripped-firmware incompatibility in the desktop-only
+  `statistics` dependency; it was replaced with a deterministic local median
+  implementation and an isolated package-import regression now blocks
+  `decimal`, `statistics`, and `sqlite3`;
+- malformed non-empty AuditRun manifest JSON now preserves the public
+  `invalid_audit_run` error code and has a regression test;
+- no production assessment data or radio functionality was used.
+
+This was a development worktree package, not the frozen green-CI artifact.
+The authenticated saved-Recon UI read, exact post-CI package retest, final
+staged installation, and final rollback therefore remain open release gates.
+
+Post-device workstation closure checkpoint (2026-08-02):
+
+- Windows CPython 3.8.20 and WSL each passed all 261 Python tests; Windows had
+  17 intentional platform skips and WSL had three;
+- Ruff, Windows and WSL compileall, documentation/JSON validation, shell
+  syntax, `git diff --check`, and the tracked secret scan passed;
+- Node 16.20.2 passed Angular lint, all 52 ChromeHeadless tests, coverage, and
+  the production build. Coverage was 50.60% statements, 36.53% branches,
+  58.68% functions, and 50.39% lines;
+- no Angular e2e target exists in `angular.json`; `ng e2e` therefore exits with
+  `No projects support the 'e2e' target` and is documented as an unavailable
+  repository gate rather than a passing test;
+- the non-mutating npm audit still reports 177 findings in the legacy full
+  development tree and three high findings in production dependencies. No
+  automatic or incompatible dependency update was made;
+- local-adapter workloads completed 20, three independent 100, and 1,000
+  iterations without a failed action. The three 100-iteration aggregate p50
+  observations ranged from 0.148 to 0.158 ms;
+- minimal, realistic, and frozen-limit store workloads passed. The realistic
+  run took 7,818.640 ms, reopened in 92.017 ms, reached 26.43 MiB peak RSS,
+  and wrote 268,291 logical bytes across 59 files. The frozen-limit run took
+  18,196.438 ms, reopened in 214.319 ms, reached 26.48 MiB peak RSS, and
+  exercised the 32-point and 32-run total limits;
+- the canonical package contains 28 files and three directories with 1,568,799
+  payload bytes. Windows Python 3.8 and WSL independently verified SHA-256
+  `03771364154a29df3ba11422f6e35121f1ac081c51658bbb9a9f80914e871132`;
+- passive packaged-runtime smoke passed and the deterministic CycloneDX SBOM
+  contains 1,275 components with SHA-256
+  `2e4c71eeb334682813e8c19115f7715f71e66a71027be67ab88ea91dae1cb5d2`.
+
+Remaining closure work is to create the logical commits, push the draft PR,
+obtain green GitHub Actions on the same commit, download or rebuild the frozen
+CI-equivalent package, repeat the final physical package/staged-install/
+rollback gates, and perform the authenticated saved-Recon read without placing
+credentials in commands or evidence.

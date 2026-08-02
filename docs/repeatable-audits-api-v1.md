@@ -1,785 +1,467 @@
-# PineAI v0.7.0 — Repeatable Field Audits API Contract Specification
+# PineAssure v0.7.0 repeatable-audit API
 
-This document defines the formal, frozen API module action contract for **PineAI v0.7.0 — Repeatable Field Audits**.
+This document freezes the public Hak5 module-action contract for the v0.7.0
+Repeatable Field Audit workflow. The technical module identifier remains
+`PineAI`; PineAssure is the product name.
 
-> [!IMPORTANT]
-> **Pre-Implementation Contract Gate**: This specification is a mandatory contract freeze. No backend Python service code or frontend Angular component code may be implemented until this API contract document and its associated JSON Schemas are approved.
+The machine-readable contract is
+[`schemas/repeatable-audits-v1.schema.json`](schemas/repeatable-audits-v1.schema.json).
+If an example and that schema differ, the schema is authoritative. Runtime
+responses may add only fields explicitly allowed by the schema.
 
----
+## Authority and exclusions
 
-## 1. Core Architectural & Protocol Rules
+The backend owns workflow state, revisions, immutable pins, comparisons,
+findings, evidence, capacity and report facts. The browser never infers or
+persists an alternate state truth.
 
-### 1.1 Identity Formats & Patterns
-* `assessment_<UUID-v4>` (e.g. `assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890`)
-* `snapshot_<16 lowercase hex>` (e.g. `snapshot_a1b2c3d4e5f67890`)
-* `baseline_v<4 digits>` (e.g. `baseline_v0001`)
-* `comparison_<16 lowercase hex>` (e.g. `comparison_0123456789abcdef`)
-* `finding_<12 lowercase hex>` (e.g. `finding_123456789abc`)
-* `evidence_<12 lowercase hex>` (e.g. `evidence_123456789abc`)
-* `occurrence_<16 lowercase hex>` (e.g. `occurrence_fedcba9876543210`) — Used as the value for `occurrence_set_id`.
-* `mprofile_<UUID-v4>` (e.g. `mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890`)
-* `mprofile_r<4 digits>` (e.g. `mprofile_r0001`)
-* `assurance_v<4 digits>` (e.g. `assurance_v0001`)
-* `bmodel_<16 lowercase hex>` (e.g. `bmodel_1122334455667788`)
+v0.7.0 does not start Recon, control radios, schedule background work, run an
+agent loop or perform an attack. An operator selects an already saved Recon
+result and supplies it to `resolve_audit_measurement`.
 
-**v0.7.0 Identifier Regex Patterns**:
-* `MEASUREMENT_POINT_ID_PATTERN = r"^mp_[0-9a-f]{16}$"`
-* `AUDIT_RUN_ID_PATTERN = r"^ar_[0-9a-f]{16}$"`
-* `AUDIT_RUN_MEASUREMENT_ID_PATTERN = r"^arm_[0-9a-f]{16}$"`
-* `AUDIT_RUN_REPORT_ID_PATTERN = r"^report_[0-9a-f]{16}$"`
+Only one scan payload is processed at a time. Raw Recon JSON is validated and
+normalized in memory and is never persisted.
 
-**Digest Rule**: Digests are strictly 64 lowercase hex characters (SHA-256). Prefixes such as `sha256_` are prohibited.
+## Identifiers and common rules
 
-### 1.2 MeasurementPoint ID Ownership Model
-* The server generates `measurement_point_id` (`mp_<16 hex>`).
-* In `createMeasurementPointRequest`, the client provides `expected_measurement_context` WITHOUT `measurement_point_id`.
-* Upon generation, the server populates `measurement_point_id` inside both `measurement_point.measurement_point_id` and `measurement_point.expected_measurement_context.measurement_point_id`.
+| Entity | Pattern |
+| --- | --- |
+| Assessment | `assessment_<UUID-v4>` |
+| MeasurementPoint | `mp_<16 lowercase hex>` |
+| AuditRun | `ar_<16 lowercase hex>` |
+| AuditRunMeasurement | `arm_<16 lowercase hex>` |
+| MeasurementProfile | `mprofile_<UUID-v4>` |
+| MeasurementProfile version | `mprofile_r<4 digits>` |
+| Baseline version | `baseline_v<4 digits>` |
+| AssuranceProfile version | `assurance_v<4 digits>` |
+| Snapshot | `snapshot_<16 lowercase hex>` |
+| Comparison | `comparison_<16 lowercase hex>` |
+| Occurrence set | `occurrence_<16 lowercase hex>` |
+| Evidence | `evidence_<12 lowercase hex>` |
 
-### 1.3 Retry Semantics (`retry_audit_measurement`)
-* If `failed_stage == "resolution"`:
-  * Resets measurement `status` to `pending`.
-  * Clears `snapshot_id`, `snapshot_digest`, and error fields (`failed_stage`, `error_code`, `error_message`, `failed_at`, `retry_target`).
-* If `failed_stage == "comparison"`:
-  * Resets measurement `status` to `resolved`.
-  * Retains snapshot ID/digest and profile pins. Clears comparison ID/digest, occurrence set ID, and error fields.
-* Emits audit event `audit_measurement_retried`.
+Digests are SHA-256 values encoded as exactly 64 lowercase hexadecimal
+characters. Timestamps are strict RFC 3339 values with an explicit timezone;
+the backend emits UTC timestamps ending in `Z`.
 
-### 1.4 Deterministic Canonical AuditRun Reporting & Digest Algorithm
-1. `generate_audit_run_report` is available ONLY when AuditRun status is `completed`.
-2. Build canonical report facts WITHOUT `report_id` and `report_digest`.
-3. Set `generated_at` equal to the sealed AuditRun's `completed_at` timestamp (normalized UTC ending in `Z`).
-4. Canonical JSON encoding: UTF-8, keys lexicographically sorted, no extra whitespace (`separators=(',', ':')`).
-5. Compute SHA-256 lowercase hex of canonical JSON byte stream as `report_digest`.
-6. Derive `report_id = "report_" + report_digest[:16]`.
-7. Insert `report_id` and `report_digest` into the response wrapper.
-8. Script-free HTML is rendered deterministically from canonical report facts with stable section/row ordering.
+Unknown request fields are rejected. Every mutation uses optimistic
+concurrency. A stale revision returns `revision_conflict` and does not mutate
+state.
 
-### 1.5 Pagination Strategy
-All list actions use offset pagination:
-* Primary sort key: `created_at` descending; tie-break sort key: entity ID ascending.
-* Parameters: `limit` (integer 1..100, default 50), `offset` (integer >= 0, default 0).
-* Response fields: `total` (int), `limit` (int), `offset` (int), `has_more` (bool).
-* Invalid offset or negative values raise `invalid_page_token`.
+The fixed v0.7.0 limits per assessment are:
 
-### 1.6 Privacy Profile Contract Evolution
-* **v0.7.0 AuditRun Reports**: Use privacy profiles `internal_full`, `share_safe`, and `pseudonymized`.
-* **Intentional Successor**: `internal_full` is the explicit AuditRun-report successor to legacy v0.6.3 `local_full`.
-* **Backward Compatibility**: Existing v0.6.3 comparison and assessment reports remain unchanged and continue accepting `local_full` and `share_safe`.
-* **Non-Interchangeable Scopes**: `internal_full` and `local_full` are bound to their respective schema versions and must not be treated as interchangeable outside their report schemas. No automatic rewriting of stored report facts or historical request parameters occurs.
+- 16 active MeasurementPoints;
+- 32 MeasurementPoint records including archived records;
+- 16 assignments per AuditRun;
+- 32 AuditRuns;
+- one `in_progress` AuditRun;
+- one scan-processing operation globally.
 
-### 1.7 Shared Capacity & Observational Reporting
-* **Assessment-Wide Artifact Pools**:
-  * `MAX_SNAPSHOTS = 100`
-  * `MAX_COMPARISONS = 100`
-  * `MAX_OCCURRENCES = 100`
-  * `MAX_ACTIVE_MEASUREMENT_POINTS = 64` (archived points do not count toward the active 64-point limit).
-  * `MAX_TOTAL_MEASUREMENT_POINT_RECORDS = 90` (all active and archived records count toward the 90 total-record limit; creation fails with `storage_limit_exceeded` if either the 90 total-record limit or `MAX_MEASUREMENT_POINTS_DOCUMENT_BYTES = 512 * 1024` (512 KB) limit is reached; 90 maximum-sized valid records fit under 512 KB with at least 20% headroom).
-  * `MAX_AUDIT_RUNS_PER_ASSESSMENT = 128` (max 64 points per run).
-  * `MAX_EVIDENCE_IDS_PER_AUDIT_MEASUREMENT = 100` (new v0.7.0 AuditRun reporting & storage bound).
-* **Observational `assessment_capacity` Object**:
-  `assessment_capacity` is included in all audit run creation, retrieval, listing, and measurement mutation responses:
-  ```json
-  {
-    "snapshot_limit": 100,
-    "snapshot_used": 42,
-    "snapshot_available": 58,
-    "comparison_limit": 100,
-    "comparison_used": 40,
-    "comparison_available": 60,
-    "event_limit": 5000,
-    "event_used": 281,
-    "event_available": 4719,
-    "event_reserved_for_run_closure": 4,
-    "event_available_for_non_terminal": 4715
+The pre-existing assessment pools remain bounded independently. Call
+`repeatable_audit_capabilities` for contractual limits and
+`resource_telemetry` for current observational resource state.
+
+## Domain separation
+
+### MeasurementPoint
+
+A MeasurementPoint describes a physical place and operator guidance only:
+
+```json
+{
+  "measurement_point_id": "mp_0123456789abcdef",
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "location_label": "Reception desk",
+  "physical_notes": "Stand beside the visitor counter.",
+  "operator_instructions": "Keep the device at desk height.",
+  "status": "active",
+  "created_at": "2026-07-31T08:00:00Z",
+  "archived_at": null,
+  "revision": 1
+}
+```
+
+Technical interface, band, channel and duration configuration belongs to an
+existing immutable MeasurementProfile version, not to the point.
+
+### AuditRun and immutable assignment pins
+
+An AuditRun pins one AssuranceProfile version. Each assignment pins the exact
+MeasurementPoint revision and digest, MeasurementProfile version and digest,
+and baseline version and digest when the run is created. Updating or archiving
+a source object later cannot alter an existing run.
+
+The assigned baseline must have a
+`measurement_context.measurement_point_id` equal to the assignment's
+`measurement_point_id`. A cross-point baseline is rejected with
+`pinned_reference_mismatch`. During resolution the backend ignores any
+caller-supplied measurement context and constructs the current snapshot context
+from the immutable AuditRun assignment and MeasurementProfile pin. The current
+snapshot's `measurement_point_id` is therefore always the assigned physical
+point.
+
+Creation uses this request shape:
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "expected_assessment_revision": 8,
+  "audit_run": {
+    "name": "July floor audit",
+    "description": "Operator-guided repeat measurement",
+    "due_at": "2026-08-01T15:00:00Z",
+    "assurance_profile_version_id": "assurance_v0003",
+    "assignments": [
+      {
+        "measurement_point_id": "mp_0123456789abcdef",
+        "measurement_profile_id": "mprofile_123e4567-e89b-42d3-a456-426614174000",
+        "measurement_profile_version_id": "mprofile_r0002",
+        "baseline_version_id": "baseline_v0004"
+      }
+    ]
   }
-  ```
-  * `event_reserved_for_run_closure`: Count of AuditRuns in `draft` or `in_progress` status.
-  * `event_available`: $\max(0, \text{event\_limit} - \text{event\_used})$.
-  * `event_available_for_non_terminal`: $\max(0, \text{event\_available} - \text{event\_reserved\_for\_run\_closure})$.
-  * `ready_to_start` remains strictly structural readiness (checks point array non-empty and AssuranceProfile valid). Callers observe `assessment_capacity` for pool headroom.
+}
+```
 
-### 1.8 Dynamic Event Reserve & Error Handling Policy
-* **Dynamic Event Reserve Rule**:
-  $$\text{closure\_reserve} = \text{count of AuditRuns in draft or in\_progress}$$
-  For non-terminal mutations (`create_measurement_point`, `update_measurement_point`, `create_audit_run`, `start_audit_run`, `resolve_audit_measurement`, `retry_audit_measurement`, `save_audit_measurement_comparison`), validate prior to state mutation:
-  $$\text{last\_event\_sequence} + 1 + \text{projected\_closure\_reserve} \le \text{MAX\_EVENTS} \, (5000)$$
-  For `create_audit_run`, $\text{projected\_closure\_reserve} = \text{current\_closure\_reserve} + 1$.
-  If violated, raises `event_limit` without state or revision mutation.
-* **Terminal Transitions**: `cancel_audit_run` and `complete_audit_run` consume 1 reserved event slot and decrease `closure_reserve` by 1.
+The response includes `audit_run`, separately stored `measurements`,
+`workflow`, `ready_to_start`, `assessment_revision` and
+`assessment_capacity`.
 
-### 1.9 Exception Boundary for Persisted Failed Outcomes
+## State machines
 
-| Failure Classification | Trigger Condition | System Handling | Response Returned | Mutates Revisions? | Writes Event / File? |
-|---|---|---|---|---|---|
-| **API/System Failure** | Invalid JSON request or unknown fields | Reject immediately | `BackendError("invalid_request")` | ❌ No | ❌ No |
-| **API/System Failure** | Malformed / unresolvable Recon JSON | Reject immediately | `BackendError("invalid_recon")` | ❌ No | ❌ No |
-| **API/System Failure** | Optimistic revision mismatch | Reject immediately | `BackendError("revision_conflict")` | ❌ No | ❌ No |
-| **API/System Failure** | Snapshot / comparison pool full | Reject immediately | `BackendError("storage_limit_exceeded")` | ❌ No | ❌ No |
-| **API/System Failure** | Event sequence limit reached | Reject immediately | `BackendError("event_limit")` | ❌ No | ❌ No |
-| **API/System Failure** | Assessment or point archived | Reject immediately | `BackendError("assessment_archived")` | ❌ No | ❌ No |
-| **API/System Failure** | Run completed or cancelled | Reject immediately | `BackendError("audit_run_sealed")` | ❌ No | ❌ No |
-| **API/System Failure** | Profile or baseline missing | Reject immediately | `BackendError("profile_version_not_found")` | ❌ No | ❌ No |
-| **API/System Failure** | Transaction recovery / I/O failure | Reject immediately | `BackendError("transaction_recovery_failed")` | ❌ No | ❌ No |
-| **Persisted Domain Failure** | Normalizer resolution engine error | Catch in orchestration, store failed state | `200 OK` Response (`status="failed"`, `failed_stage="resolution"`, `retry_target="pending"`) | ✅ Yes (+1 Assessment, +1 Run) | ✅ Yes (`audit_measurement_failed` event + AuditRun file) |
-| **Persisted Domain Failure** | Comparison calculation engine error | Catch in orchestration, store failed state | `200 OK` Response (`status="failed"`, `failed_stage="comparison"`, `retry_target="resolved"`) | ✅ Yes (+1 Assessment, +1 Run) | ✅ Yes (`audit_measurement_failed` event + AuditRun file) |
+AuditRun transitions:
 
----
+```text
+draft -> in_progress -> completed
+  |          |
+  +----------+-> cancelled
+```
 
-## 2. Complete Module Action Contracts (v0.7.0)
+Several drafts may exist, but at most one run may be `in_progress`. There is no
+`paused` state or pause/resume action. An `in_progress` run is durable and is
+resumed implicitly by loading it again.
 
-### 2.1 `create_measurement_point`
-* **Version**: `v0.7.0`
-* **Classification**: Non-idempotent mutation.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "name": "Floor 2 West Wing",
-    "description": "Primary office workspace",
-    "expected_measurement_context": {
-      "location_id": "loc_site_alpha",
-      "scan_profile_id": "prof_full_dual_band",
-      "radio_profile_id": "radio_wlan0_wlan1",
-      "interface": "wlan0",
-      "declared_bands": ["2.4", "5"],
-      "declared_channels": [1, 6, 11, 36, 40],
-      "scan_time": 300
-    },
-    "expected_assessment_revision": 1
+AuditRunMeasurement transitions:
+
+```text
+pending -> resolved -> completed
+   |          |
+   +----------+-> failed
+
+failed(resolution) --retry--> pending
+failed(comparison) --retry--> resolved
+```
+
+`complete_audit_run` is accepted only when every measurement is completed.
+Completed and cancelled runs are sealed.
+
+## Public actions
+
+### Capabilities and resources
+
+#### `repeatable_audit_capabilities`
+
+Request: `{}`.
+
+Returns schema versions, public action names, statuses, privacy profiles,
+capacity limits, storage layout and strict exclusions. This is the frontend's
+feature-discovery source.
+
+#### `resource_telemetry`
+
+Request:
+
+```json
+{"assessment_id":"assessment_123e4567-e89b-42d3-a456-426614174000"}
+```
+
+`assessment_id` is optional. The response reports process RSS and peak RSS when
+available, system memory, load average, storage, bounded artifact statistics,
+scan-processing status, recovery state and guard thresholds. It is
+observational and never a claim of Mark VII calibration.
+
+### MeasurementPoint actions
+
+#### `create_measurement_point`
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "expected_assessment_revision": 3,
+  "measurement_point": {
+    "location_label": "Meeting room A",
+    "physical_notes": "North wall",
+    "operator_instructions": "Use the marked table position"
   }
-  ```
-* **Request Schema Reference**: `#/$defs/createMeasurementPointRequest`
-* **Response JSON Example**:
-  ```json
-  {
-    "schema_version": "1.0",
-    "measurement_point": {
-      "measurement_point_id": "mp_a1b2c3d4e5f67890",
-      "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-      "name": "Floor 2 West Wing",
-      "description": "Primary office workspace",
-      "expected_measurement_context": {
-        "location_id": "loc_site_alpha",
-        "measurement_point_id": "mp_a1b2c3d4e5f67890",
-        "scan_profile_id": "prof_full_dual_band",
-        "radio_profile_id": "radio_wlan0_wlan1",
-        "interface": "wlan0",
-        "declared_bands": ["2.4", "5"],
-        "declared_channels": [1, 6, 11, 36, 40],
-        "scan_time": 300
-      },
-      "status": "active",
-      "created_at": "2026-07-30T09:00:00Z",
-      "archived_at": null,
-      "revision": 1
-    }
+}
+```
+
+`location_label` is required and is at most 128 characters. The two optional
+texts are each at most 1024 characters. Control characters are rejected.
+
+#### `list_measurement_points`
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "include_archived": false,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+Returns `measurement_points`, pagination fields and `assessment_capacity`.
+
+#### `get_measurement_point`
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "measurement_point_id": "mp_0123456789abcdef"
+}
+```
+
+#### `update_measurement_point`
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "measurement_point_id": "mp_0123456789abcdef",
+  "expected_assessment_revision": 4,
+  "expected_measurement_point_revision": 1,
+  "changes": {
+    "location_label": "Meeting room A, marked table",
+    "operator_instructions": "Align device with the table marker"
   }
-  ```
-* **Response Schema Reference**: `#/$defs/createMeasurementPointResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `name`, `expected_measurement_context`, `expected_assessment_revision`. Optional: `description`.
-* **Exact Revision Fields**: `expected_assessment_revision`.
-* **Preconditions**: Assessment exists and is not archived; active MeasurementPoint count < 64.
-* **Allowed State Transitions**: Creates point in `active` state.
-* **Exact Revisions Advanced**: Assessment revision +1; new MeasurementPoint revision set to 1.
-* **Ordered Files Written**: 1. `measurement_points.json.staged`, 2. Atomic rename to `measurement_points.json`.
-* **Transaction Journal Entries**: `STAGE_MEASUREMENT_POINTS`, `COMMIT_MEASUREMENT_POINTS`.
-* **Recovery Behavior**: If interrupted before commit, staged file is removed or rolled forward on next operation.
-* **Exact Audit Event**: `measurement_point_created`
-* **Audit Event Payload**: `{"sequence": 1, "event_id": "evt_...", "event_type": "measurement_point_created", "recorded_at": "2026-07-30T09:00:00Z", "revision": 1, "data": {"measurement_point_id": "mp_a1b2c3d4e5f67890"}}`
-* **Error Codes**: `assessment_not_found`, `assessment_archived`, `revision_conflict`, `storage_limit_exceeded`, `event_limit`, `invalid_measurement_point`.
-* **Sealed & Archived Object Behavior**: Cannot create points under archived assessments.
-* **Sorting & Pagination**: N/A for create.
+}
+```
 
----
+At least one allowed field must be present in `changes`. Technical measurement
+configuration is not accepted.
 
-### 2.2 `list_measurement_points`
-* **Version**: `v0.7.0`
-* **Classification**: Read-only. Idempotent.
-* **Request JSON Example**: `{"assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890", "include_archived": false, "limit": 50, "offset": 0}`
-* **Request Schema Reference**: `#/$defs/listMeasurementPointsRequest`
-* **Response JSON Example**:
-  ```json
-  {
-    "schema_version": "1.0",
-    "measurement_points": [],
-    "total": 0,
-    "limit": 50,
-    "offset": 0,
-    "has_more": false
+#### `archive_measurement_point`
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "measurement_point_id": "mp_0123456789abcdef",
+  "expected_assessment_revision": 5,
+  "expected_measurement_point_revision": 2
+}
+```
+
+Archiving is irreversible in v0.7.0. Existing pinned runs remain readable.
+
+### AuditRun actions
+
+#### `create_audit_run`
+
+Uses the nested request shown under "AuditRun and immutable assignment pins".
+Assignments contain identifiers only; the backend resolves and pins the
+authoritative revisions and digests atomically.
+
+#### `list_audit_runs`
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "limit": 50,
+  "offset": 0
+}
+```
+
+Returns compact run entries, `workflow` summaries, pagination and
+`assessment_capacity`.
+
+#### `get_audit_run`
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "audit_run_id": "ar_0123456789abcdef"
+}
+```
+
+Returns `audit_run`, `measurements`, `workflow`, `ready_to_start` and
+`assessment_capacity`. The workflow object identifies the current or next
+measurement and the next valid operator action.
+
+#### `start_audit_run`, `cancel_audit_run`, `complete_audit_run`
+
+All three use the same concurrency envelope:
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "audit_run_id": "ar_0123456789abcdef",
+  "expected_assessment_revision": 9,
+  "expected_audit_run_revision": 1
+}
+```
+
+`cancel_audit_run` additionally accepts an optional `reason` string of at most
+512 characters. It is trimmed and included only in the audit event; an empty
+or omitted reason is not stored.
+
+Starting revalidates all immutable pins. Cancelling or completing seals the
+run. No endpoint deletes a run.
+
+### Measurement actions
+
+All measurement mutations use:
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "audit_run_id": "ar_0123456789abcdef",
+  "measurement_id": "arm_0123456789abcdef",
+  "expected_assessment_revision": 10,
+  "expected_audit_run_revision": 2,
+  "expected_measurement_revision": 1
+}
+```
+
+#### `resolve_audit_measurement`
+
+Adds `scan` and optional `scan_metadata` to the common envelope. The public
+action accepts only the saved Hak5 Recon response. It validates and normalizes
+that response, discards the raw object, and stores the normalized snapshot.
+The measurement records `snapshot_digest` for stable snapshot identity and
+`snapshot_record_digest` for the complete canonical normalized snapshot
+record. Both values are 64-character lowercase SHA-256 hex digests. Callers
+cannot submit an internal snapshot representation or override the assigned
+measurement point.
+
+#### `save_audit_measurement_comparison`
+
+Uses only the common envelope. The backend loads the resolved snapshot and all
+pinned objects by ID and digest, verifies the complete snapshot against
+`snapshot_record_digest`, computes the deterministic comparison and persists
+the immutable comparison and occurrence set. Callers cannot submit comparison
+facts or occurrence data. Reopening the run and report generation perform the
+same complete-record verification; altered snapshot content returns
+`pinned_reference_mismatch`.
+
+#### `retry_audit_measurement`
+
+Uses only the common envelope. A resolution failure returns to `pending`; a
+comparison failure returns to `resolved`. Valid pinned snapshot state is kept
+for a comparison retry.
+
+### `generate_audit_run_report`
+
+```json
+{
+  "assessment_id": "assessment_123e4567-e89b-42d3-a456-426614174000",
+  "audit_run_id": "ar_0123456789abcdef",
+  "format": "html",
+  "privacy_profile": "share_safe"
+}
+```
+
+Accepted formats are `json` and `html`. Accepted privacy profiles are
+`local_full` and `share_safe`. The action is read-only and available for a
+terminal `completed` or `cancelled` run. Cancelled-run reports retain failed
+and unfinished measurement facts and describe their limitations.
+
+The response contains `report_id`, `audit_run_id`, `format`, `privacy_profile`,
+`generated_at`, `fact_digest`, `content_sha256`, `filename`, `mime_type` and
+`content`. JSON and script-free HTML are rendered from the same canonical fact
+model. `generated_at` comes from the sealed run so repeated generation from
+unchanged facts is deterministic.
+
+Report reconstruction is bounded before rendering: immutable measurement
+artifacts are loaded one at a time, selected audit events are paged, and the
+canonical fact model has a 512 KiB admission limit. Exceeding the fact or final
+output budget returns `audit_report_too_large` before remaining artifacts are
+loaded.
+
+## Response and failure envelope
+
+Successful responses use schema version `1.0`. Mutation responses return the
+new `assessment_revision`. Run mutations return the latest run detail;
+measurement mutations return the updated run manifest, affected measurement,
+workflow and capacity so clients can discard stale local state.
+
+Hak5 module failures use:
+
+```json
+{
+  "error": {
+    "code": "revision_conflict",
+    "message": "The assessment changed; reload and retry."
   }
-  ```
-* **Response Schema Reference**: `#/$defs/listMeasurementPointsResponse`
-* **Required & Optional Fields**: Required: `assessment_id`. Optional: `include_archived`, `limit`, `offset`.
-* **Exact Revision Fields**: None (read-only).
-* **Preconditions**: Assessment exists.
-* **Allowed State Transitions**: None.
-* **Exact Revisions Advanced**: None.
-* **Ordered Files Written**: None.
-* **Transaction Journal Entries**: None.
-* **Recovery Behavior**: N/A.
-* **Exact Audit Event**: None.
-* **Audit Event Payload**: None.
-* **Error Codes**: `assessment_not_found`, `invalid_page_token`.
-* **Sealed & Archived Object Behavior**: Archived points included only when `include_archived=true`.
-* **Sorting & Pagination**: Primary sort `created_at` DESC, tie-break `measurement_point_id` ASC. Offset pagination.
+}
+```
 
----
+No stack trace, local path, secret or raw Recon value is returned. Important
+stable error codes include:
 
-### 2.3 `get_measurement_point`
-* **Version**: `v0.7.0`
-* **Classification**: Read-only. Idempotent.
-* **Request JSON Example**: `{"assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890", "measurement_point_id": "mp_a1b2c3d4e5f67890"}`
-* **Request Schema Reference**: `#/$defs/getMeasurementPointRequest`
-* **Response JSON Example**: `{"schema_version": "1.0", "measurement_point": {...}}`
-* **Response Schema Reference**: `#/$defs/getMeasurementPointResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `measurement_point_id`.
-* **Exact Revision Fields**: None.
-* **Preconditions**: Point exists under assessment.
-* **Allowed State Transitions**: None.
-* **Exact Revisions Advanced**: None.
-* **Ordered Files Written**: None.
-* **Transaction Journal Entries**: None.
-* **Recovery Behavior**: N/A.
-* **Exact Audit Event**: None.
-* **Audit Event Payload**: None.
-* **Error Codes**: `assessment_not_found`, `measurement_point_not_found`.
-* **Sealed & Archived Object Behavior**: Archived points are readable.
-* **Sorting & Pagination**: N/A.
+| Code | Meaning |
+| --- | --- |
+| `invalid_request` | Unknown or malformed public request field |
+| `invalid_measurement_point` | Invalid physical point data or identifier |
+| `invalid_audit_run` | Invalid run data, identifier or timestamp |
+| `invalid_audit_run_measurement` | Invalid measurement identity or state |
+| `invalid_recon` | Saved Recon payload cannot be normalized |
+| `revision_conflict` | An optimistic-concurrency revision is stale |
+| `capacity_exceeded` | A v0.7 entity-count limit was reached |
+| `storage_limit_exceeded` | A bounded document or artifact pool is full |
+| `event_limit` | Audit-log headroom would violate closure reserve |
+| `active_audit_run_exists` | Another run is already `in_progress` |
+| `audit_run_not_ready` | A draft cannot start because a pin is invalid |
+| `audit_run_sealed` | A completed or cancelled run cannot be mutated |
+| `pinned_reference_missing` | A required versioned object is unavailable |
+| `pinned_reference_mismatch` | A pinned digest or revision no longer verifies |
+| `scan_processing_busy` | Another scan is being processed |
+| `resource_guard_blocked` | Local memory or storage guard denied heavy work |
+| `transaction_recovery_failed` | Durable recovery could not be completed |
+| `audit_run_not_terminal` | Report requested before the run is completed or cancelled |
+| `audit_report_too_large` | Report facts or rendered output exceed the safe bounded limit |
 
----
+## Persistence and recovery
 
-### 2.4 `update_measurement_point`
-* **Version**: `v0.7.0`
-* **Classification**: Non-idempotent mutation.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "measurement_point_id": "mp_a1b2c3d4e5f67890",
-    "name": "Floor 2 West Wing (Renamed)",
-    "expected_assessment_revision": 1,
-    "expected_measurement_point_revision": 1
-  }
-  ```
-* **Request Schema Reference**: `#/$defs/updateMeasurementPointRequest`
-* **Response JSON Example**: `{"schema_version": "1.0", "measurement_point": {...}}`
-* **Response Schema Reference**: `#/$defs/updateMeasurementPointResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `measurement_point_id`, `expected_assessment_revision`, `expected_measurement_point_revision`. Optional: `name`, `description`, `expected_measurement_context`.
-* **Exact Revision Fields**: `expected_assessment_revision`, `expected_measurement_point_revision`.
-* **Preconditions**: Point exists and `status == "active"`. Revisions match.
-* **Allowed State Transitions**: Remains `active`.
-* **Exact Revisions Advanced**: Assessment revision +1; MeasurementPoint revision +1.
-* **Ordered Files Written**: Atomic write to `measurement_points.json`.
-* **Transaction Journal Entries**: `STAGE_MEASUREMENT_POINTS`, `COMMIT_MEASUREMENT_POINTS`.
-* **Recovery Behavior**: Atomic file write roll-forward.
-* **Exact Audit Event**: `measurement_point_updated`
-* **Audit Event Payload**: `{"sequence": 2, "event_id": "evt_...", "event_type": "measurement_point_updated", "recorded_at": "2026-07-30T09:05:00Z", "revision": 2, "data": {"measurement_point_id": "mp_a1b2c3d4e5f67890"}}`
-* **Error Codes**: `assessment_not_found`, `measurement_point_not_found`, `measurement_point_archived`, `revision_conflict`, `event_limit`.
-* **Sealed & Archived Object Behavior**: Raises `measurement_point_archived` if point is archived.
-* **Sorting & Pagination**: N/A.
+Each run uses split storage:
 
----
+```text
+assessments/<assessment_id>/audit_runs/<audit_run_id>/
+  manifest.json
+  measurements/
+    <measurement_id>.json
+```
 
-### 2.5 `archive_measurement_point`
-* **Version**: `v0.7.0`
-* **Classification**: Non-idempotent mutation.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "measurement_point_id": "mp_a1b2c3d4e5f67890",
-    "expected_assessment_revision": 2,
-    "expected_measurement_point_revision": 2
-  }
-  ```
-* **Request Schema Reference**: `#/$defs/archiveMeasurementPointRequest`
-* **Response JSON Example**: `{"schema_version": "1.0", "measurement_point": {... "status": "archived", "archived_at": "2026-07-30T09:10:00Z"}}`
-* **Response Schema Reference**: `#/$defs/archiveMeasurementPointResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `measurement_point_id`, `expected_assessment_revision`, `expected_measurement_point_revision`.
-* **Exact Revision Fields**: `expected_assessment_revision`, `expected_measurement_point_revision`.
-* **Preconditions**: Point is `active`. Revisions match.
-* **Allowed State Transitions**: `active` → `archived`.
-* **Exact Revisions Advanced**: Assessment revision +1; MeasurementPoint revision +1.
-* **Ordered Files Written**: Atomic write to `measurement_points.json`.
-* **Transaction Journal Entries**: `STAGE_MEASUREMENT_POINTS`, `COMMIT_MEASUREMENT_POINTS`.
-* **Recovery Behavior**: Atomic file write.
-* **Exact Audit Event**: `measurement_point_archived`
-* **Audit Event Payload**: `{"sequence": 3, "event_id": "evt_...", "event_type": "measurement_point_archived", "recorded_at": "2026-07-30T09:10:00Z", "revision": 3, "data": {"measurement_point_id": "mp_a1b2c3d4e5f67890"}}`
-* **Error Codes**: `assessment_not_found`, `measurement_point_not_found`, `measurement_point_archived`, `revision_conflict`, `event_limit`.
-* **Sealed & Archived Object Behavior**: Re-archiving an archived point raises `measurement_point_archived`.
-* **Sorting & Pagination**: N/A.
+Changing one measurement never rewrites its siblings. Cross-file mutations use
+the existing transaction journal and atomic replacement. A valid legacy flat
+v0.7 draft is adapted on read and journal-migrated before its first mutation;
+v0.6 assessment, baseline, profile, finding and comparison artifacts remain
+unchanged.
 
----
+All persisted private directories are mode `0700` and private files are mode
+`0600`. Symlinks, path traversal and oversized documents are rejected.
 
-### 2.6 `create_audit_run`
-* **Version**: `v0.7.0`
-* **Classification**: Non-idempotent mutation.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "title": "Q3 Wireless Security Audit",
-    "due_at": "2026-08-15T17:00:00Z",
-    "pinned_assurance_profile_version_id": "assurance_v0001",
-    "measurement_point_ids": ["mp_a1b2c3d4e5f67890"],
-    "expected_assessment_revision": 3
-  }
-  ```
-* **Request Schema Reference**: `#/$defs/createAuditRunRequest`
-* **Response JSON Example**:
-  ```json
-  {
-    "schema_version": "1.0",
-    "audit_run": {
-      "audit_run_id": "ar_0123456789abcdef",
-      "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-      "title": "Q3 Wireless Security Audit",
-      "status": "draft",
-      "created_at": "2026-07-30T09:00:00Z",
-      "started_at": null,
-      "completed_at": null,
-      "due_at": "2026-08-15T17:00:00Z",
-      "pinned_assurance_profile_version_id": "assurance_v0001",
-      "pinned_assurance_profile_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "measurement_point_ids": ["mp_a1b2c3d4e5f67890"],
-      "revision": 1
-    },
-    "ready_to_start": true,
-    "assessment_capacity": {
-      "snapshot_limit": 100,
-      "snapshot_used": 42,
-      "snapshot_available": 58,
-      "comparison_limit": 100,
-      "comparison_used": 40,
-      "comparison_available": 60,
-      "event_limit": 5000,
-      "event_used": 281,
-      "event_available": 4719,
-      "event_reserved_for_run_closure": 4,
-      "event_available_for_non_terminal": 4715
-    }
-  }
-  ```
-* **Response Schema Reference**: `#/$defs/createAuditRunResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `title`, `pinned_assurance_profile_version_id`, `measurement_point_ids`, `expected_assessment_revision`. Optional: `due_at`.
-* **Exact Revision Fields**: `expected_assessment_revision`.
-* **Preconditions**: Assessment exists; run count < 128; points exist and belong to same Assessment; AssuranceProfile version exists.
-* **Allowed State Transitions**: Creates run in `draft` state. Initial measurement status for each point set to `pending`.
-* **Exact Revisions Advanced**: Assessment revision +1; AuditRun revision set to 1.
-* **Ordered Files Written**: `audit_runs/<audit_run_id>.json`.
-* **Transaction Journal Entries**: `STAGE_AUDIT_RUN`, `COMMIT_AUDIT_RUN`.
-* **Recovery Behavior**: Staged write roll-forward.
-* **Exact Audit Event**: `audit_run_created`
-* **Audit Event Payload**: `{"sequence": 4, "event_id": "evt_...", "event_type": "audit_run_created", "recorded_at": "2026-07-30T09:00:00Z", "revision": 4, "data": {"audit_run_id": "ar_0123456789abcdef"}}`
-* **Error Codes**: `assessment_not_found`, `measurement_point_not_found`, `profile_version_not_found`, `storage_limit_exceeded`, `event_limit`, `revision_conflict`.
-* **Sealed & Archived Object Behavior**: N/A for create.
-* **Sorting & Pagination**: N/A.
+The root/SSH continuity-backup allowlist includes the split run paths shown
+above: run manifests, optional migration markers, and per-measurement JSON
+documents. `pineai backup verify` hashes them and `restore-staging` reproduces
+them under an empty staging root. Transient locks and journals and
+`openai.key` are not backup members.
 
----
+The reader applies the same storage-path and bounded content contract as the
+backup writer. An internally self-consistent foreign archive is still rejected
+when it contains an unsupported assessment file, unknown configuration field,
+invalid identity key, or raw Hak5 Recon structure.
 
-### 2.7 `list_audit_runs`
-* **Version**: `v0.7.0`
-* **Classification**: Read-only. Idempotent.
-* **Request JSON Example**: `{"assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890", "limit": 50, "offset": 0}`
-* **Request Schema Reference**: `#/$defs/listAuditRunsRequest`
-* **Response JSON Example**:
-  ```json
-  {
-    "schema_version": "1.0",
-    "audit_runs": [{"audit_run": {...}, "ready_to_start": true}],
-    "total": 1,
-    "limit": 50,
-    "offset": 0,
-    "has_more": false,
-    "assessment_capacity": {
-      "snapshot_limit": 100,
-      "snapshot_used": 42,
-      "snapshot_available": 58,
-      "comparison_limit": 100,
-      "comparison_used": 40,
-      "comparison_available": 60,
-      "event_limit": 5000,
-      "event_used": 281,
-      "event_available": 4719,
-      "event_reserved_for_run_closure": 4,
-      "event_available_for_non_terminal": 4715
-    }
-  }
-  ```
-* **Response Schema Reference**: `#/$defs/listAuditRunsResponse`
-* **Required & Optional Fields**: Required: `assessment_id`. Optional: `limit`, `offset`.
-* **Exact Revision Fields**: None.
-* **Preconditions**: Assessment exists.
-* **Allowed State Transitions**: None.
-* **Exact Revisions Advanced**: None.
-* **Ordered Files Written**: None.
-* **Transaction Journal Entries**: None.
-* **Recovery Behavior**: N/A.
-* **Exact Audit Event**: None.
-* **Audit Event Payload**: None.
-* **Error Codes**: `assessment_not_found`, `invalid_page_token`.
-* **Sealed & Archived Object Behavior**: Lists all runs including completed/cancelled.
-* **Sorting & Pagination**: Primary sort `created_at` DESC, tie-break `audit_run_id` ASC. Offset pagination.
+## Frontend sequence
 
----
+1. Load `repeatable_audit_capabilities` and `resource_telemetry`.
+2. Create or select physical MeasurementPoints.
+3. Create an AuditRun with explicit immutable assignments.
+4. Start the run after reviewing the resolved pins.
+5. Load `get_audit_run` and follow its backend-owned workflow.
+6. Select a saved Recon result and call `resolve_audit_measurement`.
+7. Call `save_audit_measurement_comparison` for the resolved measurement.
+8. Retry only a backend-reported failed stage.
+9. Complete or cancel the run.
+10. Generate an offline report from a completed or cancelled run.
 
-### 2.8 `get_audit_run`
-* **Version**: `v0.7.0`
-* **Classification**: Read-only. Idempotent.
-* **Request JSON Example**: `{"assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890", "audit_run_id": "ar_0123456789abcdef"}`
-* **Request Schema Reference**: `#/$defs/getAuditRunRequest`
-* **Response JSON Example**:
-  ```json
-  {
-    "schema_version": "1.0",
-    "audit_run": {...},
-    "ready_to_start": true,
-    "measurements": [...],
-    "assessment_capacity": {
-      "snapshot_limit": 100,
-      "snapshot_used": 42,
-      "snapshot_available": 58,
-      "comparison_limit": 100,
-      "comparison_used": 40,
-      "comparison_available": 60,
-      "event_limit": 5000,
-      "event_used": 281,
-      "event_available": 4719,
-      "event_reserved_for_run_closure": 4,
-      "event_available_for_non_terminal": 4715
-    }
-  }
-  ```
-* **Response Schema Reference**: `#/$defs/getAuditRunResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `audit_run_id`.
-* **Exact Revision Fields**: None.
-* **Preconditions**: AuditRun exists.
-* **Allowed State Transitions**: None.
-* **Exact Revisions Advanced**: None.
-* **Ordered Files Written**: None.
-* **Transaction Journal Entries**: None.
-* **Recovery Behavior**: N/A.
-* **Exact Audit Event**: None.
-* **Audit Event Payload**: None.
-* **Error Codes**: `assessment_not_found`, `audit_run_not_found`.
-* **Sealed & Archived Object Behavior**: All runs readable.
-* **Sorting & Pagination**: N/A.
-
----
-
-### 2.9 `start_audit_run`
-* **Version**: `v0.7.0`
-* **Classification**: Non-idempotent mutation.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "audit_run_id": "ar_0123456789abcdef",
-    "expected_assessment_revision": 4,
-    "expected_audit_run_revision": 1
-  }
-  ```
-* **Request Schema Reference**: `#/$defs/startAuditRunRequest`
-* **Response JSON Example**: `{"schema_version": "1.0", "audit_run": {... "status": "in_progress", "started_at": "2026-07-30T09:15:00Z"}}`
-* **Response Schema Reference**: `#/$defs/startAuditRunResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `audit_run_id`, `expected_assessment_revision`, `expected_audit_run_revision`.
-* **Exact Revision Fields**: `expected_assessment_revision`, `expected_audit_run_revision`.
-* **Preconditions**: AuditRun status == `draft`; `ready_to_start == true`. Revisions match.
-* **Allowed State Transitions**: `draft` → `in_progress`.
-* **Exact Revisions Advanced**: Assessment revision +1; AuditRun revision +1.
-* **Ordered Files Written**: Atomic update to `audit_runs/<audit_run_id>.json`.
-* **Transaction Journal Entries**: `STAGE_AUDIT_RUN`, `COMMIT_AUDIT_RUN`.
-* **Recovery Behavior**: Atomic file write.
-* **Exact Audit Event**: `audit_run_started`
-* **Audit Event Payload**: `{"sequence": 5, "event_id": "evt_...", "event_type": "audit_run_started", "recorded_at": "2026-07-30T09:15:00Z", "revision": 5, "data": {"audit_run_id": "ar_0123456789abcdef"}}`
-* **Error Codes**: `assessment_not_found`, `audit_run_not_found`, `audit_run_not_ready`, `invalid_audit_run_transition`, `event_limit`, `revision_conflict`.
-* **Sealed & Archived Object Behavior**: Sealed/cancelled runs raise `audit_run_sealed`.
-* **Sorting & Pagination**: N/A.
-
----
-
-### 2.10 `cancel_audit_run`
-* **Version**: `v0.7.0`
-* **Classification**: Non-idempotent mutation.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "audit_run_id": "ar_0123456789abcdef",
-    "reason": "Operator aborted audit",
-    "expected_assessment_revision": 5,
-    "expected_audit_run_revision": 2
-  }
-  ```
-* **Request Schema Reference**: `#/$defs/cancelAuditRunRequest`
-* **Response JSON Example**: `{"schema_version": "1.0", "audit_run": {... "status": "cancelled"}}`
-* **Response Schema Reference**: `#/$defs/cancelAuditRunResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `audit_run_id`, `expected_assessment_revision`, `expected_audit_run_revision`. Optional: `reason`.
-* **Exact Revision Fields**: `expected_assessment_revision`, `expected_audit_run_revision`.
-* **Preconditions**: AuditRun status is `draft` or `in_progress`. Revisions match.
-* **Allowed State Transitions**: `draft` / `in_progress` → `cancelled`. Seals run against further measurements.
-* **Exact Revisions Advanced**: Assessment revision +1; AuditRun revision +1.
-* **Ordered Files Written**: Atomic update to `audit_runs/<audit_run_id>.json`.
-* **Transaction Journal Entries**: `STAGE_AUDIT_RUN`, `COMMIT_AUDIT_RUN`.
-* **Recovery Behavior**: Atomic file write.
-* **Exact Audit Event**: `audit_run_cancelled`
-* **Audit Event Payload**: `{"sequence": 6, "event_id": "evt_...", "event_type": "audit_run_cancelled", "recorded_at": "2026-07-30T09:20:00Z", "revision": 6, "data": {"audit_run_id": "ar_0123456789abcdef", "reason": "Operator aborted audit"}}`
-* **Error Codes**: `assessment_not_found`, `audit_run_not_found`, `audit_run_sealed`, `event_limit`, `revision_conflict`.
-* **Sealed & Archived Object Behavior**: Re-cancelling raises `audit_run_sealed`.
-* **Sorting & Pagination**: N/A.
-
----
-
-### 2.11 `resolve_audit_measurement`
-* **Version**: `v0.7.0`
-* **Classification**: Non-idempotent mutation.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "audit_run_id": "ar_0123456789abcdef",
-    "measurement_point_id": "mp_a1b2c3d4e5f67890",
-    "raw_recon_json": { "AccessPointResults": [] },
-    "measurement_profile_id": "mprofile_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "baseline_version_id": "baseline_v0001",
-    "expected_assessment_revision": 6,
-    "expected_audit_run_revision": 3
-  }
-  ```
-* **Request Schema Reference**: `#/$defs/resolveAuditMeasurementRequest`
-* **Response JSON Example**:
-  ```json
-  {
-    "schema_version": "1.0",
-    "assessment_revision": 7,
-    "assessment_capacity": {
-      "snapshot_limit": 100,
-      "snapshot_used": 43,
-      "snapshot_available": 57,
-      "comparison_limit": 100,
-      "comparison_used": 40,
-      "comparison_available": 60,
-      "event_limit": 5000,
-      "event_used": 282,
-      "event_available": 4718,
-      "event_reserved_for_run_closure": 4,
-      "event_available_for_non_terminal": 4714
-    },
-    "audit_run": {
-      "audit_run_id": "ar_0123456789abcdef",
-      "revision": 4,
-      "status": "in_progress"
-    },
-    "measurement": {
-      "measurement_id": "arm_0123456789abcdef",
-      "status": "resolved",
-      "snapshot_id": "snapshot_a1b2c3d4e5f67890"
-    }
-  }
-  ```
-* **Response Schema Reference**: `#/$defs/resolveAuditMeasurementResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `audit_run_id`, `measurement_point_id`, `raw_recon_json`, `measurement_profile_id`, `baseline_version_id`, `expected_assessment_revision`, `expected_audit_run_revision`.
-* **Exact Revision Fields**: `expected_assessment_revision`, `expected_audit_run_revision`. Returned `assessment_revision` is authoritative next expected revision for assessment. Returned `audit_run.revision` is authoritative next expected revision for audit run.
-* **Preconditions**: AuditRun status == `in_progress`; point measurement status == `pending`; raw Recon valid.
-* **Allowed State Transitions**: Point measurement status `pending` → `resolved`.
-* **Exact Revisions Advanced**: Assessment revision +1; AuditRun revision +1.
-* **Ordered Files Written**: Single `PrivateTransaction` wrapping 1. `snapshots/<snapshot_id>.json`, 2. `audit_runs/<audit_run_id>.json`, 3. `assessment.json`, 4. `events.jsonl`.
-* **Transaction Journal Entries**: `SAVE_SNAPSHOT`, `UPDATE_MEASUREMENT`.
-* **Recovery Behavior**: Snapshot save + staged audit run write roll-forward atomically.
-* **Exact Audit Event**: `audit_measurement_resolved`
-* **Audit Event Payload**: `{"sequence": 7, "event_id": "evt_...", "event_type": "audit_measurement_resolved", "recorded_at": "2026-07-30T09:25:00Z", "revision": 7, "data": {"snapshot_id": "snapshot_a1b2c3d4e5f67890"}}`
-* **Error Codes**: `assessment_not_found`, `audit_run_not_found`, `audit_run_sealed`, `invalid_recon`, `profile_version_not_found`, `baseline_version_not_found`, `storage_limit_exceeded`, `event_limit`, `revision_conflict`.
-* **Sealed & Archived Object Behavior**: Raises `audit_run_sealed` if run is not `in_progress`.
-* **Sorting & Pagination**: N/A.
-
----
-
-### 2.12 `retry_audit_measurement`
-* **Version**: `v0.7.0`
-* **Classification**: Non-idempotent mutation.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "audit_run_id": "ar_0123456789abcdef",
-    "measurement_point_id": "mp_a1b2c3d4e5f67890",
-    "expected_assessment_revision": 7,
-    "expected_audit_run_revision": 4
-  }
-  ```
-* **Request Schema Reference**: `#/$defs/retryAuditMeasurementRequest`
-* **Response JSON Example**:
-  ```json
-  {
-    "schema_version": "1.0",
-    "assessment_revision": 8,
-    "assessment_capacity": {
-      "snapshot_limit": 100,
-      "snapshot_used": 43,
-      "snapshot_available": 57,
-      "comparison_limit": 100,
-      "comparison_used": 40,
-      "comparison_available": 60,
-      "event_limit": 5000,
-      "event_used": 283,
-      "event_available": 4717,
-      "event_reserved_for_run_closure": 4,
-      "event_available_for_non_terminal": 4713
-    },
-    "audit_run": {
-      "audit_run_id": "ar_0123456789abcdef",
-      "revision": 5
-    },
-    "measurement": {
-      "measurement_id": "arm_0123456789abcdef",
-      "status": "pending"
-    }
-  }
-  ```
-* **Response Schema Reference**: `#/$defs/retryAuditMeasurementResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `audit_run_id`, `measurement_point_id`, `expected_assessment_revision`, `expected_audit_run_revision`.
-* **Exact Revision Fields**: `expected_assessment_revision`, `expected_audit_run_revision`.
-* **Preconditions**: AuditRun status == `in_progress`; point measurement status == `failed`.
-* **Allowed State Transitions**: `failed` → `pending` (if `failed_stage == "resolution"`) OR `failed` → `resolved` (if `failed_stage == "comparison"`).
-* **Exact Revisions Advanced**: Assessment revision +1; AuditRun revision +1.
-* **Ordered Files Written**: Atomic update to `audit_runs/<audit_run_id>.json`.
-* **Transaction Journal Entries**: `STAGE_AUDIT_RUN`, `COMMIT_AUDIT_RUN`.
-* **Recovery Behavior**: Atomic file write.
-* **Exact Audit Event**: `audit_measurement_retried`
-* **Audit Event Payload**: `{"sequence": 8, "event_id": "evt_...", "event_type": "audit_measurement_retried", "recorded_at": "2026-07-30T09:26:00Z", "revision": 8, "data": {"measurement_point_id": "mp_a1b2c3d4e5f67890"}}`
-* **Error Codes**: `assessment_not_found`, `audit_run_not_found`, `audit_measurement_not_found`, `invalid_audit_measurement_transition`, `event_limit`, `revision_conflict`.
-* **Sealed & Archived Object Behavior**: Raises `audit_run_sealed` if run is sealed.
-* **Sorting & Pagination**: N/A.
-
----
-
-### 2.13 `save_audit_measurement_comparison`
-* **Version**: `v0.7.0`
-* **Classification**: Non-idempotent mutation.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "audit_run_id": "ar_0123456789abcdef",
-    "measurement_point_id": "mp_a1b2c3d4e5f67890",
-    "expected_assessment_revision": 8,
-    "expected_audit_run_revision": 5
-  }
-  ```
-* **Request Schema Reference**: `#/$defs/saveAuditMeasurementComparisonRequest`
-* **Response JSON Example**:
-  ```json
-  {
-    "schema_version": "1.0",
-    "assessment_revision": 9,
-    "assessment_capacity": {
-      "snapshot_limit": 100,
-      "snapshot_used": 43,
-      "snapshot_available": 57,
-      "comparison_limit": 100,
-      "comparison_used": 41,
-      "comparison_available": 59,
-      "event_limit": 5000,
-      "event_used": 284,
-      "event_available": 4716,
-      "event_reserved_for_run_closure": 4,
-      "event_available_for_non_terminal": 4712
-    },
-    "audit_run": {
-      "audit_run_id": "ar_0123456789abcdef",
-      "revision": 6
-    },
-    "measurement": {
-      "measurement_id": "arm_0123456789abcdef",
-      "status": "completed",
-      "comparison_id": "comparison_0123456789abcdef"
-    }
-  }
-  ```
-* **Response Schema Reference**: `#/$defs/saveAuditMeasurementComparisonResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `audit_run_id`, `measurement_point_id`, `expected_assessment_revision`, `expected_audit_run_revision`.
-* **Exact Revision Fields**: `expected_assessment_revision`, `expected_audit_run_revision`.
-* **Preconditions**: AuditRun status == `in_progress`; point measurement status == `resolved`.
-* **Allowed State Transitions**: `resolved` → `completed`.
-* **Exact Revisions Advanced**: Assessment revision +1; AuditRun revision +1.
-* **Ordered Files Written**: Single `PrivateTransaction` wrapping 1. `comparisons/<comparison_id>.json`, 2. `occurrences/<occurrence_set_id>.json`, 3. `audit_runs/<audit_run_id>.json`, 4. `assessment.json`, 5. `events.jsonl`.
-* **Transaction Journal Entries**: `SAVE_COMPARISON`, `SAVE_OCCURRENCES`, `UPDATE_MEASUREMENT`.
-* **Recovery Behavior**: Multi-document journal roll-forward atomically.
-* **Exact Audit Event**: `audit_measurement_completed`
-* **Audit Event Payload**: `{"sequence": 9, "event_id": "evt_...", "event_type": "audit_measurement_completed", "recorded_at": "2026-07-30T09:27:00Z", "revision": 9, "data": {"comparison_id": "comparison_0123456789abcdef"}}`
-* **Error Codes**: `assessment_not_found`, `audit_run_not_found`, `audit_measurement_not_resolved`, `storage_limit_exceeded`, `event_limit`, `revision_conflict`.
-* **Sealed & Archived Object Behavior**: Raises `audit_run_sealed` if run is sealed.
-* **Sorting & Pagination**: N/A.
-
----
-
-### 2.14 `complete_audit_run`
-* **Version**: `v0.7.0`
-* **Classification**: Non-idempotent mutation.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "audit_run_id": "ar_0123456789abcdef",
-    "expected_assessment_revision": 9,
-    "expected_audit_run_revision": 6
-  }
-  ```
-* **Request Schema Reference**: `#/$defs/completeAuditRunRequest`
-* **Response JSON Example**: `{"schema_version": "1.0", "audit_run": {... "status": "completed", "completed_at": "2026-07-30T09:30:00Z"}}`
-* **Response Schema Reference**: `#/$defs/completeAuditRunResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `audit_run_id`, `expected_assessment_revision`, `expected_audit_run_revision`.
-* **Exact Revision Fields**: `expected_assessment_revision`, `expected_audit_run_revision`.
-* **Preconditions**: AuditRun status == `in_progress`; EVERY required measurement point status == `completed`.
-* **Allowed State Transitions**: `in_progress` → `completed`. Seals run against further changes.
-* **Exact Revisions Advanced**: Assessment revision +1; AuditRun revision +1.
-* **Ordered Files Written**: Atomic update to `audit_runs/<audit_run_id>.json`.
-* **Transaction Journal Entries**: `STAGE_AUDIT_RUN`, `COMMIT_AUDIT_RUN`.
-* **Recovery Behavior**: Atomic file write.
-* **Exact Audit Event**: `audit_run_completed`
-* **Audit Event Payload**: `{"sequence": 10, "event_id": "evt_...", "event_type": "audit_run_completed", "recorded_at": "2026-07-30T09:30:00Z", "revision": 10, "data": {"audit_run_id": "ar_0123456789abcdef"}}`
-* **Error Codes**: `assessment_not_found`, `audit_run_not_found`, `invalid_audit_run_transition`, `event_limit`, `revision_conflict`.
-* **Sealed & Archived Object Behavior**: Raises `audit_run_sealed` if already completed or cancelled.
-* **Sorting & Pagination**: N/A.
-
----
-
-### 2.15 `generate_audit_run_report`
-* **Version**: `v0.7.0`
-* **Classification**: Strictly read-only. Idempotent.
-* **Request JSON Example**:
-  ```json
-  {
-    "assessment_id": "assessment_a1b2c3d4-e5f6-4789-a1b2-c3d4e5f67890",
-    "audit_run_id": "ar_0123456789abcdef",
-    "format": "json",
-    "privacy_profile": "share_safe"
-  }
-  ```
-* **Request Schema Reference**: `#/$defs/generateAuditRunReportRequest`
-* **Response JSON Example**:
-  ```json
-  {
-    "schema_version": "1.0",
-    "report_id": "report_0123456789abcdef",
-    "format": "json",
-    "filename": "audit-run-report-ar_0123456789abcdef.json",
-    "mime_type": "application/json",
-    "sha256_checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "content": "{\"assessment_id\":...}"
-  }
-  ```
-* **Response Schema Reference**: `#/$defs/generateAuditRunReportResponse`
-* **Required & Optional Fields**: Required: `assessment_id`, `audit_run_id`, `format`. Optional: `privacy_profile`.
-* **Exact Revision Fields**: None (read-only).
-* **Preconditions**: AuditRun status == `completed`.
-* **Allowed State Transitions**: None.
-* **Exact Revisions Advanced**: None.
-* **Ordered Files Written**: Zero (strictly read-only export).
-* **Transaction Journal Entries**: None.
-* **Recovery Behavior**: N/A.
-* **Exact Audit Event**: None (read-only action).
-* **Audit Event Payload**: None.
-* **Error Codes**: `assessment_not_found`, `audit_run_not_found`, `report_not_available`, `invalid_report_format`.
-* **Sealed & Archived Object Behavior**: Only available for completed (sealed) AuditRuns.
-* **Sorting & Pagination**: Array elements in report JSON are sorted lexicographically by point ID / evidence ID.
+The browser must reload after `revision_conflict`, `scan_processing_busy`, a
+resource-blocked response or any uncertain network failure. It must never
+blindly replay a mutation.

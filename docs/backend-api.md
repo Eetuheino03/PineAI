@@ -1,8 +1,12 @@
-# Baseline & Drift backend API
+# PineAssure 0.7.0 backend API
 
-This document defines the PineAI `0.6.3` module contract. The corresponding
-machine-readable definitions are in
-[`baseline-drift-v1.schema.json`](schemas/baseline-drift-v1.schema.json).
+This document defines the PineAssure `0.7.0` backend contract. The technical
+Hak5 module ID remains `PineAI`. Customer Audit foundation definitions are in
+[`baseline-drift-v1.schema.json`](schemas/baseline-drift-v1.schema.json) and
+[`customer-audit-v1.schema.json`](schemas/customer-audit-v1.schema.json).
+Repeatable Field Audit definitions are in
+[`repeatable-audits-v1.schema.json`](schemas/repeatable-audits-v1.schema.json)
+and [`audit-run-report-v1.schema.json`](schemas/audit-run-report-v1.schema.json).
 
 All module requests include `"module": "PineAI"` in the Hak5 envelope. The
 examples below show only action-specific fields. Assessment, settings,
@@ -44,8 +48,8 @@ Returns runtime state without secrets or stored identifiers:
 {
   "status": "ok",
   "module": "PineAI",
-  "version": "0.6.3",
-  "backend_version": "0.6.3",
+  "version": "0.7.0",
+  "backend_version": "0.7.0",
   "product_mode": "customer_audit_foundation",
   "offline_complete": true,
   "model": "gpt-5.6-terra",
@@ -62,7 +66,7 @@ Takes no action-specific fields. It returns the comparability and finding
 states, the authoritative eight-rule registry, storage limits, authoritative
 field names, public module actions, the non-authoritative AI role, and
 `offline_complete:true`. It reports `schema_version:"1.2"` and
-`backend_version:"0.6.3"`.
+`backend_version:"0.7.0"`.
 
 Clients should render registry metadata but must continue to treat returned
 finding severity and confidence as authoritative per-analysis values.
@@ -178,7 +182,7 @@ Request:
 ```
 
 The response is archived assessment metadata with the new event in `events`.
-Archiving is irreversible through the `0.6.3` public API. Archived assessments
+Archiving is irreversible through the public API. Archived assessments
 remain readable. They cannot create or activate baselines, compare or persist
 new Recon analyses, or update finding state. Existing stored comparisons remain
 available for deterministic JSON/HTML report export and optional read-only AI
@@ -227,6 +231,13 @@ normalization.
 For scan metadata, `id` is accepted as an alias of `scan_id` and `duration` as
 an alias of `scan_time`. Duration is 1–86400 seconds. Explicit fields take
 precedence over aliases.
+
+`date`, `started_at`, and `completed_at` are nullable strict RFC 3339
+date-times with an explicit timezone and at most nine fractional digits. When
+both interval fields are present, `started_at` must not follow `completed_at`.
+`date` is an independent Hak5 observation timestamp and is not ordered against
+that optional interval. Invalid values return `invalid_scan_metadata` before
+snapshot persistence.
 
 Measurement context may use the nested `measurement_context` object shown
 above or the legacy direct context fields, but never both in one request.
@@ -532,6 +543,16 @@ contains no MAC,
 BSSID, client identifier, raw scan, scan ID, local note, audit text, API key,
 or authorization material.
 
+For comparisons that have an immutable occurrence set, the finding context is
+read exclusively from that point-in-time occurrence. Later lifecycle changes
+must not change an old comparison's AI payload. In this case the payload marks
+`finding_source` as `immutable_occurrence` and `legacy_limited` as `false`.
+Comparisons created before occurrence persistence may use the read-only live
+finding fallback, but only for finding IDs already recorded by that comparison;
+the payload marks this path as `legacy_live_fallback` and
+`legacy_limited: true`. Unknown or unrelated finding and evidence references
+are rejected locally before any provider request.
+
 ### `generate_ai_analysis`
 
 Accepts the same request. It sends only the prepared payload and validates the
@@ -582,6 +603,11 @@ On missing key, disabled AI, refusal, timeout, provider error, invalid JSON, or
 invalid references, `analysis` is `null`, `ai_status.state` is `unavailable`
 or `partial`, and the
 deterministic context remains usable.
+
+The provider response body is read through a 1 MiB hard limit. Both an
+oversized `Content-Length` and an oversized streamed body return
+`response_too_large` as a non-authoritative AI failure; deterministic analysis
+and reporting remain available.
 
 ## Reports
 
@@ -634,35 +660,46 @@ For Baseline & Drift, editable settings are:
 ```
 
 The API key is accepted only in the request body, stored in a `0600` file, and
-never echoed. Runtime band allowlists are not used by `0.6.3`.
+never echoed. Runtime band allowlists are not used by PineAssure `0.7.0`.
 
-## v0.7.0 Repeatable Field Audits Module Actions (Contract Frozen)
+## v0.7.0 Repeatable Field Audit module actions
 
-PineAI v0.7.0 introduces multi-point audit run orchestration actions. Full JSON Schemas and action specifications are provided in `docs/repeatable-audits-api-v1.md` and `docs/schemas/repeatable-audits-v1.schema.json`.
-Corrective contract amendments define: response envelopes requiring authoritative revisions (`assessment_revision` and `audit_run.revision`) and observational `assessment_capacity`, 3 discriminated failed measurement branches, 100 evidence IDs limit per measurement, dynamic event closure reserve, and explicit 128 MB RAM hardware constraints.
+PineAssure v0.7 adds the following actions to the technical `PineAI` module:
 
-### Action List Summary
-* **`create_measurement_point`**: Defines a new MeasurementPoint in an Assessment (`status: "active"`).
-* **`list_measurement_points`**: Returns paginated list of MeasurementPoints.
-* **`get_measurement_point`**: Retrieves single MeasurementPoint details.
-* **`update_measurement_point`**: Updates point metadata or expected context.
-* **`archive_measurement_point`**: Archives a MeasurementPoint (`status: "archived"`).
-* **`create_audit_run`**: Initializes a multi-point AuditRun (`status: "draft"`).
-* **`list_audit_runs`**: Returns paginated list of AuditRuns.
-* **`get_audit_run`**: Retrieves AuditRun details and per-point measurement status.
-* **`start_audit_run`**: Validates readiness atomically and transitions `draft` → `in_progress`.
-* **`cancel_audit_run`**: Cancels an in-progress AuditRun (`status: "cancelled"`).
-* **`resolve_audit_measurement`**: Resolves raw Recon JSON in memory to an immutable snapshot (`snapshot_<16 hex>`). Raw Recon is never persisted.
-* **`retry_audit_measurement`**: Resets a `failed` measurement to allow re-running resolution or comparison.
-* **`save_audit_measurement_comparison`**: Validates pre-established contract pins (snapshot, MeasurementProfile, baseline, and AssuranceProfile established during `resolve_audit_measurement`), executes offline comparison for a point, and persists comparison output (`comparison_<16 hex>`), comparison digest, occurrence set (`occurrence_set_id`: `occurrence_<16 hex>`), evidence references (`evidence_<12 hex>`), and completion facts.
-* **`complete_audit_run`**: Seals an AuditRun (`status: "completed"`).
-* **`generate_audit_run_report`**: Exports deterministic JSON (`AUDIT_RUN_REPORT_SCHEMA_VERSION = "1.0"`) or script-free HTML. Strictly read-only. Uses privacy profile `internal_full` (intentional AuditRun-report successor to legacy `local_full`), `share_safe`, or `pseudonymized`.
+- `repeatable_audit_capabilities` and `resource_telemetry`;
+- create, list, get, update, and archive MeasurementPoints;
+- create, list, get, start, cancel, and complete AuditRuns;
+- resolve, compare, and retry individual AuditRunMeasurements;
+- generate deterministic, read-only AuditRun reports.
+
+MeasurementPoints are location-only. `create_audit_run` receives 1-16
+assignments and freezes each point revision/digest, MeasurementProfile version,
+and baseline version plus the run-level AssuranceProfile version. Resolution
+cannot replace those pins and raw Recon JSON is never persisted.
+
+An assignment is rejected unless the baseline's
+`measurement_context.measurement_point_id` equals the physical
+MeasurementPoint ID. Resolution discards caller-supplied measurement context
+and always gives the current normalized snapshot the assigned point ID and the
+pinned MeasurementProfile context. Each resolved measurement stores both the
+stable `snapshot_digest` and a `snapshot_record_digest` over the complete
+canonical snapshot. Run reopen, comparison, and report paths reject any
+complete-record digest mismatch as `pinned_reference_mismatch`.
+
+Mutations require authoritative expected revisions and return the new
+assessment, run, and measurement revisions where applicable. Lists and detail
+responses include observational capacity and workflow guidance. Report privacy
+profiles are `local_full` and `share_safe`.
+
+Full requests, responses, examples, limits, and transitions are defined in
+[`repeatable-audits-api-v1.md`](repeatable-audits-api-v1.md) and
+[`repeatable-audits-v1.schema.json`](schemas/repeatable-audits-v1.schema.json).
 
 ## Error codes
 
 Clients must branch on `code`, not message text.
 
-### v0.6.3 Core Error Codes
+### Customer Audit foundation error codes
 
 | Code | Meaning |
 | --- | --- |
@@ -697,9 +734,11 @@ Clients must branch on `code`, not message text.
 | `invalid_ai_reference` | Provider output references unknown local evidence or findings. |
 | `unsafe_ai_output` | A suggested validation step crossed the safe advisory boundary. |
 | `privacy_violation` | A provider payload still contains a MAC address. |
+| `response_too_large` | Optional provider output exceeded the 1 MiB response limit. |
 | `invalid_secret` | The local pseudonymization key is invalid. |
 | `invalid_report` | Deterministic report inputs are incomplete. |
 | `invalid_report_format` | Report format is not `json` or `html`. |
+| `report_limit` | Selected report history or canonical facts exceed the safe in-memory limit. |
 | `raw_recon_not_allowed` | A persistence request contains raw Recon keys. |
 | `event_limit` | Assessment reached the append-only event limit. |
 | `storage_busy` | Another mutation holds the assessment lock. |
@@ -712,18 +751,24 @@ The complete specification and preconditions for v0.7.0 error codes are defined 
 
 | Code | Meaning |
 | --- | --- |
-| `measurement_point_not_found` | Specified `measurement_point_id` does not exist under the Assessment. |
-| `measurement_point_archived` | Action prohibited because the MeasurementPoint is archived. |
-| `invalid_measurement_point` | MeasurementPoint payload or expected context parameters are invalid. |
-| `audit_run_not_found` | Specified `audit_run_id` does not exist under the Assessment. |
-| `audit_run_not_ready` | AuditRun cannot start (`measurement_point_ids` empty or invalid profiles). |
-| `audit_run_sealed` | Mutation attempted on a completed or cancelled AuditRun. |
-| `invalid_audit_run_transition` | Invalid AuditRun state transition requested. |
-| `audit_measurement_not_found` | Measurement entry for specified point does not exist in AuditRun. |
-| `audit_measurement_not_resolved` | Measurement must be in `resolved` state before saving comparison. |
-| `invalid_audit_measurement_transition` | Prohibited measurement status transition. |
-| `profile_version_not_found` | Pinned MeasurementProfile or AssuranceProfile version does not exist. |
-| `report_not_available` | Report requested for an incomplete or cancelled AuditRun. |
+| `invalid_request` | Unknown or malformed public request field. |
+| `invalid_measurement_point` | MeasurementPoint data or identifier is invalid. |
+| `invalid_audit_run` | AuditRun data, identifier, or timestamp is invalid. |
+| `invalid_audit_run_measurement` | Measurement identity or state is invalid. |
+| `revision_conflict` | An optimistic-concurrency revision is stale. |
+| `capacity_exceeded` | A bounded v0.7 entity-count limit was reached. |
+| `storage_limit_exceeded` | A bounded document or artifact pool is full. |
+| `event_limit` | Audit-log headroom would violate the closure reserve. |
+| `active_audit_run_exists` | Another run is already `in_progress`. |
+| `audit_run_not_ready` | A draft cannot start because a pin is invalid. |
+| `audit_run_sealed` | A completed or cancelled run cannot be mutated. |
+| `pinned_reference_missing` | A required versioned object is unavailable. |
+| `pinned_reference_mismatch` | A pinned revision or digest no longer verifies. |
+| `scan_processing_busy` | Another saved observation is being processed. |
+| `resource_guard_blocked` | Local memory or storage admission denied heavy work. |
+| `transaction_recovery_failed` | Durable recovery could not complete safely. |
+| `audit_run_not_terminal` | A report was requested before terminal run state. |
+| `audit_report_too_large` | AuditRun facts or output exceed the bounded report budget. |
 
 Provider failures are normally represented by `ai_status` partial output,
 rather than turning a valid deterministic analysis into a failed action.
