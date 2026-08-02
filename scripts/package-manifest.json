@@ -64,6 +64,11 @@
       "mode": "0644"
     },
     {
+      "path": "assets/pineai_backend/audit_run_report.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/audit_run_report.py",
+      "mode": "0644"
+    },
+    {
       "path": "assets/pineai_backend/backup.py",
       "source": "projects/PineAI/src/assets/pineai_backend/backup.py",
       "mode": "0644"
@@ -99,6 +104,11 @@
       "mode": "0644"
     },
     {
+      "path": "assets/pineai_backend/operation_lock.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/operation_lock.py",
+      "mode": "0644"
+    },
+    {
       "path": "assets/pineai_backend/platform.py",
       "source": "projects/PineAI/src/assets/pineai_backend/platform.py",
       "mode": "0644"
@@ -114,6 +124,11 @@
       "mode": "0644"
     },
     {
+      "path": "assets/pineai_backend/repeatable_audit_service.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/repeatable_audit_service.py",
+      "mode": "0644"
+    },
+    {
       "path": "assets/pineai_backend/reports.py",
       "source": "projects/PineAI/src/assets/pineai_backend/reports.py",
       "mode": "0644"
@@ -121,6 +136,11 @@
     {
       "path": "assets/pineai_backend/storage_transaction.py",
       "source": "projects/PineAI/src/assets/pineai_backend/storage_transaction.py",
+      "mode": "0644"
+    },
+    {
+      "path": "assets/pineai_backend/timestamps.py",
+      "source": "projects/PineAI/src/assets/pineai_backend/timestamps.py",
       "mode": "0644"
     }
   ]

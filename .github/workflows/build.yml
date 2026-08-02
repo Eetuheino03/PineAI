@@ -94,6 +94,17 @@ jobs:
           PY
       - name: Compile Python sources
         run: python -m compileall -q projects/PineAI/src tests scripts
+      - name: Validate passive Mark VII harness syntax
+        run: |
+          bash -n scripts/markvii/markvii-smoke-test.sh
+          bash -n scripts/markvii/markvii-soak-test.sh
+          RECOVERY_PARENT="$(mktemp -d)"
+          python scripts/markvii/markvii_recovery_probe.py prepare \
+            --package-root projects/PineAI/src \
+            --state-dir "$RECOVERY_PARENT/state"
+          python scripts/markvii/markvii_recovery_probe.py verify \
+            --package-root projects/PineAI/src \
+            --state-dir "$RECOVERY_PARENT/state"
       - name: Resolve module version
         run: |
           VERSION="$(
@@ -138,6 +149,20 @@ jobs:
             dist/PineAI/PineAI.umd.js
           sha256sum "$PACKAGE" > "$PACKAGE.sha256"
           sha256sum -c "$PACKAGE.sha256"
+      - name: Run passive packaged-runtime smoke
+        run: |
+          SMOKE_DIR="$(mktemp -d)"
+          bash scripts/markvii/markvii-smoke-test.sh \
+            "PineAI-${VERSION}.tar.gz" \
+            "PineAI-${VERSION}.tar.gz.sha256" \
+            "$SMOKE_DIR/smoke.json"
+          python -m json.tool "$SMOKE_DIR/smoke.json" > /dev/null
+      - name: Generate deterministic CycloneDX SBOM
+        run: |
+          python scripts/generate_sbom.py \
+            --archive "PineAI-${VERSION}.tar.gz" \
+            --output "PineAI-${VERSION}.cdx.json"
+          python -m json.tool "PineAI-${VERSION}.cdx.json" > /dev/null
       - name: Upload test, benchmark, and dependency evidence
         uses: actions/upload-artifact@v4
         with:
@@ -149,9 +174,11 @@ jobs:
             coverage/PineAI/lcov.info
             npm-audit-full.json
             npm-audit-production.json
+            PineAI-${{ env.VERSION }}.cdx.json
       - uses: actions/upload-artifact@v4
         with:
           name: PineAI-${{ env.VERSION }}
           path: |
             PineAI-${{ env.VERSION }}.tar.gz
             PineAI-${{ env.VERSION }}.tar.gz.sha256
+            PineAI-${{ env.VERSION }}.cdx.json

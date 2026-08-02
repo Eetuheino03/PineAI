@@ -42,6 +42,8 @@ PRIVATE_KEY_LABELS = (
     b"ENCRYPTED",
 )
 SOURCE_MAP_TRAILER = b"//# sourceMappingURL=PineAI.umd.js.map"
+CANONICAL_GZIP_HEADER = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff"
+USTAR_MAGIC = b"ustar\x0000"
 
 
 class PackageError(Exception):
@@ -49,6 +51,27 @@ class PackageError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+class _StrictPackageTarInfo(tarfile.TarInfo):
+    """Fail before tarfile parses PAX, GNU or other special payloads."""
+
+    def _proc_member(self, archive: tarfile.TarFile) -> tarfile.TarInfo:
+        if self.type not in (tarfile.REGTYPE, tarfile.DIRTYPE):
+            raise PackageError(
+                "archive_special",
+                "package contains a link, extension or special member",
+            )
+        if (
+            not isinstance(self.size, int)
+            or isinstance(self.size, bool)
+            or self.size < 0
+            or self.size > MAX_MEMBER_BYTES
+        ):
+            raise PackageError(
+                "archive_too_large", "package member exceeds limit"
+            )
+        return super()._proc_member(archive)
 
 
 def _canonical_relative_path(value: Any, label: str) -> str:
@@ -178,9 +201,23 @@ def load_manifest() -> Dict[str, Any]:
             "manifest_invalid",
             "runtime backend manifest does not match source modules",
         )
-    if len(normalized) != 24:
+    expected_non_backend = {
+        "PineAI.umd.js",
+        "module.py",
+        "module.json",
+        "module.svg",
+        "assets/README",
+        "assets/pineai_cli.py",
+    }
+    manifest_non_backend = {
+        item["path"]
+        for item in normalized
+        if not item["path"].startswith("assets/pineai_backend/")
+    }
+    if manifest_non_backend != expected_non_backend:
         raise PackageError(
-            "manifest_invalid", "runtime manifest file count is invalid"
+            "manifest_invalid",
+            "runtime manifest contains an unsupported non-backend file set",
         )
     return {
         "schema_version": "1.0",
@@ -523,6 +560,10 @@ def create_package(dist: Path, output: Path) -> Dict[str, Any]:
 
 
 def _decompress_bytes(compressed: bytes) -> bytes:
+    if len(compressed) < 18 or compressed[:10] != CANONICAL_GZIP_HEADER:
+        raise PackageError(
+            "archive_noncanonical", "package gzip header is not canonical"
+        )
     try:
         decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
         payload = decompressor.decompress(compressed, MAX_TAR_BYTES + 1)
@@ -543,6 +584,97 @@ def _decompress_bytes(compressed: bytes) -> bytes:
             "package must contain exactly one complete gzip stream",
         )
     return payload
+
+
+def _ustar_octal(field: bytes) -> int:
+    if not field or field[0] & 0x80:
+        raise PackageError(
+            "archive_noncanonical", "package USTAR number is not canonical"
+        )
+    value = field.rstrip(b"\0 ").lstrip(b" ")
+    if any(character < 48 or character > 55 for character in value):
+        raise PackageError(
+            "archive_noncanonical", "package USTAR number is invalid"
+        )
+    return int(value or b"0", 8)
+
+
+def _preflight_ustar_stream(payload: bytes) -> None:
+    """Validate the canonical USTAR envelope without version-specific fields."""
+
+    offset = 0
+    count = 0
+    total_file_bytes = 0
+    zero_block = b"\0" * tarfile.BLOCKSIZE
+    while True:
+        if offset + tarfile.BLOCKSIZE > len(payload):
+            raise PackageError("archive_invalid", "package tar stream is truncated")
+        header = payload[offset : offset + tarfile.BLOCKSIZE]
+        if header == zero_block:
+            trailer_start = offset
+            minimum_end = trailer_start + (2 * tarfile.BLOCKSIZE)
+            expected_end = (
+                (minimum_end + tarfile.RECORDSIZE - 1) // tarfile.RECORDSIZE
+            ) * tarfile.RECORDSIZE
+            if (
+                len(payload) != expected_end
+                or payload[trailer_start:] != b"\0" * (len(payload) - trailer_start)
+            ):
+                raise PackageError(
+                    "archive_noncanonical",
+                    "package USTAR trailer is not canonical",
+                )
+            return
+
+        if header[257:265] != USTAR_MAGIC:
+            raise PackageError(
+                "archive_noncanonical", "package is not canonical USTAR"
+            )
+        stored_checksum = _ustar_octal(header[148:156])
+        calculated_checksum = (
+            sum(header[:148]) + (32 * 8) + sum(header[156:])
+        )
+        if stored_checksum != calculated_checksum:
+            raise PackageError(
+                "archive_invalid", "package USTAR checksum is invalid"
+            )
+        member_type = header[156:157]
+        if member_type not in (tarfile.REGTYPE, tarfile.DIRTYPE):
+            raise PackageError(
+                "archive_special",
+                "package contains a link, extension or special member",
+            )
+        size = _ustar_octal(header[124:136])
+        if size > MAX_MEMBER_BYTES:
+            raise PackageError(
+                "archive_too_large", "package member exceeds limit"
+            )
+        if member_type == tarfile.DIRTYPE and size != 0:
+            raise PackageError(
+                "archive_noncanonical", "package directory payload is invalid"
+            )
+        count += 1
+        if count > MAX_MEMBERS:
+            raise PackageError("archive_too_large", "package has too many members")
+        if member_type == tarfile.REGTYPE:
+            total_file_bytes += size
+            if total_file_bytes > MAX_TOTAL_FILE_BYTES:
+                raise PackageError(
+                    "archive_too_large", "package payload exceeds limit"
+                )
+        padded_size = (
+            (size + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE
+        ) * tarfile.BLOCKSIZE
+        data_start = offset + tarfile.BLOCKSIZE
+        if payload[data_start + size : data_start + padded_size] != b"\0" * (
+            padded_size - size
+        ):
+            raise PackageError(
+                "archive_noncanonical", "package member padding is not canonical"
+            )
+        offset += tarfile.BLOCKSIZE + padded_size
+        if offset > len(payload):
+            raise PackageError("archive_invalid", "package member is truncated")
 
 
 def _decompress_archive(path: Path) -> bytes:
@@ -572,6 +704,7 @@ def inspect_archive(path: Path) -> Dict[str, Any]:
     manifest = load_manifest()
     compressed_payload = _read_bounded_regular(path, MAX_ARCHIVE_BYTES)
     tar_payload = _decompress_bytes(compressed_payload)
+    _preflight_ustar_stream(tar_payload)
     expected_files = {
         "{0}/{1}".format(MODULE_ROOT, item["path"]): item
         for item in manifest["files"]
@@ -587,7 +720,11 @@ def inspect_archive(path: Path) -> Dict[str, Any]:
     directories = set()
     total_size = 0
     try:
-        archive = tarfile.open(fileobj=io.BytesIO(tar_payload), mode="r:")
+        archive = tarfile.open(
+            fileobj=io.BytesIO(tar_payload),
+            mode="r:",
+            tarinfo=_StrictPackageTarInfo,
+        )
     except tarfile.TarError as failure:
         raise PackageError("archive_invalid", "package tar stream is invalid") from failure
     try:
@@ -661,16 +798,6 @@ def inspect_archive(path: Path) -> Dict[str, Any]:
         raise PackageError(
             "archive_noncanonical", "package member order is not canonical"
         )
-    canonical_payloads = {
-        item["path"]: files["{0}/{1}".format(MODULE_ROOT, item["path"])]
-        for item in manifest["files"]
-    }
-    if compressed_payload != _canonical_archive_bytes(
-        manifest, canonical_payloads
-    ):
-        raise PackageError(
-            "archive_noncanonical", "package encoding is not canonical"
-        )
     return {
         "manifest": manifest,
         "files": files,
@@ -732,6 +859,7 @@ def _isolated_import_check(package_root: Path, backend_names: List[str]) -> None
     script = r"""
 import importlib
 import importlib.util
+import builtins
 import json
 import sys
 import types
@@ -740,6 +868,18 @@ from pathlib import Path
 root = Path(sys.argv[1])
 assets = root / "assets"
 sys.path.insert(0, str(assets))
+
+# The Mark VII firmware ships a deliberately stripped Python standard library.
+# Keep package verification conservative so a desktop-only import cannot hide
+# a dependency that fails on the device (statistics imports decimal, which is
+# absent from the verified firmware image).
+stdlib_import = builtins.__import__
+stripped_modules = {"decimal", "sqlite3", "statistics"}
+def mark_vii_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if level == 0 and name.split(".", 1)[0] in stripped_modules:
+        raise ImportError("module unavailable in the Mark VII runtime")
+    return stdlib_import(name, globals, locals, fromlist, level)
+builtins.__import__ = mark_vii_import
 
 pineapple = types.ModuleType("pineapple")
 modules = types.ModuleType("pineapple.modules")
