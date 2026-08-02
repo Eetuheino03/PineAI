@@ -22,10 +22,12 @@ from .assessment_store import (
     FINDING_CORE_FIELDS,
     MAX_BASELINE_VERSIONS,
     MAX_COMPARISONS,
+    MAX_CUSTOMER_LIST_BYTES,
     MAX_FINDINGS,
     MAX_SNAPSHOTS,
     AssessmentStore,
     _canonical_digest,
+    _bind_snapshot_record_digest,
     _ensure_no_raw_recon,
     _json_clone,
     _utc_now,
@@ -41,7 +43,8 @@ from .storage_transaction import PrivateTransaction, recover_private_transaction
 
 
 CUSTOMER_AUDIT_SCHEMA_VERSION = "1.2"
-MEASUREMENT_PROFILE_SCHEMA_VERSION = "1.0"
+MEASUREMENT_PROFILE_SCHEMA_VERSION = "1.1"
+LEGACY_MEASUREMENT_PROFILE_SCHEMA_VERSION = "1.0"
 ASSURANCE_PROFILE_SCHEMA_VERSION = "1.0"
 BASELINE_MODEL_SCHEMA_VERSION = "1.0"
 OCCURRENCE_SCHEMA_VERSION = "1.0"
@@ -238,14 +241,16 @@ def _text_list(
     return sorted(result)
 
 
-def validate_measurement_profile(value: Any, partial: bool = False) -> Dict[str, Any]:
+def validate_measurement_profile(
+    value: Any,
+    partial: bool = False,
+    allow_legacy_context: bool = False,
+) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise BackendError("invalid_profile", "measurement profile must be an object")
     allowed = {
         "name",
         "description",
-        "location_id",
-        "measurement_point_id",
         "scan_profile_id",
         "radio_profile_id",
         "interface",
@@ -255,13 +260,16 @@ def validate_measurement_profile(value: Any, partial: bool = False) -> Dict[str,
         "is_default",
         "five_ghz_operator_confirmed",
     }
-    if set(value) - allowed:
+    legacy_context = {"location_id", "measurement_point_id"}
+    accepted = allowed | legacy_context if allow_legacy_context else allowed
+    if set(value) - accepted:
         raise BackendError(
             "invalid_profile", "measurement profile contains unsupported fields"
         )
     required = allowed if not partial else set()
-    if not partial and set(value) != required:
-        missing = sorted(required - set(value))
+    required_input = required | legacy_context if allow_legacy_context and not partial else required
+    if not partial and set(value) != required_input:
+        missing = sorted(required_input - set(value))
         raise BackendError(
             "invalid_profile",
             "measurement profile fields are incomplete: {0}".format(
@@ -272,8 +280,6 @@ def validate_measurement_profile(value: Any, partial: bool = False) -> Dict[str,
     for field, maximum, is_required in (
         ("name", 100, True),
         ("description", 500, False),
-        ("location_id", 128, True),
-        ("measurement_point_id", 128, True),
         ("scan_profile_id", 128, True),
         ("radio_profile_id", 128, True),
         ("interface", 64, True),
@@ -281,6 +287,11 @@ def validate_measurement_profile(value: Any, partial: bool = False) -> Dict[str,
         if field in value:
             result[field] = _clean_text(
                 value[field], field, maximum, is_required
+            )
+    if allow_legacy_context:
+        for field in ("location_id", "measurement_point_id"):
+            result[field] = _clean_text(
+                value[field], field, 128, True
             )
     if "declared_bands" in value:
         result["declared_bands"] = _text_list(
@@ -334,6 +345,88 @@ class CustomerAuditStore(AssessmentStore):
         self.measurement_directory = self.config_directory / "measurement_profiles"
         self.fault_injector = fault_injector
         self._measurement_lock_state = threading.local()
+
+    def _validate_linked_comparison_references_unlocked(
+        self, assessment_id: str, comparison: Dict[str, Any]
+    ) -> None:
+        if comparison.get("schema_version") != CUSTOMER_AUDIT_SCHEMA_VERSION:
+            return
+        try:
+            base, _, _, _, _ = self._assessment_paths(assessment_id)
+            occurrence_id = comparison["occurrence_set_id"]
+            occurrence = self._read_json(
+                base / "occurrences" / (occurrence_id + ".json"),
+                "storage_error",
+                "referenced occurrence set is unavailable",
+            )
+            if (
+                not isinstance(occurrence, dict)
+                or set(occurrence) != OCCURRENCE_STORED_FIELDS
+                or occurrence.get("assessment_id") != assessment_id
+                or occurrence.get("comparison_id")
+                != comparison["comparison_id"]
+                or occurrence.get("occurrence_set_id") != occurrence_id
+            ):
+                raise ValueError()
+            digest_input = {
+                key: value
+                for key, value in occurrence.items()
+                if key not in {"occurrence_set_id", "occurrence_digest"}
+            }
+            occurrence_digest = _canonical_digest(digest_input)
+            if (
+                occurrence_id
+                != "occurrence_{0}".format(occurrence_digest[:16])
+                or occurrence.get("occurrence_digest") != occurrence_digest
+                or comparison.get("occurrence_digest") != occurrence_digest
+                or occurrence.get("pinned_versions")
+                != comparison.get("pinned_versions")
+                or occurrence.get("lifecycle") != comparison.get("lifecycle")
+            ):
+                raise ValueError()
+
+            pins = comparison["pinned_versions"]
+            baseline = self._read_baseline_record(
+                assessment_id, pins["baseline_version_id"]
+            )
+            baseline_digest = baseline.get(
+                "baseline_model_digest", baseline.get("snapshot_digest")
+            )
+            if pins.get("baseline_digest") != baseline_digest:
+                raise ValueError()
+
+            profile_id = pins.get("measurement_profile_id")
+            if profile_id is not None:
+                profile = self._profile_version(
+                    profile_id, pins["measurement_profile_version_id"]
+                )
+                if profile.get("digest") != pins.get(
+                    "measurement_profile_digest"
+                ):
+                    raise ValueError()
+
+            assurance_version = pins.get("assurance_profile_version_id")
+            if assurance_version is not None:
+                assurance = self._read_assurance_profile_record_unlocked(
+                    assessment_id, assurance_version
+                )
+                if assurance.get("digest") != pins.get(
+                    "assurance_profile_digest"
+                ):
+                    raise ValueError()
+            _ensure_no_raw_recon(occurrence)
+        except BackendError as error:
+            if error.code == "storage_error":
+                raise
+            raise BackendError(
+                "storage_error",
+                "comparison immutable references are invalid",
+            ) from error
+        except (KeyError, TypeError, ValueError):
+            raise BackendError(
+                "storage_error",
+                "comparison immutable references are invalid",
+            )
 
     def list_findings(
         self,
@@ -511,7 +604,10 @@ class CustomerAuditStore(AssessmentStore):
             not isinstance(value, dict)
             or set(value) != MEASUREMENT_PROFILE_METADATA_FIELDS
             or value.get("schema_version")
-            != MEASUREMENT_PROFILE_SCHEMA_VERSION
+            not in {
+                LEGACY_MEASUREMENT_PROFILE_SCHEMA_VERSION,
+                MEASUREMENT_PROFILE_SCHEMA_VERSION,
+            }
             or value.get("measurement_profile_id") != profile_id
             or not isinstance(value.get("revision"), int)
             or isinstance(value.get("revision"), bool)
@@ -543,7 +639,10 @@ class CustomerAuditStore(AssessmentStore):
             not isinstance(value, dict)
             or set(value) != MEASUREMENT_PROFILE_VERSION_FIELDS
             or value.get("schema_version")
-            != MEASUREMENT_PROFILE_SCHEMA_VERSION
+            not in {
+                LEGACY_MEASUREMENT_PROFILE_SCHEMA_VERSION,
+                MEASUREMENT_PROFILE_SCHEMA_VERSION,
+            }
             or value.get("measurement_profile_id") != profile_id
             or value.get("version_id") != version_id
             or value.get("revision") != revision
@@ -555,7 +654,13 @@ class CustomerAuditStore(AssessmentStore):
             raise BackendError(
                 "storage_error", "measurement profile version is invalid"
             )
-        if validate_measurement_profile(value["profile"]) != value["profile"]:
+        legacy = (
+            value["schema_version"]
+            == LEGACY_MEASUREMENT_PROFILE_SCHEMA_VERSION
+        )
+        if validate_measurement_profile(
+            value["profile"], allow_legacy_context=legacy
+        ) != value["profile"]:
             raise BackendError(
                 "storage_error",
                 "measurement profile version is not canonical",
@@ -765,7 +870,19 @@ class CustomerAuditStore(AssessmentStore):
 
     @_measurement_profile_mutation
     def create_measurement_profile(self, value: Any) -> Dict[str, Any]:
-        profile = validate_measurement_profile(value)
+        if isinstance(value, dict) and (
+            "location_id" in value or "measurement_point_id" in value
+        ):
+            legacy = validate_measurement_profile(
+                value, allow_legacy_context=True
+            )
+            profile = {
+                key: item
+                for key, item in legacy.items()
+                if key not in {"location_id", "measurement_point_id"}
+            }
+        else:
+            profile = validate_measurement_profile(value)
         _private_directory(self.measurement_directory)
         if len(self._measurement_profile_bases_unlocked()) >= (
             MAX_MEASUREMENT_PROFILES
@@ -851,6 +968,11 @@ class CustomerAuditStore(AssessmentStore):
             )
         current = self._profile_version(profile_id, metadata["active_version_id"])
         profile = dict(current["profile"])
+        # v0.7 separates physical MeasurementPoint context from the reusable
+        # technical profile.  Legacy 1.0 records remain readable, while the
+        # first update writes a clean 1.1 profile version.
+        profile.pop("location_id", None)
+        profile.pop("measurement_point_id", None)
         profile.update(normalized)
         profile = validate_measurement_profile(profile)
         if profile == current["profile"]:
@@ -870,6 +992,7 @@ class CustomerAuditStore(AssessmentStore):
         updated = dict(metadata)
         updated.update(
             {
+                "schema_version": MEASUREMENT_PROFILE_SCHEMA_VERSION,
                 "revision": new_revision,
                 "active_version_id": version_id,
                 "updated_at": now,
@@ -897,6 +1020,7 @@ class CustomerAuditStore(AssessmentStore):
         if metadata["status"] == "archived":
             raise BackendError("no_changes", "measurement profile is archived")
         metadata["revision"] += 1
+        metadata["schema_version"] = MEASUREMENT_PROFILE_SCHEMA_VERSION
         metadata["status"] = "archived"
         metadata["updated_at"] = _utc_now()
         self._transaction(
@@ -1072,7 +1196,9 @@ class CustomerAuditStore(AssessmentStore):
     ) -> Dict[str, Any]:
         _ensure_no_raw_recon(snapshots)
         _ensure_no_raw_recon(model)
-        normalized_snapshots = [_validate_snapshot(item) for item in snapshots]
+        normalized_snapshots = [
+            _bind_snapshot_record_digest(item) for item in snapshots
+        ]
         model = _json_clone(
             model,
             "invalid_consensus_baseline",
@@ -1149,7 +1275,7 @@ class CustomerAuditStore(AssessmentStore):
             now = _utc_now()
             new_snapshot_count = 0
             for snapshot in normalized_snapshots:
-                if self._immutable_preflight(
+                if self._snapshot_immutable_preflight(
                     self._snapshot_path(
                         assessment_id, snapshot["snapshot_id"]
                     ),
@@ -1216,9 +1342,13 @@ class CustomerAuditStore(AssessmentStore):
                 "baseline_models/{0}.json".format(model_id): model,
             }
             for snapshot in normalized_snapshots:
-                documents[
-                    "snapshots/{0}.json".format(snapshot["snapshot_id"])
-                ] = snapshot
+                path = self._snapshot_path(
+                    assessment_id, snapshot["snapshot_id"]
+                )
+                if not path.exists():
+                    documents[
+                        "snapshots/{0}.json".format(snapshot["snapshot_id"])
+                    ] = snapshot
             self._transaction(
                 base, documents, {"events.jsonl": event_bytes}
             )
@@ -1427,21 +1557,26 @@ class CustomerAuditStore(AssessmentStore):
     def list_assurance_profile_versions(
         self, assessment_id: str
     ) -> List[Dict[str, Any]]:
-        with self._lock(assessment_id):
+        with self._read_session(assessment_id), self._lock(assessment_id):
             metadata = self._read_metadata(assessment_id)
             base = self._ensure_assessment_directories(assessment_id)
             results = []
-            for path in self._bounded_document_paths(
+            paths = self._bounded_document_paths(
                 base / "assurance_profiles",
                 re.compile(r"^assurance_v[0-9]{4}\.json$"),
                 MAX_ASSURANCE_PROFILES,
                 "assurance profile",
-            ):
+            )
+            self._preflight_aggregate_document_bytes(
+                paths, MAX_CUSTOMER_LIST_BYTES, "assurance profile"
+            )
+            for path in paths:
                 if not ASSURANCE_PROFILE_VERSION_ID.match(path.stem):
                     continue
-                record = self.get_assurance_profile_version(
+                record = self._read_assurance_profile_record_unlocked(
                     assessment_id, path.stem
                 )
+                record = dict(record)
                 record.pop("profile", None)
                 results.append(record)
             for record in results:
@@ -1541,7 +1676,7 @@ class CustomerAuditStore(AssessmentStore):
         ):
             _ensure_no_raw_recon(value)
         normalized_comparison = _validate_comparison(comparison)
-        normalized_snapshot = _validate_snapshot(current_snapshot)
+        normalized_snapshot = _bind_snapshot_record_digest(current_snapshot)
         if not isinstance(lifecycle_findings, list) or len(
             lifecycle_findings
         ) > MAX_FINDINGS:
@@ -1624,7 +1759,7 @@ class CustomerAuditStore(AssessmentStore):
             snapshot_path = self._snapshot_path(
                 assessment_id, normalized_snapshot["snapshot_id"]
             )
-            snapshot_is_new = self._immutable_preflight(
+            snapshot_is_new = self._snapshot_immutable_preflight(
                 snapshot_path, normalized_snapshot, "snapshot_conflict"
             )
             if snapshot_is_new and len(
@@ -1710,6 +1845,12 @@ class CustomerAuditStore(AssessmentStore):
                 if status == "comparable":
                     for finding_id, existing in by_id.items():
                         if finding_id in observed_ids:
+                            continue
+                        details = existing.get("details")
+                        if (
+                            isinstance(details, dict)
+                            and details.get("measurement_point_id") is not None
+                        ):
                             continue
                         existing["currently_observed"] = False
                         if existing["status"] in ("open", "acknowledged"):
@@ -1822,12 +1963,15 @@ class CustomerAuditStore(AssessmentStore):
             )
             documents = {
                 "assessment.json": metadata,
-                "snapshots/{0}.json".format(
-                    normalized_snapshot["snapshot_id"]
-                ): normalized_snapshot,
                 "comparisons/{0}.json".format(comparison_id): record,
                 "occurrences/{0}.json".format(occurrence_id): occurrence,
             }
+            if snapshot_is_new:
+                documents[
+                    "snapshots/{0}.json".format(
+                        normalized_snapshot["snapshot_id"]
+                    )
+                ] = normalized_snapshot
             if lifecycle["mutated"]:
                 documents["findings.json"] = {
                     "schema_version": ASSESSMENT_SCHEMA_VERSION,
@@ -2019,7 +2163,20 @@ class CustomerAuditStore(AssessmentStore):
                 )
             return None
 
-    def list_occurrence_sets(self, assessment_id: str) -> List[Dict[str, Any]]:
+    def list_occurrence_sets(
+        self,
+        assessment_id: str,
+        max_total_bytes: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        if max_total_bytes is not None and (
+            not isinstance(max_total_bytes, int)
+            or isinstance(max_total_bytes, bool)
+            or max_total_bytes < 1
+            or max_total_bytes > MAX_REPORT_EXPORT_BYTES
+        ):
+            raise BackendError(
+                "invalid_request", "occurrence byte budget is invalid"
+            )
         with self._lock(assessment_id):
             self._read_metadata(assessment_id)
             base = self._ensure_assessment_directories(assessment_id)
@@ -2034,11 +2191,26 @@ class CustomerAuditStore(AssessmentStore):
                     "storage_error", "occurrence history exceeds its limit"
                 )
             results = []
+            total_bytes = 0
             for path in paths:
                 if path.is_symlink() or not path.is_file():
                     raise BackendError(
                         "storage_error", "occurrence history path is invalid"
                     )
+                if max_total_bytes is not None:
+                    try:
+                        document_bytes = path.stat().st_size
+                    except OSError as failure:
+                        raise BackendError(
+                            "storage_error",
+                            "occurrence history is unavailable",
+                        ) from failure
+                    if total_bytes + document_bytes > max_total_bytes:
+                        raise BackendError(
+                            "report_limit",
+                            "occurrence history exceeds the safe report limit",
+                        )
+                    total_bytes += document_bytes
                 record = self._read_json(
                     path,
                     "storage_error",

@@ -5,6 +5,7 @@ import argparse
 import getpass
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -32,13 +33,146 @@ from pineai_backend.config import (  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
 
 
-def _read_json(path: str) -> Any:
+MAX_CLI_JSON_INPUT_BYTES = 8 * 1024 * 1024
+MAX_CLI_AUX_JSON_INPUT_BYTES = 1024 * 1024
+MAX_CLI_REPORT_OUTPUT_BYTES = 8 * 1024 * 1024
+READ_CHUNK_BYTES = 64 * 1024
+
+
+def _read_json(path: str, maximum_bytes: int = MAX_CLI_JSON_INPUT_BYTES) -> Any:
+    input_path = Path(path)
+    descriptor = None
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        before = input_path.lstat()
+        if (
+            stat.S_ISLNK(before.st_mode)
+            or not stat.S_ISREG(before.st_mode)
+            or before.st_size > maximum_bytes
+        ):
+            raise BackendError(
+                "invalid_input", "JSON input must be a bounded regular file"
+            )
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(str(input_path), flags)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_size != before.st_size
+            or getattr(opened, "st_dev", 0) != getattr(before, "st_dev", 0)
+            or getattr(opened, "st_ino", 0) != getattr(before, "st_ino", 0)
+        ):
+            raise BackendError("invalid_input", "JSON input changed while opening")
+        chunks = []
+        remaining = maximum_bytes + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(READ_CHUNK_BYTES, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if (
+            len(payload) > maximum_bytes
+            or len(payload) != opened.st_size
+            or after.st_size != opened.st_size
+            or getattr(after, "st_dev", 0) != getattr(opened, "st_dev", 0)
+            or getattr(after, "st_ino", 0) != getattr(opened, "st_ino", 0)
+        ):
+            raise BackendError(
+                "invalid_input", "JSON input exceeds its limit or changed"
+            )
+        return json.loads(payload.decode("utf-8"))
+    except BackendError:
+        raise
+    except (OSError, UnicodeDecodeError, ValueError):
         raise BackendError(
             "invalid_input", "could not read JSON input"
         )
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _write_private_report(path: str, content: str) -> str:
+    if not isinstance(content, str):
+        raise BackendError("output_write_failed", "report content is invalid")
+    payload = content.encode("utf-8")
+    if len(payload) > MAX_CLI_REPORT_OUTPUT_BYTES:
+        raise BackendError(
+            "output_too_large", "report output exceeds the safe size limit"
+        )
+
+    output_path = Path(path)
+    parent = output_path.parent
+    descriptor = None
+    created_identity = None
+    try:
+        parent_absolute = Path(os.path.abspath(str(parent)))
+        current = Path(parent_absolute.anchor)
+        for part in parent_absolute.parts[1:]:
+            current = current / part
+            details = current.lstat()
+            reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            if stat.S_ISLNK(details.st_mode) or (
+                getattr(details, "st_file_attributes", 0) & reparse_point
+            ):
+                raise BackendError(
+                    "output_write_failed",
+                    "report output directory must not contain symlinks",
+                )
+        if not stat.S_ISDIR(current.lstat().st_mode):
+            raise BackendError(
+                "output_write_failed", "report output directory is invalid"
+            )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(str(output_path), flags, 0o600)
+        created_identity = os.fstat(descriptor)
+        if not stat.S_ISREG(created_identity.st_mode):
+            raise BackendError(
+                "output_write_failed", "report output is not a regular file"
+            )
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset : offset + READ_CHUNK_BYTES])
+            if written <= 0:
+                raise OSError("short report write")
+            offset += written
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = None
+        return str(output_path)
+    except FileExistsError as failure:
+        raise BackendError(
+            "output_exists", "report output already exists"
+        ) from failure
+    except BackendError:
+        raise
+    except OSError as failure:
+        raise BackendError(
+            "output_write_failed", "could not write report output"
+        ) from failure
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if descriptor is not None and created_identity is not None:
+            try:
+                current = output_path.lstat()
+                if (
+                    getattr(current, "st_dev", 0)
+                    == getattr(created_identity, "st_dev", 0)
+                    and getattr(current, "st_ino", 0)
+                    == getattr(created_identity, "st_ino", 0)
+                ):
+                    output_path.unlink()
+            except OSError:
+                pass
 
 
 def _print_json(value: Any, stream: Any = sys.stdout) -> None:
@@ -48,7 +182,7 @@ def _print_json(value: Any, stream: Any = sys.stdout) -> None:
 
 
 def _metadata(path: Optional[str]) -> Dict[str, Any]:
-    return _read_json(path) if path else {}
+    return _read_json(path, MAX_CLI_AUX_JSON_INPUT_BYTES) if path else {}
 
 
 def _add_assessment_id(parser: argparse.ArgumentParser) -> None:
@@ -190,7 +324,7 @@ def _ai_options(arguments: argparse.Namespace) -> Dict[str, Any]:
 def _finding_ids(path: Optional[str]) -> Optional[Any]:
     if not path:
         return None
-    value = _read_json(path)
+    value = _read_json(path, MAX_CLI_AUX_JSON_INPUT_BYTES)
     if not isinstance(value, list):
         raise BackendError("invalid_input", "finding IDs input must be an array")
     return value
@@ -342,7 +476,7 @@ def main(
             _print_json(result, stdout)
         elif arguments.command == "report":
             ai_analysis = (
-                _read_json(arguments.ai_analysis)
+                _read_json(arguments.ai_analysis, MAX_CLI_AUX_JSON_INPUT_BYTES)
                 if arguments.ai_analysis
                 else None
             )
@@ -353,12 +487,12 @@ def main(
                 ai_analysis,
             )
             if arguments.output:
-                Path(arguments.output).write_text(
-                    result["content"], encoding="utf-8"
+                output_path = _write_private_report(
+                    arguments.output, result["content"]
                 )
                 result = dict(result)
                 result.pop("content")
-                result["output"] = str(Path(arguments.output))
+                result["output"] = output_path
             _print_json(result, stdout)
         return 0
     except (BackendError, ConfigError) as failure:

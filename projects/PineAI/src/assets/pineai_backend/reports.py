@@ -23,8 +23,17 @@ REPORT_SCOPES = (
     "assessment_history",
 )
 PRIVACY_PROFILES = ("local_full", "share_safe")
+MAX_REPORT_FACT_BYTES = 1024 * 1024
 SAFE_FILENAME = re.compile(r"[^a-zA-Z0-9._-]+")
-MAC_IN_TEXT = re.compile(r"(?i)(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}")
+MAC_IN_TEXT = re.compile(
+    r"(?i)(?<![0-9a-f])(?:"
+    r"(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}|"
+    r"(?:[0-9a-f]{4}\.){2}[0-9a-f]{4}"
+    r")(?![0-9a-f])"
+)
+COMPACT_MAC_IN_TEXT = re.compile(
+    r"(?i)(?<![0-9a-f])[0-9a-f]{12}(?![0-9a-f])"
+)
 MAC_FIELDS = {
     "bssid",
     "bssids",
@@ -33,6 +42,22 @@ MAC_FIELDS = {
     "client_mac",
     "client_macs",
 }
+SSID_PROSE_FIELDS = {
+    "summary",
+    "title",
+    "description",
+    "explanation",
+    "alternative_explanations",
+    "validation_steps",
+    "executive_summary",
+    "technical_summary",
+    "change_summary",
+    "limitations",
+    "reason",
+    "reasons",
+    "message",
+}
+SSID_VALUE_FIELDS = {"expected", "observed", "before", "after"}
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -67,7 +92,54 @@ def _copy_json(value: Any) -> Any:
         raise BackendError("invalid_report", "report data must be valid JSON")
 
 
-def _share_safe(value: Any, share_ssids: bool = False, field: str = "") -> Any:
+def _is_ssid_field(field: Any) -> bool:
+    lowered = str(field).lower()
+    return (
+        lowered in ("ssid", "ssids")
+        or lowered.endswith("_ssid")
+        or lowered.endswith("_ssids")
+    )
+
+
+def _collect_ssid_values(value: Any, result: Set[str]) -> None:
+    """Collect exact SSID values from authoritative structured facts."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if _is_ssid_field(key):
+                if isinstance(item, str) and item:
+                    result.add(item)
+                elif isinstance(item, list):
+                    result.update(
+                        entry
+                        for entry in item
+                        if isinstance(entry, str) and entry
+                    )
+            _collect_ssid_values(item, result)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_ssid_values(item, result)
+
+
+def _redact_ssids_in_text(value: str, ssid_values: Iterable[str]) -> str:
+    # Longest first prevents a short SSID from partially consuming a longer
+    # value before the exact longer value is removed.
+    for ssid in sorted(set(ssid_values), key=lambda item: (-len(item), item)):
+        prefix = r"(?<!\w)" if (ssid[0].isalnum() or ssid[0] == "_") else ""
+        suffix = r"(?!\w)" if (ssid[-1].isalnum() or ssid[-1] == "_") else ""
+        value = re.sub(
+            prefix + re.escape(ssid) + suffix,
+            "[redacted-ssid]",
+            value,
+        )
+    return value
+
+
+def _share_safe(
+    value: Any,
+    share_ssids: bool = False,
+    field: str = "",
+    ssid_values: Iterable[str] = (),
+) -> Any:
     """Recursively remove direct wireless identifiers from a report value."""
     if isinstance(value, dict):
         result = {}
@@ -83,11 +155,7 @@ def _share_safe(value: Any, share_ssids: bool = False, field: str = "") -> Any:
                     result[key] = "[redacted-mac]"
             elif (
                 lowered != "share_ssids"
-                and (
-                    lowered in ("ssid", "ssids")
-                    or lowered.endswith("_ssid")
-                    or lowered.endswith("_ssids")
-                )
+                and _is_ssid_field(lowered)
                 and not share_ssids
             ):
                 if isinstance(item, list):
@@ -99,21 +167,43 @@ def _share_safe(value: Any, share_ssids: bool = False, field: str = "") -> Any:
             elif lowered in ("notes", "local_notes", "authorization_reference"):
                 result[key] = "[redacted]"
             else:
-                result[key] = _share_safe(item, share_ssids, lowered)
+                result[key] = _share_safe(
+                    item, share_ssids, lowered, ssid_values
+                )
         return result
     if isinstance(value, list):
-        return [_share_safe(item, share_ssids, field) for item in value]
+        return [
+            _share_safe(item, share_ssids, field, ssid_values)
+            for item in value
+        ]
     if isinstance(value, str):
-        return MAC_IN_TEXT.sub("[redacted-mac]", value)
+        if (
+            not share_ssids
+            and field in SSID_VALUE_FIELDS
+            and value
+            and value in ssid_values
+        ):
+            return "[redacted-ssid]"
+        redacted = MAC_IN_TEXT.sub("[redacted-mac]", value)
+        if field in SSID_PROSE_FIELDS | SSID_VALUE_FIELDS:
+            redacted = COMPACT_MAC_IN_TEXT.sub(
+                "[redacted-mac]", redacted
+            )
+        if not share_ssids and field in SSID_PROSE_FIELDS:
+            redacted = _redact_ssids_in_text(redacted, ssid_values)
+        return redacted
     return value
 
 
 def _privacy_copy(
-    value: Any, privacy_profile: str, share_ssids: bool = False
+    value: Any,
+    privacy_profile: str,
+    share_ssids: bool = False,
+    ssid_values: Iterable[str] = (),
 ) -> Any:
     if privacy_profile == "local_full":
         return _copy_json(value)
-    return _share_safe(value, share_ssids)
+    return _share_safe(value, share_ssids, ssid_values=ssid_values)
 
 
 def _collect_evidence_ids(value: Any, result: Set[str]) -> None:
@@ -323,6 +413,11 @@ def build_fact_model(
             "invalid_privacy_profile",
             "privacy_profile must be local_full or share_safe",
         )
+    if privacy_profile == "share_safe" and ai_analysis is not None:
+        raise BackendError(
+            "privacy_violation",
+            "share_safe reports do not accept caller-supplied AI prose",
+        )
     if not isinstance(share_ssids, bool):
         raise BackendError("invalid_report", "share_ssids must be a boolean")
     if not all(
@@ -482,6 +577,8 @@ def build_fact_model(
         "limitations": limitations,
         "ai_analysis": None,
     }
+    known_ssids: Set[str] = set()
+    _collect_ssid_values(fact_model, known_ssids)
     if ai_analysis:
         if not isinstance(ai_analysis, dict):
             raise BackendError("invalid_report", "ai_analysis must be an object")
@@ -501,9 +598,17 @@ def build_fact_model(
     if privacy_profile == "share_safe":
         fact_model["assessment"]["name"] = "[redacted]"
         fact_model["assessment"]["location"] = "[redacted]"
+        fact_model["baseline"]["label"] = "[redacted]"
     fact_model = _privacy_copy(
-        fact_model, privacy_profile, share_ssids=share_ssids
+        fact_model,
+        privacy_profile,
+        share_ssids=share_ssids,
+        ssid_values=known_ssids,
     )
+    if len(_canonical_bytes(fact_model)) > MAX_REPORT_FACT_BYTES:
+        raise BackendError(
+            "report_limit", "report facts exceed the safe size limit"
+        )
     manifest = prepare_report_manifest(fact_model)
     fact_model["integrity"] = manifest
     # Retain the v0.6.1 field as an alias for compatible consumers.

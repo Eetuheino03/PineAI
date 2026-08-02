@@ -10,6 +10,7 @@ The restore operation always targets a new or empty staging directory.  It
 never extracts over a live PineAI configuration directory.
 """
 
+import base64
 import hashlib
 import io
 import json
@@ -26,7 +27,6 @@ from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 
 from .assessment_store import _ensure_no_raw_recon
 from .config import (
-    _read_pseudonymization_key,
     _validate_settings,
     resolve_config_dir,
 )
@@ -52,10 +52,133 @@ MAX_ARCHIVE_BYTES = 544 * 1024 * 1024
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 COPY_CHUNK_BYTES = 64 * 1024
 MAX_ASSESSMENTS_FOR_BACKUP = 1000
+MAX_PAX_HEADER_BYTES = 4 * 1024
+MAX_PAX_TOTAL_BYTES = 2 * 1024 * 1024
+MAX_PAX_HEADERS = MAX_MEMBERS
 RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
     r"(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$"
 )
+
+
+def _validate_local_pax_payload(archive: tarfile.TarFile, size: int) -> str:
+    """Validate the only PAX extension emitted by the backup writer."""
+
+    fileobj = archive.fileobj
+    padded_size = ((size + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE) * tarfile.BLOCKSIZE
+    try:
+        position = fileobj.tell()
+        raw = fileobj.read(padded_size)
+        fileobj.seek(position)
+    except (AttributeError, OSError, tarfile.TarError) as failure:
+        raise BackendError(
+            "backup_invalid", "could not validate backup extended metadata"
+        ) from failure
+    if len(raw) != padded_size or raw[size:] != b"\0" * (padded_size - size):
+        raise BackendError(
+            "backup_invalid", "backup extended metadata framing is invalid"
+        )
+
+    payload = raw[:size]
+    offset = 0
+    path_value = None
+    while offset < len(payload):
+        separator = payload.find(b" ", offset)
+        if separator <= offset:
+            raise BackendError(
+                "backup_invalid", "backup extended metadata record is invalid"
+            )
+        length_field = payload[offset:separator]
+        if (
+            not length_field.isdigit()
+            or (len(length_field) > 1 and length_field.startswith(b"0"))
+        ):
+            raise BackendError(
+                "backup_invalid", "backup extended metadata length is invalid"
+            )
+        record_length = int(length_field)
+        record_end = offset + record_length
+        if (
+            record_length < 7
+            or str(record_length).encode("ascii") != length_field
+            or record_end > len(payload)
+            or payload[record_end - 1 : record_end] != b"\n"
+        ):
+            raise BackendError(
+                "backup_invalid", "backup extended metadata framing is invalid"
+            )
+        body = payload[separator + 1 : record_end - 1]
+        key, equals, value = body.partition(b"=")
+        if key != b"path" or equals != b"=" or not value or path_value is not None:
+            raise BackendError(
+                "backup_unsafe_member",
+                "backup extended metadata key is unsupported",
+            )
+        try:
+            path_value = value.decode("utf-8", "strict")
+        except UnicodeDecodeError as failure:
+            raise BackendError(
+                "backup_invalid", "backup extended metadata path is invalid"
+            ) from failure
+        offset = record_end
+    if offset != len(payload) or path_value is None:
+        raise BackendError(
+            "backup_invalid", "backup extended metadata payload is invalid"
+        )
+    return path_value
+
+
+class _BoundedBackupTarInfo(tarfile.TarInfo):
+    """Reject expensive or unsupported tar metadata before stdlib parses it."""
+
+    def _proc_member(self, archive: tarfile.TarFile) -> tarfile.TarInfo:
+        size = self.size
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise BackendError(
+                "backup_invalid", "backup member size is invalid"
+            )
+
+        if self.type == tarfile.XGLTYPE:
+            raise BackendError(
+                "backup_unsafe_member",
+                "backup global extended metadata is unsupported",
+            )
+        if self.type == tarfile.XHDTYPE:
+            if size > MAX_PAX_HEADER_BYTES:
+                raise BackendError(
+                    "backup_limit",
+                    "backup extended metadata exceeds the safe size limit",
+                )
+            header_count = getattr(archive, "_pineai_pax_header_count", 0) + 1
+            header_bytes = getattr(archive, "_pineai_pax_header_bytes", 0) + size
+            if (
+                header_count > MAX_PAX_HEADERS
+                or header_bytes > MAX_PAX_TOTAL_BYTES
+            ):
+                raise BackendError(
+                    "backup_limit",
+                    "backup extended metadata exceeds the safe aggregate limit",
+                )
+            archive._pineai_pax_header_count = header_count
+            archive._pineai_pax_header_bytes = header_bytes
+            _validate_local_pax_payload(archive, size)
+        elif self.type in (tarfile.REGTYPE, tarfile.AREGTYPE):
+            if size > MAX_MEMBER_BYTES:
+                raise BackendError(
+                    "backup_limit",
+                    "a backup member exceeds the safe size limit",
+                )
+        elif self.type == tarfile.DIRTYPE:
+            if size != 0:
+                raise BackendError(
+                    "backup_invalid", "backup directory size is invalid"
+                )
+        else:
+            raise BackendError(
+                "backup_unsafe_member",
+                "backup contains a link or unsupported tar extension",
+            )
+        return super()._proc_member(archive)
 
 
 def _utc_now() -> str:
@@ -419,6 +542,18 @@ def _validate_source_path_contract(relative: str) -> None:
             "occurrences": r"^occurrence_[0-9a-f]{16}\.json$",
             "audit_runs": r"^ar_[0-9a-f]{16}\.json$",
         }
+        split_audit_run = (
+            len(parts) == 5
+            and parts[2] == "audit_runs"
+            and re.match(r"^ar_[0-9a-f]{16}$", parts[3])
+            and parts[4] in {"manifest.json", "migration.json"}
+        ) or (
+            len(parts) == 6
+            and parts[2] == "audit_runs"
+            and re.match(r"^ar_[0-9a-f]{16}$", parts[3])
+            and parts[4] == "measurements"
+            and re.match(r"^arm_[0-9a-f]{16}\.json$", parts[5])
+        )
         valid = (
             len(parts) == 3 and parts[2] in top_level
         ) or (
@@ -428,7 +563,7 @@ def _validate_source_path_contract(relative: str) -> None:
                 document_patterns[parts[2]],
                 parts[3],
             )
-        )
+        ) or split_audit_run
         if not valid:
             raise BackendError(
                 "backup_unsafe_source",
@@ -441,10 +576,12 @@ def _validate_source_path_contract(relative: str) -> None:
     )
 
 
-def _validate_source_content(path: Path, relative: str, size: int) -> None:
+def _validate_content_bytes(payload: bytes, relative: str) -> None:
     if relative == "pseudonymization.key":
         try:
-            _read_pseudonymization_key(path)
+            secret = base64.b64decode(payload.strip(), validate=True)
+            if len(secret) != 32:
+                raise ValueError()
         except Exception as error:
             raise BackendError(
                 "backup_identity_invalid",
@@ -453,10 +590,6 @@ def _validate_source_content(path: Path, relative: str, size: int) -> None:
         return
     if relative.endswith("events.jsonl"):
         try:
-            with _safe_source_handle(path, size) as handle:
-                payload = handle.read(MAX_MEMBER_BYTES + 1)
-            if len(payload) != size or len(payload) > MAX_MEMBER_BYTES:
-                raise ValueError()
             for line in payload.decode("utf-8").splitlines():
                 if line.strip():
                     _ensure_no_raw_recon(json.loads(line))
@@ -471,10 +604,6 @@ def _validate_source_content(path: Path, relative: str, size: int) -> None:
     if not relative.endswith(".json"):
         return
     try:
-        with _safe_source_handle(path, size) as handle:
-            payload = handle.read(MAX_MEMBER_BYTES + 1)
-        if len(payload) != size or len(payload) > MAX_MEMBER_BYTES:
-            raise ValueError()
         value = json.loads(payload.decode("utf-8"))
         if relative == "config.json":
             _validate_settings(value)
@@ -486,6 +615,24 @@ def _validate_source_content(path: Path, relative: str, size: int) -> None:
         raise BackendError(
             "backup_unsafe_source",
             "backup source JSON is invalid",
+        ) from error
+
+
+def _validate_source_content(path: Path, relative: str, size: int) -> None:
+    try:
+        with _safe_source_handle(path, size) as handle:
+            payload = handle.read(MAX_MEMBER_BYTES + 1)
+        if len(payload) != size or len(payload) > MAX_MEMBER_BYTES:
+            raise BackendError(
+                "backup_source_changed",
+                "backup source changed while validating content",
+            )
+        _validate_content_bytes(payload, relative)
+    except BackendError:
+        raise
+    except OSError as error:
+        raise BackendError(
+            "backup_io_error", "could not validate backup source"
         ) from error
 
 
@@ -937,6 +1084,7 @@ def _validate_manifest(value: Dict[str, Any]) -> Tuple[List[str], List[Dict[str,
         if not isinstance(item, dict) or set(item) != {"path", "size", "sha256"}:
             raise BackendError("backup_invalid", "backup file entry is invalid")
         relative = _validate_relative_path(item["path"])
+        _validate_source_path_contract(relative)
         size = item["size"]
         digest = item["sha256"]
         if (
@@ -990,7 +1138,11 @@ def _open_archive(path: Path):
         initial_digest, initial_size = _archive_stream_sha256(source)
         source.seek(0)
         try:
-            archive = tarfile.open(fileobj=source, mode="r:gz")
+            archive = tarfile.open(
+                fileobj=source,
+                mode="r:gz",
+                tarinfo=_BoundedBackupTarInfo,
+            )
         except (OSError, tarfile.TarError) as failure:
             raise BackendError(
                 "backup_invalid", "could not open backup archive"
@@ -1012,11 +1164,95 @@ def _open_archive(path: Path):
 
 def _bounded_members(archive: tarfile.TarFile) -> List[tarfile.TarInfo]:
     members = []
+    declared_data_bytes = 0
+    seen_names = set()
+    manifest_count = 0
     try:
         while True:
             member = archive.next()
             if member is None:
                 break
+            size = member.size
+            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                raise BackendError(
+                    "backup_invalid", "backup member size is invalid"
+                )
+            if member.name in seen_names:
+                raise BackendError(
+                    "backup_invalid", "backup has duplicate members"
+                )
+            seen_names.add(member.name)
+            pax_headers = member.pax_headers
+            if (
+                not isinstance(pax_headers, dict)
+                or any(key != "path" for key in pax_headers)
+                or (
+                    "path" in pax_headers
+                    and pax_headers["path"]
+                    not in (
+                        member.name,
+                        member.name + "/" if member.isdir() else member.name,
+                    )
+                )
+            ):
+                raise BackendError(
+                    "backup_unsafe_member",
+                    "backup contains unsupported extended metadata",
+                )
+            if member.isdir():
+                if size != 0:
+                    raise BackendError(
+                        "backup_invalid", "backup directory size is invalid"
+                    )
+                _member_relative(member.name, directory=True)
+                if member.mode != 0o700:
+                    raise BackendError(
+                        "backup_permissions_invalid",
+                        "backup directory permissions are invalid",
+                    )
+            elif member.isfile():
+                member_limit = (
+                    MAX_MANIFEST_BYTES
+                    if member.name == MANIFEST_NAME
+                    else MAX_MEMBER_BYTES
+                )
+                if size > member_limit:
+                    raise BackendError(
+                        "backup_limit",
+                        "a backup member exceeds the safe size limit",
+                    )
+                if member.name == MANIFEST_NAME:
+                    manifest_count += 1
+                    if manifest_count > 1:
+                        raise BackendError(
+                            "backup_invalid",
+                            "backup must contain exactly one manifest",
+                        )
+                    if member.mode != 0o600:
+                        raise BackendError(
+                            "backup_permissions_invalid",
+                            "backup manifest permissions are invalid",
+                        )
+                else:
+                    _member_relative(member.name)
+                    if member.mode != 0o600:
+                        raise BackendError(
+                            "backup_permissions_invalid",
+                            "backup file permissions are invalid",
+                        )
+                    declared_data_bytes += size
+                    if declared_data_bytes > MAX_TOTAL_BYTES:
+                        raise BackendError(
+                            "backup_limit",
+                            "backup payload exceeds the safe size limit",
+                        )
+            else:
+                # Reject before archive.next() can advance through a payload
+                # attached to an unsupported member type.
+                raise BackendError(
+                    "backup_unsafe_member",
+                    "backup contains a link or special file",
+                )
             members.append(member)
             if len(members) > MAX_MEMBERS:
                 raise BackendError(
@@ -1105,11 +1341,23 @@ def verify_backup(input_path: str) -> Dict[str, Any]:
             handle = archive.extractfile(member)
             if handle is None:
                 raise BackendError("backup_invalid", "backup file is unreadable")
-            digest, size = _sha256_stream(handle)
-            if size != expected["size"] or digest != expected["sha256"]:
+            try:
+                payload = handle.read(MAX_MEMBER_BYTES + 1)
+            except OSError as error:
+                raise BackendError(
+                    "backup_io_error", "could not read backup file"
+                ) from error
+            size = len(payload)
+            digest = hashlib.sha256(payload).hexdigest()
+            if (
+                size > MAX_MEMBER_BYTES
+                or size != expected["size"]
+                or digest != expected["sha256"]
+            ):
                 raise BackendError(
                     "backup_hash_mismatch", "backup file hash does not match manifest"
                 )
+            _validate_content_bytes(payload, relative)
 
     return {
         "schema_version": BACKUP_SCHEMA_VERSION,

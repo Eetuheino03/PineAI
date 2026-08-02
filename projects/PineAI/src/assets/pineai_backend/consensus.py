@@ -5,15 +5,18 @@ actions.  It consumes already resolved PineAI snapshots and returns a
 canonical model which can be persisted by a higher layer.
 """
 
-import datetime
 import hashlib
 import json
 import math
 import re
-import statistics
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .errors import BackendError
+from .timestamps import (
+    normalize_rfc3339_utc,
+    rfc3339_order_key,
+    validate_rfc3339,
+)
 
 
 CONSENSUS_SCHEMA_VERSION = "1.0"
@@ -55,6 +58,18 @@ ATTRIBUTE_FIELDS = (
 )
 
 
+def _median(values: Iterable[Any]) -> Any:
+    """Return the deterministic median without the optional decimal module."""
+
+    ordered = sorted(values)
+    if not ordered:
+        raise ValueError("median requires at least one value")
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) / 2
+
+
 def _canonical_json(value: Any) -> str:
     try:
         return json.dumps(
@@ -78,28 +93,23 @@ def _strict_threshold(count: int) -> int:
     return int(math.ceil(count * 0.8))
 
 
-def _parse_observed_at(value: Any) -> Optional[datetime.datetime]:
+def _parse_observed_at(value: Any) -> Optional[Tuple[int, int]]:
     if value is None:
         return None
-    if not isinstance(value, str) or not value:
-        raise BackendError(
-            "invalid_consensus_time",
-            "snapshot observed_at must be an RFC3339 timestamp or null",
-        )
-    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    validate_rfc3339(
+        value,
+        "snapshot observed_at",
+        "invalid_consensus_time",
+    )
     try:
-        parsed = datetime.datetime.fromisoformat(normalized)
-    except ValueError:
+        key = rfc3339_order_key(value)
+        normalize_rfc3339_utc(value)
+        return key
+    except ValueError as failure:  # Defensive UTC range validation.
         raise BackendError(
             "invalid_consensus_time",
             "snapshot observed_at must be an RFC3339 timestamp or null",
-        )
-    if parsed.tzinfo is None:
-        raise BackendError(
-            "invalid_consensus_time",
-            "snapshot observed_at must include a timezone",
-        )
-    return parsed.astimezone(datetime.timezone.utc)
+        ) from failure
 
 
 def _common_context(snapshots: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -149,7 +159,7 @@ def _common_context(snapshots: List[Dict[str, Any]]) -> Dict[str, Any]:
             "scan duration must be known for every snapshot or for none",
         )
     common["scan_time_median"] = (
-        statistics.median(known_scan_times) if known_scan_times else None
+        _median(known_scan_times) if known_scan_times else None
     )
     return common
 
@@ -158,8 +168,11 @@ def _time_window(
     snapshots: List[Dict[str, Any]],
     max_source_age_hours: Optional[int],
 ) -> Dict[str, Any]:
-    parsed = [_parse_observed_at(snapshot.get("observed_at")) for snapshot in snapshots]
-    known = [value for value in parsed if value is not None]
+    parsed = [
+        (snapshot.get("observed_at"), _parse_observed_at(snapshot.get("observed_at")))
+        for snapshot in snapshots
+    ]
+    known = [value for value in parsed if value[1] is not None]
     if not known:
         return {
             "status": "unknown",
@@ -172,23 +185,31 @@ def _time_window(
             "consensus_time_mismatch",
             "observed_at must be known for every snapshot or null for every snapshot",
         )
-    started_at = min(known)
-    ended_at = max(known)
-    duration = int((ended_at - started_at).total_seconds())
+    started_value, started_key = min(known, key=lambda item: item[1])
+    ended_value, ended_key = max(known, key=lambda item: item[1])
+    duration_nanoseconds = (
+        (ended_key[0] - started_key[0]) * 1_000_000_000
+        + ended_key[1]
+        - started_key[1]
+    )
+    duration = duration_nanoseconds // 1_000_000_000
     maximum_seconds = (
         max_source_age_hours * 60 * 60
         if max_source_age_hours is not None
         else None
     )
-    if maximum_seconds is not None and duration > maximum_seconds:
+    if (
+        maximum_seconds is not None
+        and duration_nanoseconds > maximum_seconds * 1_000_000_000
+    ):
         raise BackendError(
             "consensus_time_window_exceeded",
             "consensus snapshots exceed max_source_age_hours",
         )
     return {
         "status": "bounded",
-        "started_at": started_at.isoformat().replace("+00:00", "Z"),
-        "ended_at": ended_at.isoformat().replace("+00:00", "Z"),
+        "started_at": normalize_rfc3339_utc(started_value),
+        "ended_at": normalize_rfc3339_utc(ended_value),
         "duration_seconds": duration,
     }
 
@@ -236,8 +257,8 @@ def _signal_summary(values: Iterable[Any]) -> Dict[str, Any]:
             "minimum_dbm": None,
             "maximum_dbm": None,
         }
-    median = statistics.median(signals)
-    deviation = statistics.median(abs(value - median) for value in signals)
+    median = _median(signals)
+    deviation = _median(abs(value - median) for value in signals)
     return {
         "observation_count": len(signals),
         "median_dbm": median,
@@ -258,6 +279,7 @@ def _validate_snapshots(value: Any) -> List[Dict[str, Any]]:
     snapshots = []
     seen_ids = set()
     seen_digests = set()
+    seen_source_ids = set()
     for snapshot in value:
         if not isinstance(snapshot, dict):
             raise BackendError(
@@ -279,6 +301,29 @@ def _validate_snapshots(value: Any) -> List[Dict[str, Any]]:
                 "duplicate_consensus_snapshot",
                 "a snapshot may participate in a consensus baseline only once",
             )
+        scan_metadata = snapshot.get("scan_metadata")
+        if not isinstance(scan_metadata, dict):
+            raise BackendError(
+                "invalid_consensus_input",
+                "snapshot scan_metadata must identify its saved Recon source",
+            )
+        scan_id = scan_metadata.get("scan_id")
+        if not isinstance(scan_id, str) or not scan_id:
+            raise BackendError(
+                "invalid_consensus_input",
+                "snapshot scan_id must be a non-empty saved Recon identifier",
+            )
+        if len(scan_id) > 128:
+            raise BackendError(
+                "invalid_consensus_input",
+                "snapshot scan_id exceeds the safe length limit",
+            )
+        if scan_id in seen_source_ids:
+            raise BackendError(
+                "duplicate_consensus_snapshot",
+                "one saved scan may participate in a consensus baseline only once",
+            )
+        seen_source_ids.add(scan_id)
         access_points = snapshot.get("access_points")
         if not isinstance(access_points, list) or not access_points:
             raise BackendError(
@@ -508,7 +553,7 @@ def consensus_capabilities() -> Dict[str, Any]:
                 "presence_threshold": 0.8,
                 "minimum_scans": MIN_CONSENSUS_SCANS,
                 "maximum_scans": MAX_CONSENSUS_SCANS,
-                "maximum_window_seconds": MAX_CONSENSUS_WINDOW_SECONDS,
+                "default_window_seconds": MAX_CONSENSUS_WINDOW_SECONDS,
                 "default_max_source_age_hours": (
                     DEFAULT_MAX_SOURCE_AGE_HOURS
                 ),

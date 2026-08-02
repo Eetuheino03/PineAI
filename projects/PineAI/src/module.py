@@ -38,20 +38,28 @@ def _configuration_failure(failure):
 
 _STORE = None
 _SERVICE = None
+_REPEATABLE_STORE = None
+_REPEATABLE_SERVICE = None
+_AUDIT_RUN_REPORT_SERVICE = None
 
 
 def _reset_singletons():
     """Reset process singletons for test isolation."""
-    global _STORE, _SERVICE
+    global _STORE, _SERVICE, _REPEATABLE_STORE, _REPEATABLE_SERVICE
+    global _AUDIT_RUN_REPORT_SERVICE
     _STORE = None
     _SERVICE = None
+    _REPEATABLE_STORE = None
+    _REPEATABLE_SERVICE = None
+    _AUDIT_RUN_REPORT_SERVICE = None
 
 
 def _store():
     global _STORE
     if _STORE is None:
-        from pineai_backend.customer_store import CustomerAuditStore
-        _STORE = CustomerAuditStore()
+        from pineai_backend.repeatable_audit_store import RepeatableAuditStore
+
+        _STORE = RepeatableAuditStore()
     return _STORE
 
 
@@ -61,6 +69,33 @@ def _service():
         from pineai_backend.assurance_service import AssuranceService
         _SERVICE = AssuranceService(store=_store())
     return _SERVICE
+
+
+def _repeatable_store():
+    global _REPEATABLE_STORE
+    if _REPEATABLE_STORE is None:
+        _REPEATABLE_STORE = _store()
+    return _REPEATABLE_STORE
+
+
+def _repeatable_service():
+    global _REPEATABLE_SERVICE
+    if _REPEATABLE_SERVICE is None:
+        from pineai_backend.repeatable_audit_service import RepeatableAuditService
+
+        _REPEATABLE_SERVICE = RepeatableAuditService(store=_repeatable_store())
+    return _REPEATABLE_SERVICE
+
+
+def _audit_run_report_service():
+    global _AUDIT_RUN_REPORT_SERVICE
+    if _AUDIT_RUN_REPORT_SERVICE is None:
+        from pineai_backend.audit_run_report import AuditRunReportService
+
+        _AUDIT_RUN_REPORT_SERVICE = AuditRunReportService(
+            store=_repeatable_store()
+        )
+    return _AUDIT_RUN_REPORT_SERVICE
 
 
 def _settings_response(status):
@@ -84,6 +119,41 @@ def _reject_deprecated_comparison_fields(request):
         )
 
 
+def _validate_v07_request_fields(request, allowed_fields):
+    """Reject unknown public v0.7 payload fields when Request is inspectable.
+
+    Hak5 exposes action payload members as Request attributes.  Private
+    implementation attributes and the framework's routing attributes are not
+    payload, so they are deliberately ignored.  If a future Request
+    implementation does not expose an attribute dictionary, downstream
+    nested-object and scalar validation remains authoritative.
+    """
+    from pineai_backend.errors import BackendError
+
+    try:
+        attributes = vars(request)
+    except TypeError:
+        return
+    if not isinstance(attributes, dict):
+        return
+    framework_fields = {"action", "module"}
+    supplied = {
+        key
+        for key in attributes
+        if isinstance(key, str)
+        and not key.startswith("_")
+        and key not in framework_fields
+    }
+    unsupported = sorted(supplied - set(allowed_fields))
+    if unsupported:
+        raise BackendError(
+            "invalid_request",
+            "request contains unsupported fields: {0}".format(
+                ", ".join(unsupported)
+            ),
+        )
+
+
 @module.handles_action("health")
 def health(_request: Request):
     """Return only safe startup information and never import analysis services."""
@@ -94,10 +164,10 @@ def health(_request: Request):
         return {
             "status": "ok",
             "module": "PineAI",
-            "product_mode": "customer_audit_foundation",
-            "product_position": (
-                "Portable offline wireless change auditing for WiFi Pineapple"
-            ),
+            "product_name": "PineAssure",
+            "product_mode": "repeatable_field_audit",
+            "product_position": "Wireless Assurance for WiFi Pineapple",
+            "tagline": "Baseline. Detect drift. Prove changes.",
             "version": __version__,
             "backend_version": __version__,
             "model": status["model"],
@@ -712,6 +782,415 @@ def generate_report_action(request: Request):
             getattr(request, "scope", None),
             getattr(request, "privacy_profile", "local_full"),
             getattr(request, "scope_digest", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("repeatable_audit_capabilities")
+def repeatable_audit_capabilities(_request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(_request, set())
+        return _repeatable_service().capabilities()
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("resource_telemetry")
+def resource_telemetry_action(request: Request):
+    from pineai_backend.assessment_store import ASSESSMENT_ID_PATTERN
+    from pineai_backend.errors import BackendError
+    from pineai_backend.platform import resource_telemetry
+
+    try:
+        _validate_v07_request_fields(request, {"assessment_id"})
+        assessment_id = getattr(request, "assessment_id", None)
+        if assessment_id is not None and (
+            not isinstance(assessment_id, str)
+            or not ASSESSMENT_ID_PATTERN.match(assessment_id)
+        ):
+            raise BackendError(
+                "invalid_assessment_id", "assessment_id is invalid"
+            )
+        return resource_telemetry(
+            assessment_id=assessment_id
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("list_measurement_points")
+def list_measurement_points(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {"assessment_id", "include_archived", "limit", "offset"},
+        )
+        return _repeatable_store().list_measurement_points(
+            getattr(request, "assessment_id", None),
+            getattr(request, "include_archived", False),
+            getattr(request, "limit", 50),
+            getattr(request, "offset", 0),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("get_measurement_point")
+def get_measurement_point(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request, {"assessment_id", "measurement_point_id"}
+        )
+        return _repeatable_store().get_measurement_point(
+            getattr(request, "assessment_id", None),
+            getattr(request, "measurement_point_id", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("create_measurement_point")
+def create_measurement_point(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {
+                "assessment_id",
+                "expected_assessment_revision",
+                "measurement_point",
+            },
+        )
+        value = getattr(request, "measurement_point", None)
+        if not isinstance(value, dict):
+            raise BackendError(
+                "invalid_measurement_point",
+                "measurement_point must be an object",
+            )
+        if set(value) - {
+            "location_label",
+            "physical_notes",
+            "operator_instructions",
+        }:
+            raise BackendError(
+                "invalid_measurement_point",
+                "measurement_point contains unsupported fields",
+            )
+        return _repeatable_store().create_measurement_point(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_assessment_revision", None),
+            value.get("location_label"),
+            value.get("physical_notes"),
+            value.get("operator_instructions"),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("update_measurement_point")
+def update_measurement_point(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {
+                "assessment_id",
+                "expected_assessment_revision",
+                "measurement_point_id",
+                "expected_measurement_point_revision",
+                "changes",
+            },
+        )
+        changes = getattr(request, "changes", None)
+        if (
+            not isinstance(changes, dict)
+            or not changes
+            or set(changes)
+            - {
+                "location_label",
+                "physical_notes",
+                "operator_instructions",
+            }
+        ):
+            raise BackendError(
+                "invalid_measurement_point",
+                "changes must be a non-empty object with supported fields",
+            )
+        return _repeatable_store().update_measurement_point(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_assessment_revision", None),
+            getattr(request, "measurement_point_id", None),
+            getattr(request, "expected_measurement_point_revision", None),
+            changes,
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("archive_measurement_point")
+def archive_measurement_point(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {
+                "assessment_id",
+                "expected_assessment_revision",
+                "measurement_point_id",
+                "expected_measurement_point_revision",
+            },
+        )
+        return _repeatable_store().archive_measurement_point(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_assessment_revision", None),
+            getattr(request, "measurement_point_id", None),
+            getattr(request, "expected_measurement_point_revision", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("list_audit_runs")
+def list_audit_runs(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request, {"assessment_id", "limit", "offset"}
+        )
+        return _repeatable_store().list_audit_runs(
+            getattr(request, "assessment_id", None),
+            getattr(request, "limit", 50),
+            getattr(request, "offset", 0),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("get_audit_run")
+def get_audit_run(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request, {"assessment_id", "audit_run_id"}
+        )
+        return _repeatable_store().get_audit_run(
+            getattr(request, "assessment_id", None),
+            getattr(request, "audit_run_id", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("create_audit_run")
+def create_audit_run(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {
+                "assessment_id",
+                "expected_assessment_revision",
+                "audit_run",
+            },
+        )
+        return _repeatable_store().create_audit_run(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_assessment_revision", None),
+            getattr(request, "audit_run", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("start_audit_run")
+def start_audit_run(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {
+                "assessment_id",
+                "expected_assessment_revision",
+                "audit_run_id",
+                "expected_audit_run_revision",
+            },
+        )
+        return _repeatable_store().start_audit_run(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_assessment_revision", None),
+            getattr(request, "audit_run_id", None),
+            getattr(request, "expected_audit_run_revision", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("cancel_audit_run")
+def cancel_audit_run(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {
+                "assessment_id",
+                "expected_assessment_revision",
+                "audit_run_id",
+                "expected_audit_run_revision",
+                "reason",
+            },
+        )
+        return _repeatable_store().cancel_audit_run(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_assessment_revision", None),
+            getattr(request, "audit_run_id", None),
+            getattr(request, "expected_audit_run_revision", None),
+            getattr(request, "reason", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("complete_audit_run")
+def complete_audit_run(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {
+                "assessment_id",
+                "expected_assessment_revision",
+                "audit_run_id",
+                "expected_audit_run_revision",
+            },
+        )
+        return _repeatable_store().complete_audit_run(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_assessment_revision", None),
+            getattr(request, "audit_run_id", None),
+            getattr(request, "expected_audit_run_revision", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("resolve_audit_measurement")
+def resolve_audit_measurement(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {
+                "assessment_id",
+                "expected_assessment_revision",
+                "audit_run_id",
+                "expected_audit_run_revision",
+                "measurement_id",
+                "expected_measurement_revision",
+                "scan",
+                "scan_metadata",
+            },
+        )
+        return _repeatable_service().resolve_measurement(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_assessment_revision", None),
+            getattr(request, "audit_run_id", None),
+            getattr(request, "expected_audit_run_revision", None),
+            getattr(request, "measurement_id", None),
+            getattr(request, "expected_measurement_revision", None),
+            getattr(request, "scan", None),
+            getattr(request, "scan_metadata", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("save_audit_measurement_comparison")
+def save_audit_measurement_comparison(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {
+                "assessment_id",
+                "expected_assessment_revision",
+                "audit_run_id",
+                "expected_audit_run_revision",
+                "measurement_id",
+                "expected_measurement_revision",
+            },
+        )
+        return _repeatable_service().save_comparison(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_assessment_revision", None),
+            getattr(request, "audit_run_id", None),
+            getattr(request, "expected_audit_run_revision", None),
+            getattr(request, "measurement_id", None),
+            getattr(request, "expected_measurement_revision", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("retry_audit_measurement")
+def retry_audit_measurement(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {
+                "assessment_id",
+                "expected_assessment_revision",
+                "audit_run_id",
+                "expected_audit_run_revision",
+                "measurement_id",
+                "expected_measurement_revision",
+            },
+        )
+        return _repeatable_store().retry_audit_measurement(
+            getattr(request, "assessment_id", None),
+            getattr(request, "expected_assessment_revision", None),
+            getattr(request, "audit_run_id", None),
+            getattr(request, "expected_audit_run_revision", None),
+            getattr(request, "measurement_id", None),
+            getattr(request, "expected_measurement_revision", None),
+        )
+    except BackendError as failure:
+        return _backend_failure(failure)
+
+
+@module.handles_action("generate_audit_run_report")
+def generate_audit_run_report(request: Request):
+    from pineai_backend.errors import BackendError
+
+    try:
+        _validate_v07_request_fields(
+            request,
+            {"assessment_id", "audit_run_id", "format", "privacy_profile"},
+        )
+        return _audit_run_report_service().generate(
+            getattr(request, "assessment_id", None),
+            getattr(request, "audit_run_id", None),
+            getattr(request, "format", None),
+            getattr(request, "privacy_profile", None),
         )
     except BackendError as failure:
         return _backend_failure(failure)

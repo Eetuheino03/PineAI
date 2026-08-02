@@ -19,6 +19,7 @@ from .errors import BackendError
 
 
 BACKEND_VERSION = __version__
+MAX_REPORT_HISTORY_MATERIAL_BYTES = 512 * 1024
 
 
 def _revision(value: Any) -> int:
@@ -98,10 +99,10 @@ class AssuranceService:
             for item in result.pop("rules", [])
         ]
         result["schema_version"] = "1.2"
-        result["product_mode"] = "customer_audit_foundation"
-        result["product_position"] = (
-            "Portable offline wireless change auditing for WiFi Pineapple"
-        )
+        result["product_name"] = "PineAssure"
+        result["product_mode"] = "repeatable_field_audit"
+        result["product_position"] = "Wireless Assurance for WiFi Pineapple"
+        result["tagline"] = "Baseline. Detect drift. Prove changes."
         result["backend_version"] = BACKEND_VERSION
         result["module_actions"] = [
             "health",
@@ -143,6 +144,23 @@ class AssuranceService:
             "generate_ai_analysis",
             "prepare_report",
             "generate_report",
+            "repeatable_audit_capabilities",
+            "resource_telemetry",
+            "create_measurement_point",
+            "list_measurement_points",
+            "get_measurement_point",
+            "update_measurement_point",
+            "archive_measurement_point",
+            "create_audit_run",
+            "list_audit_runs",
+            "get_audit_run",
+            "start_audit_run",
+            "cancel_audit_run",
+            "complete_audit_run",
+            "resolve_audit_measurement",
+            "save_audit_measurement_comparison",
+            "retry_audit_measurement",
+            "generate_audit_run_report",
         ]
         result["consensus"] = consensus_capabilities()
         result["assurance_profiles"] = assurance_profile_capabilities()
@@ -649,6 +667,167 @@ class AssuranceService:
             "candidate_findings": [],
         }
 
+    def comparison_for_pinned_versions(
+        self,
+        assessment_id: str,
+        current_snapshot: Dict[str, Any],
+        baseline_version_id: str,
+        assurance_profile_version_id: Any,
+        measurement_profile_id: str,
+        measurement_profile_version_id: str,
+        measurement_profile_digest: str,
+    ) -> Dict[str, Any]:
+        """Build deterministic comparison facts for immutable AuditRun pins.
+
+        Unlike the interactive v0.6 comparison path this method never consults
+        the assessment's *current* active baseline or policy.  An AuditRun must
+        remain reproducible after an operator activates newer versions.
+        """
+        assessment = self.store.get(assessment_id, 0, 1)
+        if assessment["status"] == "archived":
+            raise BackendError("assessment_archived", "assessment is archived")
+        baseline = self.store.get_baseline_version(
+            assessment_id, baseline_version_id
+        )
+        profile_record = None
+        if assurance_profile_version_id:
+            profile_record = self.store.get_assurance_profile_version(
+                assessment_id, assurance_profile_version_id
+            )
+
+        from .assurance_profiles import (
+            AssuranceProfile,
+            evaluate_assurance_profile,
+        )
+        from .customer_analysis import (
+            compare_customer_baseline,
+            lifecycle_findings,
+        )
+
+        customer = compare_customer_baseline(
+            assessment_id, baseline, current_snapshot, self._secret()
+        )
+        diff = customer["diff"]
+        comparability_status = diff["comparability"]["status"]
+        policy = {
+            "observed_changes": [],
+            "policy_deviations": [],
+            "security_findings": [],
+        }
+        if profile_record:
+            policy = evaluate_assurance_profile(
+                AssuranceProfile.from_dict(profile_record["profile"]),
+                current_snapshot,
+                diff["comparability"],
+            )
+            certainty = (
+                "limited"
+                if comparability_status == "not_comparable"
+                else (
+                    "probable"
+                    if comparability_status == "partially_comparable"
+                    else None
+                )
+            )
+            if certainty:
+                for field in (
+                    "observed_changes",
+                    "policy_deviations",
+                    "security_findings",
+                ):
+                    for item in policy[field]:
+                        item["certainty"] = certainty
+
+        observed_changes = {
+            item["change_id"]: item
+            for item in customer["observed_changes"]
+        }
+        observed_changes.update(
+            {
+                item["change_id"]: item
+                for item in policy["observed_changes"]
+            }
+        )
+        measurement_context = current_snapshot.get("scan_metadata", {}).get(
+            "measurement_context", {}
+        )
+        measurement_point_id = (
+            measurement_context.get("measurement_point_id")
+            if isinstance(measurement_context, dict)
+            else None
+        )
+        lifecycle = lifecycle_findings(
+            assessment_id,
+            policy["policy_deviations"],
+            policy["security_findings"],
+            self._secret(),
+            measurement_point_id=measurement_point_id,
+        )
+        profile_assets = []
+        if profile_record:
+            profile_assets = profile_record["profile"].get(
+                "inventory", {}
+            ).get("assets", [])
+        observed_bssids = {
+            item["bssid"] for item in current_snapshot["access_points"]
+        }
+        inventory_bssids = {
+            item.get("bssid") for item in profile_assets
+        }
+        inventory_reconciliation = {
+            "configured": profile_record is not None,
+            "inventory_asset_count": len(profile_assets),
+            "observed_inventory_asset_count": len(
+                observed_bssids & inventory_bssids
+            ),
+            "missing_inventory_asset_count": len(
+                inventory_bssids - observed_bssids
+            ),
+            "outside_inventory_asset_count": len(
+                observed_bssids - inventory_bssids
+            ),
+            "coverage_mode": (
+                profile_record["profile"]
+                .get("inventory", {})
+                .get("coverage_mode")
+                if profile_record
+                else None
+            ),
+        }
+        pinned_versions = {
+            "baseline_version_id": baseline_version_id,
+            "baseline_digest": baseline.get(
+                "baseline_model_digest", baseline.get("snapshot_digest")
+            ),
+            "measurement_profile_id": measurement_profile_id,
+            "measurement_profile_version_id": measurement_profile_version_id,
+            "measurement_profile_digest": measurement_profile_digest,
+            "assurance_profile_version_id": assurance_profile_version_id,
+            "assurance_profile_digest": (
+                profile_record.get("digest") if profile_record else None
+            ),
+        }
+        return {
+            "schema_version": "1.2",
+            "mode": "audit_run_preview",
+            "assessment_revision": assessment["revision"],
+            "baseline": baseline,
+            "current_snapshot": current_snapshot,
+            "diff": diff,
+            "observed_changes": sorted(
+                observed_changes.values(), key=lambda item: item["change_id"]
+            ),
+            "inventory_reconciliation": inventory_reconciliation,
+            "policy_deviations": policy["policy_deviations"],
+            "security_findings": policy["security_findings"],
+            "policy_evaluation_status": (
+                "evaluated" if profile_record else "not_configured"
+            ),
+            "lifecycle_findings": lifecycle,
+            "pinned_versions": pinned_versions,
+            "candidate_findings": [],
+        }
+
     def compare_recon(
         self, assessment_id: str, scan: Any, scan_metadata: Any
     ) -> Dict[str, Any]:
@@ -676,6 +855,12 @@ class AssuranceService:
         )
         if baseline.get("legacy"):
             limitations.append("legacy_single_scan_baseline")
+        baseline_snapshot = baseline.get("snapshot")
+        if (
+            isinstance(baseline_snapshot, dict)
+            and "snapshot_record_digest" not in baseline_snapshot
+        ):
+            limitations.append("legacy_snapshot_integrity_unbound")
         occurrence_set = {
             "observed_changes": preview["observed_changes"],
             "inventory_reconciliation": preview[
@@ -725,14 +910,46 @@ class AssuranceService:
         comparison_record = self.store.get_comparison(
             assessment_id, comparison_id
         )
-        findings = self.store.list_findings(assessment_id)
+        occurrence = self.store.get_occurrence_set(
+            assessment_id, comparison_id
+        )
+        if occurrence is not None:
+            findings = occurrence.get("lifecycle_findings", [])
+            finding_source = "immutable_occurrence"
+            legacy_limited = False
+        else:
+            findings = self.store.list_findings(assessment_id)
+            finding_source = "legacy_live_fallback"
+            legacy_limited = True
+        if not isinstance(findings, list) or any(
+            not isinstance(item, dict) for item in findings
+        ):
+            raise BackendError(
+                "storage_error", "comparison finding facts are invalid"
+            )
+        allowed_ids = set(
+            comparison_record.get("observed_finding_ids", [])
+        )
+        if occurrence is not None:
+            occurrence_ids = {
+                item.get("finding_id") for item in findings
+            }
+            if None in occurrence_ids or occurrence_ids != allowed_ids:
+                raise BackendError(
+                    "storage_error",
+                    "comparison finding references differ from its occurrence",
+                )
         requested = _identifier_list(finding_ids, "finding_ids", 100)
         if requested is None:
-            requested = comparison_record.get("observed_finding_ids", [])
+            requested = sorted(allowed_ids)
         by_id = {finding["finding_id"]: finding for finding in findings}
-        if any(finding_id not in by_id for finding_id in requested):
+        if any(
+            finding_id not in allowed_ids or finding_id not in by_id
+            for finding_id in requested
+        ):
             raise BackendError(
-                "finding_not_found", "one or more findings were not found"
+                "finding_not_found",
+                "one or more findings do not belong to this comparison",
             )
         selected = [by_id[finding_id] for finding_id in requested]
         diff = comparison_record["comparison"]
@@ -742,6 +959,8 @@ class AssuranceService:
             "comparability": diff["comparability"],
             "summary": diff["summary"],
             "diff": diff,
+            "finding_source": finding_source,
+            "legacy_limited": legacy_limited,
         }
         return assessment, comparison, selected
 
@@ -791,7 +1010,10 @@ class AssuranceService:
                 }
             occurrences = [occurrence]
         else:
-            occurrences = self.store.list_occurrence_sets(assessment_id)
+            occurrences = self.store.list_occurrence_sets(
+                assessment_id,
+                max_total_bytes=MAX_REPORT_HISTORY_MATERIAL_BYTES,
+            )
         return {
             "schema_version": "1.0",
             "comparison_id": comparison_id,
@@ -847,8 +1069,6 @@ class AssuranceService:
                 )
 
         assessment = self.store.get(assessment_id, 0, 1)
-        occurrences = self.store.list_occurrence_sets(assessment_id)
-        records = self.store.list_comparisons(assessment_id)
         if scope_type == "comparison":
             record = self.store.get_comparison(
                 assessment_id, comparison_id
@@ -858,6 +1078,7 @@ class AssuranceService:
             )
             selected_occurrences = [occurrence] if occurrence else []
         else:
+            records = self.store.list_comparisons(assessment_id)
             if not records:
                 raise BackendError(
                     "comparison_not_found",
@@ -869,7 +1090,14 @@ class AssuranceService:
             occurrence = self.store.get_occurrence_set(
                 assessment_id, record["comparison_id"]
             )
-            selected_occurrences = occurrences
+            selected_occurrences = (
+                self.store.list_occurrence_sets(
+                    assessment_id,
+                    max_total_bytes=MAX_REPORT_HISTORY_MATERIAL_BYTES,
+                )
+                if scope_type == "assessment_history"
+                else ([occurrence] if occurrence else [])
+            )
 
         baseline = self.store.get_baseline_version(
             assessment_id, record["baseline_version_id"]
@@ -915,18 +1143,17 @@ class AssuranceService:
             )
             evidence.extend(occurrence.get("evidence", []))
 
-        live_findings = self.store.list_findings(assessment_id)
         if scope_type == "comparison" and occurrence:
             findings = occurrence.get("lifecycle_findings", [])
         elif scope_type == "assessment_current":
             findings = [
                 item
-                for item in live_findings
+                for item in self.store.list_findings(assessment_id)
                 if item.get("status") in ("open", "acknowledged")
                 and item.get("currently_observed") is True
             ]
         else:
-            findings = live_findings
+            findings = self.store.list_findings(assessment_id)
         if scope_type == "assessment_history":
             history = selected_occurrences
             for item in selected_occurrences:

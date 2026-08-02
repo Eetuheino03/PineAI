@@ -1,9 +1,10 @@
-PineAI module assets
-====================
+PineAssure module assets
+=======================
 
 - `pineai_backend/` contains the standard-library-only Baseline & Drift
   resolver, private assessment store, deterministic finding engine, report
-  generator, and optional non-authoritative OpenAI client.
+  generator, Repeatable Field Audit store/orchestration, resource guard, and
+  optional non-authoritative OpenAI client.
 - `pineai_cli.py` provides local administration, baseline, comparison,
   finding, privacy-preview, AI-analysis, and report commands.
 
@@ -12,5 +13,5 @@ Hak5 Recon responses are processed in memory and are not persisted. Real SSIDs
 and BSSIDs remain local; BSSIDs and MAC addresses are never sent to an AI
 provider, and SSID sharing is opt-in.
 
-See `docs/backend-api.md`, `docs/frontend.md`, and
+See `docs/repeatable-audits-api-v1.md`, `docs/backend-api.md`, and
 `docs/product-direction.md` in the source repository.
