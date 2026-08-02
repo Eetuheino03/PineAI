@@ -341,15 +341,36 @@ Post-device workstation closure checkpoint (2026-08-02):
   and wrote 268,291 logical bytes across 59 files. The frozen-limit run took
   18,196.438 ms, reopened in 214.319 ms, reached 26.48 MiB peak RSS, and
   exercised the 32-point and 32-run total limits;
-- the canonical package contains 28 files and three directories with 1,568,799
-  payload bytes. Windows Python 3.8 and WSL independently verified SHA-256
+- the local WSL-built package contains 28 files and three directories with
+  1,568,799 payload bytes. Windows Python 3.8 and WSL independently verified
+  development SHA-256
   `03771364154a29df3ba11422f6e35121f1ac081c51658bbb9a9f80914e871132`;
 - passive packaged-runtime smoke passed and the deterministic CycloneDX SBOM
   contains 1,275 components with SHA-256
   `2e4c71eeb334682813e8c19115f7715f71e66a71027be67ab88ea91dae1cb5d2`.
 
-Remaining closure work is to create the logical commits, push the draft PR,
-obtain green GitHub Actions on the same commit, download or rebuild the frozen
-CI-equivalent package, repeat the final physical package/staged-install/
-rollback gates, and perform the authenticated saved-Recon read without placing
-credentials in commands or evidence.
+Frozen-CI hardware checkpoint:
+
+- logical commits were pushed through `e64cdf5`; PR and push Actions runs
+  `30749608964` and `30749606966` passed while PR #47 remained a draft;
+- the GitHub CLI-downloaded archive SHA-256 is
+  `02af848235cb25138e48d0d1eccaaeed5b148a5126bb3e9abced99ce15206c15`;
+- the exact archive passed cross-runtime verification and the Mark VII package,
+  recovery, storage/report/backup, 20/100 adapter, realistic store,
+  staged-install, offline-health, CLI, frontend-bundle, and rollback gates;
+- the final pre-install backup is
+  `/root/pineai-backups/20260802T133200Z-final-v070/` and still verifies;
+- the initial installed module unexpectedly disappeared after the earlier
+  development rollback despite a successful immediate HTTP check. It was
+  restored from the verified initial backup before the final sequence. The
+  final rollback passed, but the original disappearance has no confirmed root
+  cause;
+- the saved-Recon endpoint returns HTTP 401 without a Hak5 session. The
+  authenticated saved-scan read remains untested because no password or session
+  token was placed in a command or evidence file.
+
+Remaining closure work is to push this evidence-only documentation commit,
+confirm its CI-generated package is byte-identical to the already tested
+archive, update PR #47 with the safe summary, and resolve the authenticated
+saved-scan and unexplained module-disappearance gates before a final-review
+verdict can be upgraded.

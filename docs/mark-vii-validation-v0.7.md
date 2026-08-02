@@ -52,6 +52,57 @@ worktree.
 The exact frozen CI package, authenticated saved-scan read, final staged
 installation, and final rollback remain release gates.
 
+## Frozen CI artifact evidence (2026-08-02)
+
+The PR head `e64cdf5039f3df1ae1b72e83a1fe00cd9550f408` passed both
+the pull-request run `30749608964` and push run `30749606966`. The package was
+downloaded with GitHub CLI from the pull-request run rather than rebuilt for
+device validation.
+
+- Archive SHA-256:
+  `02af848235cb25138e48d0d1eccaaeed5b148a5126bb3e9abced99ce15206c15`.
+- CycloneDX SHA-256:
+  `492870ca77286cc4bfa453536f889f32a529fa2ed1c117d8d723a2f1e800403b`.
+- Windows Python 3.8.20, WSL Python 3.13, the archive sidecar, and the Mark VII
+  independently accepted the same 28-file, three-directory archive.
+- Package smoke passed with 56 actions, Python 3.9.7, offline mode,
+  Recon control disabled, and 24,708 KiB peak RSS.
+- Prepared-journal recovery published both targets atomically and left no
+  transaction residue.
+- The storage-integrity probe passed AuditRun lifecycle, JSON/HTML report,
+  missing/corrupt manifest, private-permission, backup verification, and
+  restore-staging checks with zero violations.
+- The 20- and 100-iteration adapter runs completed 140 and 700 read-only action
+  calls with zero failures. Peak RSS was 21.37 and 21.28 MiB respectively.
+- The realistic store workload completed in 204,441.456 ms, reopened in
+  7,666.158 ms, reached 22.09 MiB peak RSS, and persisted 268,291 logical
+  bytes across 59 files. It produced 16 snapshots, eight comparisons, and 37
+  events with zero harness violations.
+- The staged module served the exact 562,703-byte CI frontend bundle with
+  SHA-256
+  `9b199cd0427cc46f429e053522e43b846597e2d919b3b17b91c8d258555ef1e8`.
+  Installed-path import/health found 56 actions and peaked at 24,072 KiB; CLI
+  status and capabilities also passed in disposable state.
+- A new pre-final module/state backup was written to
+  `/root/pineai-backups/20260802T133200Z-final-v070/`. Both backup members
+  verified before and after rollback. The original module bundle and backend
+  hashes were restored and port 1471 again served the original bundle.
+- No active radio, Recon, capture, deauthentication, firmware, or reboot action
+  occurred, and production assessment content was not read or mutated.
+
+Before the final staged test, the original module directory was unexpectedly
+absent even though its route had been verified after the earlier development
+rollback. It was reconstructed from the verified initial backup, its original
+file hashes and HTTP route were revalidated, and the final install/rollback then
+passed. The cause of that one disappearance was not established and must remain
+visible in review evidence.
+
+The authenticated saved-scan read is still open. The endpoint returned HTTP
+401 without a Hak5 session, as expected; no password or session secret was put
+on a command line to bypass that boundary. Stable release approval therefore
+remains blocked even though the exact CI artifact passed the other passive
+hardware gates.
+
 ## Release inputs
 
 Copy only these files to a private validation directory on the device:
