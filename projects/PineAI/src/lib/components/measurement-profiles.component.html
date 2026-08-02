@@ -76,18 +76,9 @@
                         rows="2"
                         maxlength="500"></textarea>
                 </mat-form-field>
-                <div class="row">
-                    <mat-form-field appearance="outline">
-                        <mat-label>Location ID</mat-label>
-                        <input matInput formControlName="location_id" maxlength="100">
-                    </mat-form-field>
-                    <mat-form-field appearance="outline">
-                        <mat-label>Measurement point ID</mat-label>
-                        <input
-                            matInput
-                            formControlName="measurement_point_id"
-                            maxlength="100">
-                    </mat-form-field>
+                <div class="notice">
+                    Location and operator context belong to a MeasurementPoint.
+                    This profile contains technical scan settings only.
                 </div>
                 <div class="row">
                     <mat-form-field appearance="outline">

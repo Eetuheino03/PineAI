@@ -120,8 +120,8 @@
                 <div *ngIf="activeProfile" class="notice">
                     <strong>{{ activeProfile.name }}</strong>
                     <div>
-                        Location {{ activeProfile.context?.location_id || '—' }} ·
-                        point {{ activeProfile.context?.measurement_point_id || '—' }} ·
+                        Interface {{ activeProfile.context?.interface || '—' }} ·
+                        bands {{ activeProfile.context?.declared_bands?.join(', ') || 'undeclared' }} ·
                         channels {{ activeProfile.context?.declared_channels?.join(', ') || 'undeclared' }}
                     </div>
                 </div>

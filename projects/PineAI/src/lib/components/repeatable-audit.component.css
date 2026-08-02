@@ -1,0 +1,187 @@
+.repeatable-audit-view {
+    padding-bottom: 48px;
+}
+
+.offline-authority {
+    background: #d9f0e5;
+    color: #176447;
+    white-space: nowrap;
+}
+
+.assurance-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.assurance-status-grid mat-card {
+    padding: 16px;
+}
+
+.metric-limit {
+    color: #697680;
+    font-size: 17px;
+    font-weight: 500;
+}
+
+.metric-detail {
+    color: #61707a;
+    font-size: 12px;
+    margin-top: 7px;
+}
+
+.resource-status {
+    font-size: 23px;
+    text-transform: capitalize;
+}
+
+.guided-step {
+    padding: 12px 2px 22px;
+}
+
+.point-form-card {
+    padding: 16px;
+}
+
+.point-form-card mat-card-title {
+    font-size: 17px;
+    margin-bottom: 14px;
+}
+
+.point-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.point-grid mat-card {
+    padding: 16px;
+}
+
+.assignment-table {
+    border-collapse: collapse;
+    min-width: 780px;
+}
+
+.assignment-table th,
+.assignment-table td {
+    border-bottom: 1px solid #dbe1e4;
+    padding: 9px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.assignment-table th {
+    color: #53616b;
+    font-size: 11px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.assignment-table mat-form-field {
+    min-width: 220px;
+}
+
+.run-summary,
+.run-status {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.run-summary h3 {
+    margin: 3px 0;
+}
+
+.run-status {
+    align-items: flex-end;
+    flex-direction: column;
+}
+
+.measurement-progress {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px 0;
+}
+
+.measurement-progress-item {
+    align-items: center;
+    background: #eef2f4;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 7px;
+    padding: 8px 10px;
+}
+
+.measurement-progress-item.current {
+    background: #e6f1f4;
+    border-color: #28788b;
+}
+
+.provenance-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 14px 0;
+}
+
+.provenance-grid > div {
+    background: #f2f5f6;
+    border-radius: 6px;
+    min-width: 0;
+    padding: 10px;
+}
+
+.provenance-grid span,
+.provenance-grid strong {
+    display: block;
+}
+
+.provenance-grid span {
+    color: #68757e;
+    font-size: 11px;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+}
+
+.terminal-controls {
+    border: 1px solid #e3c56d;
+    border-radius: 8px;
+    padding: 14px;
+}
+
+.digest-list {
+    display: grid;
+    grid-template-columns: 130px minmax(0, 1fr);
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.digest-list code {
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+    .assurance-status-grid,
+    .point-grid,
+    .provenance-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .run-summary {
+        flex-direction: column;
+    }
+
+    .run-status {
+        align-items: flex-start;
+    }
+
+    .digest-list {
+        grid-template-columns: 1fr;
+    }
+}

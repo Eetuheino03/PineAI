@@ -18,6 +18,7 @@ import { SettingsComponent } from './components/settings.component';
 import { GuidedAssessmentComponent } from './components/guided-assessment.component';
 import { EvidenceViewerComponent } from './components/evidence-viewer.component';
 import { MeasurementProfilesComponent } from './components/measurement-profiles.component';
+import { RepeatableAuditComponent } from './components/repeatable-audit.component';
 
 const routes: Routes = [
     {path: '', component: PineAIComponent}
@@ -37,7 +38,8 @@ const routes: Routes = [
         SettingsComponent,
         GuidedAssessmentComponent,
         EvidenceViewerComponent,
-        MeasurementProfilesComponent
+        MeasurementProfilesComponent,
+        RepeatableAuditComponent
     ],
     imports: [
         CommonModule,

@@ -53,7 +53,7 @@
                         <mat-label>Privacy profile</mat-label>
                         <mat-select
                             [(ngModel)]="privacyProfile"
-                            (selectionChange)="resetReportPreview()">
+                            (selectionChange)="privacyChanged()">
                             <mat-option value="local_full">
                                 Local full evidence
                             </mat-option>
@@ -74,7 +74,7 @@
                     <mat-checkbox
                         [(ngModel)]="includeAi"
                         (change)="resetReportPreview()"
-                        [disabled]="!pineai.aiAnalysisValue()">
+                        [disabled]="privacyProfile === 'share_safe' || !pineai.aiAnalysisValue()">
                         Include clearly labelled AI text
                     </mat-checkbox>
                 </div>
@@ -82,7 +82,9 @@
                     *ngIf="privacyProfile === 'share_safe'"
                     class="warning-banner">
                     Share-safe export removes or pseudonymizes local identifiers.
-                    Review the exact manifest before generating a file.
+                    Inline AI prose is excluded because it cannot be proven free
+                    of caller-supplied local secrets. Review the exact manifest
+                    before generating a file.
                 </div>
                 <div class="actions">
                     <button

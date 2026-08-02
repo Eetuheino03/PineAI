@@ -1,0 +1,559 @@
+<section class="view repeatable-audit-view">
+    <header class="view-header">
+        <div>
+            <div class="eyebrow">PineAssure · Guided field audit</div>
+            <h2>Baseline. Detect drift. Prove changes.</h2>
+            <p>
+                Build a resumable audit from saved Recon observations. The
+                deterministic backend remains authoritative and no radio action
+                is available in this workflow.
+            </p>
+        </div>
+        <span class="badge offline-authority">Offline authoritative</span>
+    </header>
+
+    <div *ngIf="audit.error" class="error-banner" role="alert">
+        <strong>{{ audit.error.code }}</strong> — {{ audit.error.message }}
+    </div>
+    <div *ngIf="resourceBlocked" class="error-banner" role="alert">
+        Resource guard is blocking scan processing. Free memory or storage and
+        refresh telemetry before retrying.
+    </div>
+
+    <div class="assurance-status-grid" aria-label="PineAssure capacity and resources">
+        <mat-card>
+            <div class="metric">
+                {{ audit.capacity?.measurement_point_active_used || audit.measurementPoints.length }}
+                <span class="metric-limit">/ {{ audit.capacity?.measurement_point_active_limit || 16 }}</span>
+            </div>
+            <div class="metric-label">Active measurement points</div>
+        </mat-card>
+        <mat-card>
+            <div class="metric">
+                {{ audit.capacity?.audit_run_used || audit.auditRuns.length }}
+                <span class="metric-limit">/ {{ audit.capacity?.audit_run_limit || 32 }}</span>
+            </div>
+            <div class="metric-label">Stored AuditRuns</div>
+        </mat-card>
+        <mat-card>
+            <div class="metric resource-status">
+                {{ audit.telemetry?.status || 'unknown' }}
+            </div>
+            <div class="metric-label">Resource guard</div>
+            <div class="metric-detail">
+                RAM {{ bytes(audit.telemetry?.memory_available_bytes) }} ·
+                disk {{ bytes(audit.telemetry?.disk_free_bytes) }}
+            </div>
+        </mat-card>
+    </div>
+
+    <mat-vertical-stepper
+        [linear]="false"
+        [selectedIndex]="flow.selectedStep"
+        (selectionChange)="flow.selectedStep = $event.selectedIndex">
+
+        <mat-step label="1. Assessment">
+            <div class="guided-step stack">
+                <p>
+                    Select the location-owned assessment that stores points,
+                    runs and deterministic evidence.
+                </p>
+                <div *ngIf="flow.errors.assessment" class="error-banner" role="alert">
+                    {{ flow.errors.assessment }}
+                </div>
+                <div *ngIf="flow.messages.assessment" class="success-banner">
+                    {{ flow.messages.assessment }}
+                </div>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Assessment</mat-label>
+                        <mat-select [(ngModel)]="selectedAssessmentId">
+                            <mat-option
+                                *ngFor="let item of pineai.assessments"
+                                [value]="item.assessment_id">
+                                {{ item.name }} · {{ item.location || 'No location label' }}
+                            </mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="openAssessment()"
+                        [disabled]="!!audit.busyAction || !selectedAssessmentId">
+                        Open assessment
+                    </button>
+                    <button
+                        mat-stroked-button
+                        (click)="refreshAssessmentState()"
+                        [disabled]="!!audit.busyAction || !assessment">
+                        Refresh state
+                    </button>
+                </div>
+                <div *ngIf="assessment" class="notice">
+                    <strong>{{ assessment.name }}</strong>
+                    <span class="mono"> · revision {{ assessment.revision }}</span>
+                    <div>{{ assessment.location || 'Location not documented' }}</div>
+                </div>
+                <div class="actions">
+                    <button
+                        mat-button
+                        (click)="flow.selectedStep = 1"
+                        [disabled]="!assessment">
+                        Continue to points
+                    </button>
+                </div>
+            </div>
+        </mat-step>
+
+        <mat-step label="2. Measurement points">
+            <div class="guided-step stack">
+                <p>
+                    A point describes only where and how the operator should
+                    repeat a measurement. Radio settings stay in the versioned
+                    measurement profile selected for an AuditRun.
+                </p>
+                <div *ngIf="flow.errors.points" class="error-banner" role="alert">
+                    {{ flow.errors.points }}
+                </div>
+                <div *ngIf="flow.messages.points" class="success-banner">
+                    {{ flow.messages.points }}
+                </div>
+                <mat-card class="point-form-card">
+                    <mat-card-title>
+                        {{ editingPoint ? 'Edit measurement point' : 'Create measurement point' }}
+                    </mat-card-title>
+                    <div class="row">
+                        <mat-form-field appearance="outline">
+                            <mat-label>Location label</mat-label>
+                            <input matInput [(ngModel)]="pointLocation" maxlength="160">
+                        </mat-form-field>
+                    </div>
+                    <div class="row">
+                        <mat-form-field appearance="outline">
+                            <mat-label>Physical notes</mat-label>
+                            <textarea matInput [(ngModel)]="pointPhysicalNotes" maxlength="1000"></textarea>
+                        </mat-form-field>
+                        <mat-form-field appearance="outline">
+                            <mat-label>Operator instructions</mat-label>
+                            <textarea matInput [(ngModel)]="pointInstructions" maxlength="1000"></textarea>
+                        </mat-form-field>
+                    </div>
+                    <div class="actions">
+                        <button
+                            mat-flat-button
+                            color="accent"
+                            (click)="createPoint()"
+                            [disabled]="!!audit.busyAction || !assessment || !pointLocation.trim()">
+                            {{ editingPoint ? 'Save point revision' : 'Create point' }}
+                        </button>
+                        <button
+                            *ngIf="editingPoint"
+                            mat-button
+                            (click)="clearPointForm()">
+                            Cancel edit
+                        </button>
+                    </div>
+                </mat-card>
+
+                <div *ngIf="!audit.measurementPoints.length" class="empty-state">
+                    <mat-icon>place</mat-icon>
+                    No active measurement points.
+                </div>
+                <div class="point-grid" *ngIf="audit.measurementPoints.length">
+                    <mat-card *ngFor="let point of audit.measurementPoints">
+                        <div class="card-title-row">
+                            <div>
+                                <strong>{{ point.location_label }}</strong>
+                                <div class="muted">{{ point.location_label || 'No location label' }}</div>
+                            </div>
+                            <span class="badge" [ngClass]="point.status">{{ point.status }}</span>
+                        </div>
+                        <p>{{ point.operator_instructions || 'No operator instructions' }}</p>
+                        <div class="mono muted">{{ point.measurement_point_id }}</div>
+                        <div class="actions">
+                            <button
+                                mat-stroked-button
+                                (click)="editPoint(point)"
+                                [disabled]="!!audit.busyAction || flow.pointSelected(point.measurement_point_id)">
+                                Edit
+                            </button>
+                            <button
+                                mat-stroked-button
+                                color="warn"
+                                (click)="archivePoint(point)"
+                                [disabled]="!!audit.busyAction || flow.pointSelected(point.measurement_point_id)">
+                                Archive
+                            </button>
+                        </div>
+                    </mat-card>
+                </div>
+                <div class="actions">
+                    <button mat-button (click)="flow.selectedStep = 0">Back</button>
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="flow.selectedStep = 2"
+                        [disabled]="!audit.measurementPoints.length">
+                        Define an AuditRun
+                    </button>
+                </div>
+            </div>
+        </mat-step>
+
+        <mat-step label="3. Define AuditRun">
+            <div class="guided-step stack">
+                <p>
+                    Select 1–16 points. Every point pins an immutable
+                    measurement profile revision and baseline version. The
+                    active AssuranceProfile is pinned at run creation.
+                </p>
+                <div *ngIf="flow.errors.run" class="error-banner" role="alert">
+                    {{ flow.errors.run }}
+                </div>
+                <div *ngIf="flow.messages.run" class="success-banner">
+                    {{ flow.messages.run }}
+                </div>
+                <div *ngIf="!assuranceProfileId" class="warning-banner">
+                    No active AssuranceProfile version is available. Create and
+                    activate inventory/policy in Expert mode before creating a run.
+                </div>
+                <div *ngIf="!availableProfiles.length || !availableBaselines.length" class="warning-banner">
+                    An active versioned measurement profile and baseline are
+                    required. Configure them in Expert mode first.
+                </div>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Run name</mat-label>
+                        <input matInput [(ngModel)]="runName" maxlength="100">
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Description</mat-label>
+                        <input matInput [(ngModel)]="runDescription" maxlength="500">
+                    </mat-form-field>
+                </div>
+                <div class="notice" *ngIf="assuranceProfileId">
+                    AssuranceProfile pin:
+                    <span class="mono">{{ assuranceProfileId }}</span>
+                </div>
+                <div class="scroll-x" *ngIf="audit.measurementPoints.length">
+                    <table class="assignment-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Use</th>
+                                <th scope="col">Point</th>
+                                <th scope="col">Measurement profile revision</th>
+                                <th scope="col">Baseline version</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr *ngFor="let point of audit.measurementPoints">
+                                <td>
+                                    <mat-checkbox
+                                        [checked]="flow.pointSelected(point.measurement_point_id)"
+                                        [disabled]="!flow.pointSelected(point.measurement_point_id) && flow.selectedPointIds.length >= 16"
+                                        (change)="togglePoint(point, $event.checked)">
+                                    </mat-checkbox>
+                                </td>
+                                <td>
+                                    <strong>{{ point.location_label }}</strong>
+                                    <div class="mono muted">{{ point.measurement_point_id }}</div>
+                                </td>
+                                <td>
+                                    <mat-form-field appearance="outline">
+                                        <mat-label>Profile</mat-label>
+                                        <mat-select
+                                            [disabled]="!flow.pointSelected(point.measurement_point_id)"
+                                            [ngModel]="profileByPoint[point.measurement_point_id]"
+                                            (ngModelChange)="profileChanged(point.measurement_point_id, $event)">
+                                            <mat-option
+                                                *ngFor="let profile of availableProfiles"
+                                                [value]="profileId(profile)">
+                                                {{ profile.name }} · {{ profile.version_id }}
+                                            </mat-option>
+                                        </mat-select>
+                                    </mat-form-field>
+                                </td>
+                                <td>
+                                    <mat-form-field appearance="outline">
+                                        <mat-label>Baseline</mat-label>
+                                        <mat-select
+                                            [disabled]="!flow.pointSelected(point.measurement_point_id)"
+                                            [ngModel]="baselineByPoint[point.measurement_point_id]"
+                                            (ngModelChange)="baselineChanged(point.measurement_point_id, $event)">
+                                            <mat-option
+                                                *ngFor="let baseline of availableBaselines"
+                                                [value]="baselineId(baseline)">
+                                                {{ baselineId(baseline) }}
+                                            </mat-option>
+                                        </mat-select>
+                                    </mat-form-field>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="actions">
+                    <button mat-button (click)="flow.selectedStep = 1">Back</button>
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="createRun()"
+                        [disabled]="!!audit.busyAction || !canCreateRun">
+                        Create immutable draft
+                    </button>
+                </div>
+                <mat-divider></mat-divider>
+                <strong>Continue an existing run</strong>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>AuditRun</mat-label>
+                        <mat-select [(ngModel)]="selectedRunId">
+                            <mat-option
+                                *ngFor="let item of audit.auditRuns"
+                                [value]="item.audit_run_id">
+                                {{ item.name }} · {{ item.status }} · revision {{ item.revision }}
+                            </mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <button
+                        mat-stroked-button
+                        (click)="openRun()"
+                        [disabled]="!!audit.busyAction || !selectedRunId">
+                        Open run
+                    </button>
+                </div>
+            </div>
+        </mat-step>
+
+        <mat-step label="4. Resolve and compare saved Recon">
+            <div class="guided-step stack">
+                <div *ngIf="flow.errors.measurement" class="error-banner" role="alert">
+                    {{ flow.errors.measurement }}
+                </div>
+                <div *ngIf="flow.messages.measurement" class="success-banner">
+                    {{ flow.messages.measurement }}
+                </div>
+                <div *ngIf="!run" class="empty-state">
+                    Open or create an AuditRun first.
+                </div>
+                <ng-container *ngIf="run">
+                    <div class="run-summary">
+                        <div>
+                            <div class="eyebrow">AuditRun</div>
+                            <h3>{{ run.name }}</h3>
+                            <span class="mono">{{ run.audit_run_id }}</span>
+                        </div>
+                        <div class="run-status">
+                            <span class="badge" [ngClass]="run.status">{{ run.status }}</span>
+                            <span class="mono">revision {{ run.revision }}</span>
+                        </div>
+                    </div>
+                    <div class="notice">
+                        Backend next action:
+                        <strong>{{ audit.workflow?.next_action || 'none' }}</strong>
+                    </div>
+                    <div class="measurement-progress" role="list">
+                        <div
+                            *ngFor="let measurement of audit.measurements"
+                            class="measurement-progress-item"
+                            role="listitem"
+                            [class.current]="currentMeasurement?.measurement_id === measurement.measurement_id">
+                            <span class="badge" [ngClass]="measurement.status">{{ measurement.status }}</span>
+                            <strong>{{ measurementPointName(measurement) }}</strong>
+                            <span class="mono">r{{ measurement.revision }}</span>
+                        </div>
+                    </div>
+                    <div class="actions" *ngIf="run.status === 'draft'">
+                        <button
+                            mat-flat-button
+                            color="accent"
+                            (click)="startRun()"
+                            [disabled]="!!audit.busyAction">
+                            Start run
+                        </button>
+                    </div>
+                    <mat-card *ngIf="currentMeasurement && run.status === 'in_progress'">
+                        <div class="card-title-row">
+                            <div>
+                                <div class="eyebrow">Current measurement</div>
+                                <h3>{{ currentPoint?.location_label || currentMeasurement.measurement_point_id }}</h3>
+                            </div>
+                            <span class="badge" [ngClass]="currentMeasurement.status">
+                                {{ currentMeasurement.status }}
+                            </span>
+                        </div>
+                        <div class="provenance-grid">
+                            <div>
+                                <span>Point</span>
+                                <strong class="mono">{{ currentMeasurement.measurement_point_id }}</strong>
+                            </div>
+                            <div>
+                                <span>Profile</span>
+                                <strong class="mono">{{ currentProvenance.measurement_profile_version_id || '—' }}</strong>
+                            </div>
+                            <div>
+                                <span>Baseline</span>
+                                <strong class="mono">{{ currentProvenance.baseline_version_id || '—' }}</strong>
+                            </div>
+                            <div>
+                                <span>Snapshot</span>
+                                <strong class="mono">{{ currentMeasurement.snapshot_id || 'not resolved' }}</strong>
+                            </div>
+                        </div>
+                        <div *ngIf="currentMeasurement.status === 'failed'" class="error-banner">
+                            <strong>{{ currentMeasurement.error_code || 'measurement_failed' }}</strong>
+                            — {{ currentMeasurement.error_message || 'The backend persisted a failed outcome.' }}
+                            <div>Retry target: {{ currentMeasurement.retry_target || 'backend-defined' }}</div>
+                        </div>
+                        <ng-container *ngIf="currentMeasurement.status === 'pending'">
+                            <p>
+                                Select an existing saved Recon result. PineAssure
+                                will not start, stop or configure a radio.
+                            </p>
+                            <div class="warning-banner" role="note">
+                                {{ savedScanProvenanceNotice }}
+                            </div>
+                            <div class="row">
+                                <mat-form-field appearance="outline">
+                                    <mat-label>Saved Recon scan</mat-label>
+                                    <mat-select
+                                        [ngModel]="flow.selectedScanByMeasurement[currentMeasurement.measurement_id]"
+                                        (ngModelChange)="selectSavedScan($event)">
+                                        <mat-option
+                                            *ngFor="let scan of pineai.scans"
+                                            [value]="'' + scan.scan_id">
+                                            Scan {{ scan.scan_id }} · {{ scan.date || 'time unavailable' }}
+                                        </mat-option>
+                                    </mat-select>
+                                </mat-form-field>
+                                <button mat-stroked-button (click)="refreshSavedScans()">
+                                    Refresh saved scans
+                                </button>
+                            </div>
+                            <div class="muted">
+                                {{ flow.rawScanCount() }} / 5 raw scans held in session memory.
+                            </div>
+                            <button
+                                mat-flat-button
+                                color="accent"
+                                (click)="resolveMeasurement()"
+                                [disabled]="!!audit.busyAction || resourceBlocked || !flow.selectedScan(currentMeasurement.measurement_id)">
+                                Resolve saved scan
+                            </button>
+                        </ng-container>
+                        <div class="actions" *ngIf="currentMeasurement.status === 'resolved'">
+                            <button
+                                mat-flat-button
+                                color="accent"
+                                (click)="saveComparison()"
+                                [disabled]="!!audit.busyAction">
+                                Save deterministic comparison
+                            </button>
+                        </div>
+                        <div class="actions" *ngIf="currentMeasurement.status === 'failed'">
+                            <button
+                                mat-flat-button
+                                color="accent"
+                                (click)="retryMeasurement()"
+                                [disabled]="!!audit.busyAction">
+                                Retry from safe stage
+                            </button>
+                        </div>
+                    </mat-card>
+                    <div class="terminal-controls" *ngIf="!terminalRun">
+                        <mat-checkbox [(ngModel)]="terminalConfirmed">
+                            I understand this seals the run and cannot be undone.
+                        </mat-checkbox>
+                        <div class="actions">
+                            <button
+                                mat-stroked-button
+                                color="warn"
+                                (click)="cancelRun()"
+                                [disabled]="!!audit.busyAction || !terminalConfirmed">
+                                Cancel and seal
+                            </button>
+                            <button
+                                mat-flat-button
+                                color="accent"
+                                (click)="completeRun()"
+                                [disabled]="!!audit.busyAction || !terminalConfirmed || !allMeasurementsComplete">
+                                Complete and seal
+                            </button>
+                        </div>
+                    </div>
+                    <div class="actions">
+                        <button mat-button (click)="flow.selectedStep = 2">Back</button>
+                        <button
+                            mat-flat-button
+                            color="accent"
+                            (click)="flow.selectedStep = 4"
+                            [disabled]="!terminalRun">
+                            Continue to report
+                        </button>
+                    </div>
+                </ng-container>
+            </div>
+        </mat-step>
+
+        <mat-step label="5. Deterministic report">
+            <div class="guided-step stack">
+                <p>
+                    JSON and script-free HTML are rendered from the sealed
+                    canonical fact model. Generating a report is read-only.
+                </p>
+                <div *ngIf="flow.errors.report" class="error-banner" role="alert">
+                    {{ flow.errors.report }}
+                </div>
+                <div *ngIf="flow.messages.report" class="success-banner">
+                    {{ flow.messages.report }}
+                </div>
+                <div class="row">
+                    <mat-form-field appearance="outline">
+                        <mat-label>Format</mat-label>
+                        <mat-select [(ngModel)]="reportFormat">
+                            <mat-option value="html">Script-free HTML</mat-option>
+                            <mat-option value="json">Canonical JSON</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                        <mat-label>Privacy profile</mat-label>
+                        <mat-select [(ngModel)]="privacyProfile">
+                            <mat-option value="local_full">Local full evidence</mat-option>
+                            <mat-option value="share_safe">Share-safe pseudonyms</mat-option>
+                        </mat-select>
+                    </mat-form-field>
+                </div>
+                <div class="actions">
+                    <button
+                        mat-flat-button
+                        color="accent"
+                        (click)="generateReport()"
+                        [disabled]="!!audit.busyAction || !terminalRun">
+                        Generate read-only report
+                    </button>
+                    <button
+                        mat-stroked-button
+                        (click)="downloadReport()"
+                        [disabled]="!reportResult">
+                        Download
+                    </button>
+                </div>
+                <mat-card *ngIf="reportResult">
+                    <div class="card-title-row">
+                        <div>
+                            <strong>{{ reportResult.filename || 'PineAssure report' }}</strong>
+                            <div class="mono">{{ reportResult.report_id || 'report id unavailable' }}</div>
+                        </div>
+                        <span class="badge">{{ reportFormat }}</span>
+                    </div>
+                    <div class="digest-list">
+                        <span>Fact digest</span>
+                        <code>{{ reportFactDigest || '—' }}</code>
+                        <span>Content SHA-256</span>
+                        <code>{{ reportResult.content_sha256 || '—' }}</code>
+                    </div>
+                </mat-card>
+            </div>
+        </mat-step>
+    </mat-vertical-stepper>
+</section>

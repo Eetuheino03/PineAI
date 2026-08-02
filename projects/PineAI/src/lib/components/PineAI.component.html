@@ -1,16 +1,16 @@
 <div class="pineai-shell">
     <mat-toolbar class="pineai-toolbar">
         <div class="brand">
-            <span class="pineai-title">PineAI</span>
-            <span class="pineai-subtitle">Wireless baseline and drift assurance</span>
+            <span class="pineai-title">PineAssure</span>
+            <span class="pineai-subtitle">Wireless assurance for WiFi Pineapple</span>
         </div>
         <span class="toolbar-spacer"></span>
-        <mat-chip-list aria-label="PineAI status">
+        <mat-chip-list aria-label="PineAssure status">
             <mat-chip [class.status-ok]="pineai.health?.status === 'ok'">
                 Backend {{ pineai.health?.version || '—' }}
             </mat-chip>
-            <mat-chip [class.status-ok]="pineai.settings?.api_key_configured">
-                {{ pineai.settings?.api_key_configured ? 'AI optional' : 'Offline ready' }}
+            <mat-chip class="status-ok">
+                Deterministic · offline
             </mat-chip>
         </mat-chip-list>
     </mat-toolbar>
@@ -18,7 +18,7 @@
     <div *ngIf="startupError" class="startup-error" role="alert">
         <mat-icon>error_outline</mat-icon>
         <div>
-            <strong>PineAI backend is unavailable.</strong>
+            <strong>PineAssure backend is unavailable.</strong>
             <div>{{ startupError }}</div>
             <p>The application only blocks when the core module backend cannot answer.</p>
         </div>
@@ -27,17 +27,17 @@
 
     <div *ngIf="pineai.initializing" class="loading-state" aria-live="polite">
         <mat-spinner diameter="42"></mat-spinner>
-        <p>Loading Baseline &amp; Drift…</p>
+        <p>Loading PineAssure…</p>
     </div>
 
     <div *ngIf="pineai.initialized">
         <div class="mode-bar">
             <mat-button-toggle-group
                 [(ngModel)]="mode"
-                aria-label="PineAI operating mode">
+                aria-label="PineAssure operating mode">
                 <mat-button-toggle value="guided">
-                    <mat-icon>assistant</mat-icon>
-                    Guided
+                    <mat-icon>fact_check</mat-icon>
+                    Field audit
                 </mat-button-toggle>
                 <mat-button-toggle value="expert">
                     <mat-icon>dashboard</mat-icon>
@@ -46,8 +46,8 @@
             </mat-button-toggle-group>
             <span class="mode-help">
                 {{ mode === 'guided'
-                    ? 'Explicit checkpoints for a complete assessment'
-                    : 'Direct access to all nine specialist views' }}
+                    ? 'Repeatable points, immutable provenance and deterministic reports'
+                    : 'Baseline & Drift specialist views' }}
             </span>
         </div>
 
@@ -69,9 +69,9 @@
             </div>
         </div>
 
-        <lib-pineai-guided-assessment
+        <lib-pineai-repeatable-audit
             [hidden]="mode !== 'guided'">
-        </lib-pineai-guided-assessment>
+        </lib-pineai-repeatable-audit>
 
         <mat-tab-group
             [hidden]="mode !== 'expert'"
