@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
-"""Workstation-only RepeatableAuditStore benchmark workloads."""
+"""Workstation-only PineAssure RepeatableAuditStore benchmarks.
 
+The workloads use the production v0.7 split-document store and immutable
+MeasurementPoint, MeasurementProfile, baseline, and AssuranceProfile pins.
+Results are observational software measurements.  They are not Mark VII
+hardware calibration or proof of Hak5 runtime protocol compatibility.
+"""
+
+import datetime
 import json
+import math
 import os
 import re
 import stat
@@ -17,15 +25,15 @@ ASSETS = ROOT / "projects" / "PineAI" / "src" / "assets"
 if str(ASSETS) not in sys.path:
     sys.path.insert(0, str(ASSETS))
 
-from pineai_backend.assessment_store import (  # noqa: E402
-    _canonical_digest,
-)
+from pineai_backend import __version__  # noqa: E402
 from pineai_backend.assurance_service import AssuranceService  # noqa: E402
 from pineai_backend.config import ensure_pseudonymization_key  # noqa: E402
+from pineai_backend.customer_analysis import evidence_records  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
 from pineai_backend.repeatable_audit_store import (  # noqa: E402
     MAX_ACTIVE_MEASUREMENT_POINTS,
     MAX_AUDIT_RUNS_PER_ASSESSMENT,
+    MAX_MEASUREMENT_POINTS_PER_RUN,
     MAX_TOTAL_MEASUREMENT_POINT_RECORDS,
     RepeatableAuditStore,
 )
@@ -33,9 +41,10 @@ from pineai_backend.repeatable_audit_store import (  # noqa: E402
 
 ERROR_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 SCENARIOS = {"minimal", "realistic", "frozen-limit"}
-FROZEN_ACTIVE_MEASUREMENT_POINTS = 64
-FROZEN_TOTAL_MEASUREMENT_POINT_RECORDS = 90
-FROZEN_AUDIT_RUNS_PER_ASSESSMENT = 128
+FROZEN_ACTIVE_MEASUREMENT_POINTS = 16
+FROZEN_TOTAL_MEASUREMENT_POINT_RECORDS = 32
+FROZEN_MEASUREMENTS_PER_RUN = 16
+FROZEN_AUDIT_RUNS_PER_ASSESSMENT = 32
 MAX_SCENARIO_ITERATIONS = {
     "minimal": 100,
     "realistic": 20,
@@ -44,7 +53,7 @@ MAX_SCENARIO_ITERATIONS = {
 
 
 class ScenarioAbort(Exception):
-    pass
+    """Stop a workload after recording a fixed-code violation."""
 
 
 def _percentile(values: List[float], percentile: int) -> float:
@@ -53,12 +62,7 @@ def _percentile(values: List[float], percentile: int) -> float:
     ordered = sorted(values)
     index = max(
         0,
-        int(
-            __import__("math").ceil(
-                (float(percentile) / 100.0) * len(ordered)
-            )
-        )
-        - 1,
+        int(math.ceil((float(percentile) / 100.0) * len(ordered))) - 1,
     )
     return float(ordered[index])
 
@@ -156,9 +160,7 @@ def _expected_failure(
             metrics.record(name, elapsed, "expected_failure", code)
             return
         metrics.record(name, elapsed, "failure", code)
-        violations.append(
-            "unexpected_error_code:{0}:{1}".format(name, code)
-        )
+        violations.append("unexpected_error_code:{0}:{1}".format(name, code))
         raise ScenarioAbort()
     elapsed = (time.monotonic_ns() - started) / 1e6
     metrics.record(name, elapsed, "failure", "expected_failure_missing")
@@ -167,8 +169,6 @@ def _expected_failure(
 
 
 def _utc_now() -> str:
-    import datetime
-
     return (
         datetime.datetime.now(datetime.timezone.utc)
         .isoformat()
@@ -176,42 +176,23 @@ def _utc_now() -> str:
     )
 
 
+def _fixture_time(index: int) -> str:
+    start = datetime.datetime(
+        2026, 7, 31, 8, 0, 0, tzinfo=datetime.timezone.utc
+    )
+    return (start + datetime.timedelta(minutes=index)).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+
 def _current_revision(store: RepeatableAuditStore, assessment_id: str) -> int:
     return store.get(assessment_id, 0, 1)["revision"]
-
-
-def _assurance_profile() -> Dict[str, Any]:
-    return {
-        "title": "Benchmark assurance",
-        "description": "Deterministic workstation benchmark",
-        "rules": [
-            {
-                "rule_id": "open_ssid_detected",
-                "severity": "high",
-                "enabled": True,
-            }
-        ],
-    }
-
-
-def _measurement_context() -> Dict[str, Any]:
-    return {
-        "location_id": "benchmark-site",
-        "scan_profile_id": "saved-recon",
-        "radio_profile_id": "benchmark-radio",
-        "interface": "benchmark0",
-        "declared_bands": ["2.4"],
-        "declared_channels": [1, 6, 11],
-        "scan_time": 180,
-    }
 
 
 def _measurement_profile_input() -> Dict[str, Any]:
     return {
         "name": "Benchmark measurement",
         "description": "Saved Recon benchmark profile",
-        "location_id": "benchmark-site",
-        "measurement_point_id": "benchmark-point",
         "scan_profile_id": "saved-recon",
         "radio_profile_id": "benchmark-radio",
         "interface": "benchmark0",
@@ -228,23 +209,30 @@ def _recon_scan() -> Dict[str, Any]:
     return json.loads(fixture.read_text(encoding="utf-8"))
 
 
-def _scan_metadata(profile: Dict[str, Any], hour: int) -> Dict[str, Any]:
-    version = profile["active_version"]
+def _scan_metadata(
+    assessment_id: str,
+    point_id: str,
+    measurement_profile: Dict[str, Any],
+    index: int,
+) -> Dict[str, Any]:
+    version = measurement_profile["active_version"]
     return {
-        "scan_id": "benchmark-scan-{0}".format(hour),
-        "date": "2026-07-31T{0:02d}:00:00Z".format(hour),
+        "scan_id": "benchmark-scan-{0:03d}".format(index),
+        "date": _fixture_time(index),
         "scan_time": 180,
         "coverage": ["2.4"],
         "source": "hak5_recon",
         "measurement_context": {
-            "location_id": "benchmark-site",
-            "measurement_point_id": "benchmark-point",
+            "location_id": assessment_id,
+            "measurement_point_id": point_id,
             "scan_profile_id": "saved-recon",
             "radio_profile_id": "benchmark-radio",
             "interface": "benchmark0",
             "declared_bands": ["2.4"],
             "declared_channels": [1, 6, 11],
-            "measurement_profile_id": profile["measurement_profile_id"],
+            "measurement_profile_id": measurement_profile[
+                "measurement_profile_id"
+            ],
             "measurement_profile_version_id": version["version_id"],
             "measurement_profile_digest": version["digest"],
         },
@@ -261,13 +249,16 @@ def _inventory_csv() -> str:
     )
 
 
-def _prepare_native_artifacts(
+def _prepare_native_environment(
     config_dir: str,
+    point_count: int,
     metrics: OperationMetrics,
     violations: List[str],
 ) -> Dict[str, Any]:
+    ensure_pseudonymization_key(config_dir)
     service = AssuranceService(config_dir=config_dir)
-    measurement_profile = _required(
+    store = RepeatableAuditStore(config_dir)
+    profile = _required(
         metrics,
         violations,
         "create_measurement_profile",
@@ -279,33 +270,46 @@ def _prepare_native_artifacts(
         metrics,
         violations,
         "create_assessment",
-        lambda: service.create_assessment(
+        lambda: store.create(
             {"name": "Benchmark", "location": "Lab", "notes": ""}
         ),
     )
     assessment_id = assessment["assessment_id"]
-    baseline = _required(
-        metrics,
-        violations,
-        "create_baseline",
-        lambda: service.create_baseline_version(
-            assessment_id,
-            assessment["revision"],
-            _recon_scan(),
-            _scan_metadata(measurement_profile, 10),
-            "Benchmark baseline",
-        ),
-    )
-    assessment = _required(
-        metrics,
-        violations,
-        "activate_baseline",
-        lambda: service.store.activate_baseline_version(
-            assessment_id,
-            baseline["assessment"]["revision"],
-            baseline["baseline_version"]["baseline_version_id"],
-        )["assessment"],
-    )
+    points = []
+    baselines = []
+    for index in range(point_count):
+        point = _required(
+            metrics,
+            violations,
+            "create_measurement_point",
+            lambda index=index: store.create_measurement_point(
+                assessment_id,
+                _current_revision(store, assessment_id),
+                "Benchmark point {0}".format(index + 1),
+                "Fixed workstation workload point",
+                "Load an existing saved Recon result",
+            ),
+        )["measurement_point"]
+        points.append(point)
+        baseline = _required(
+            metrics,
+            violations,
+            "create_baseline",
+            lambda index=index, point=point: service.create_baseline_version(
+                assessment_id,
+                _current_revision(store, assessment_id),
+                _recon_scan(),
+                _scan_metadata(
+                    assessment_id,
+                    point["measurement_point_id"],
+                    profile,
+                    index,
+                ),
+                "Benchmark baseline {0}".format(index + 1),
+            ),
+        )["baseline_version"]
+        baselines.append(baseline)
+
     inventory = _required(
         metrics,
         violations,
@@ -318,170 +322,109 @@ def _prepare_native_artifacts(
         "create_assurance_profile",
         lambda: service.create_assurance_profile_version(
             assessment_id,
-            assessment["revision"],
+            _current_revision(store, assessment_id),
             "Benchmark inventory",
             inventory_preview=inventory,
             coverage_mode="partial",
         ),
-    )
-    assessment = _required(
-        metrics,
-        violations,
-        "activate_assurance_profile",
-        lambda: service.activate_assurance_profile_version(
-            assessment_id,
-            assurance["assessment"]["revision"],
-            assurance["assurance_profile_version"][
-                "assurance_profile_version_id"
-            ],
-            False,
-        )["assessment"],
-    )
-    current_scan = _recon_scan()
-    current_scan["APResults"][0]["channel"] = 6
-    metadata = _scan_metadata(measurement_profile, 11)
-    preview = _required(
-        metrics,
-        violations,
-        "compare_recon",
-        lambda: service.compare_recon(
-            assessment_id, current_scan, metadata
-        ),
-    )
-    persisted = _required(
-        metrics,
-        violations,
-        "analyze_recon",
-        lambda: service.analyze_recon(
-            assessment_id,
-            assessment["revision"],
-            current_scan,
-            metadata,
-        ),
-    )
-    occurrence = service.store.get_occurrence_set(
-        assessment_id, persisted["comparison"]["comparison_id"]
-    )
-    baseline_record = service.store.get_baseline_version(
-        assessment_id,
-        baseline["baseline_version"]["baseline_version_id"],
-    )
+    )["assurance_profile_version"]
     return {
-        "store": RepeatableAuditStore(config_dir),
+        "service": service,
+        "store": store,
         "assessment_id": assessment_id,
-        "source_recon_id": "benchmark-scan-11",
-        "measurement_profile": measurement_profile,
-        "assurance_profile_version_id": assurance[
-            "assurance_profile_version"
-        ]["assurance_profile_version_id"],
-        "baseline": baseline_record,
-        "preview": preview,
-        "persisted": persisted,
-        "occurrence": occurrence,
+        "measurement_profile": profile,
+        "measurement_points": points,
+        "baselines": baselines,
+        "assurance_profile": assurance,
     }
 
 
-def _prepare_additional_native_artifact(
-    config_dir: str,
-    native: Dict[str, Any],
-    index: int,
-    metrics: OperationMetrics,
-    violations: List[str],
+def _assignments(native: Dict[str, Any]) -> List[Dict[str, str]]:
+    profile = native["measurement_profile"]
+    version = profile["active_version"]
+    return [
+        {
+            "measurement_point_id": point["measurement_point_id"],
+            "measurement_profile_id": profile["measurement_profile_id"],
+            "measurement_profile_version_id": version["version_id"],
+            "baseline_version_id": baseline["baseline_version_id"],
+        }
+        for point, baseline in zip(
+            native["measurement_points"], native["baselines"]
+        )
+    ]
+
+
+def _audit_run_input(
+    native: Dict[str, Any], name: str, assignments: List[Dict[str, str]]
 ) -> Dict[str, Any]:
-    service = AssuranceService(config_dir=config_dir)
-    assessment_id = native["assessment_id"]
-    current_scan = json.loads(json.dumps(_recon_scan()))
-    current_scan["APResults"][0]["channel"] = [1, 6, 11][index % 3]
-    current_scan["APResults"][0]["signal"] = -41 - index
-    current_scan["APResults"][0]["last_seen"] = (
-        "2026-07-31T{0:02d}:00:00Z".format(11 + index)
-    )
-    metadata = _scan_metadata(native["measurement_profile"], 11 + index)
-    preview = _required(
-        metrics,
-        violations,
-        "compare_recon",
-        lambda: service.compare_recon(
-            assessment_id, current_scan, metadata
-        ),
-    )
-    persisted = _required(
-        metrics,
-        violations,
-        "analyze_recon",
-        lambda: service.analyze_recon(
-            assessment_id,
-            service.store.get(assessment_id, 0, 1)["revision"],
-            current_scan,
-            metadata,
-        ),
-    )
-    occurrence = service.store.get_occurrence_set(
-        assessment_id, persisted["comparison"]["comparison_id"]
-    )
     return {
-        "store": RepeatableAuditStore(config_dir),
-        "assessment_id": assessment_id,
-        "source_recon_id": metadata["scan_id"],
-        "measurement_profile": native["measurement_profile"],
-        "assurance_profile_version_id": native[
+        "name": name,
+        "description": "Deterministic workstation benchmark",
+        "due_at": None,
+        "assurance_profile_version_id": native["assurance_profile"][
             "assurance_profile_version_id"
         ],
-        "baseline": native["baseline"],
-        "preview": preview,
-        "persisted": persisted,
-        "occurrence": occurrence,
+        "assignments": assignments,
     }
 
 
-def _resolved_outcome(native: Dict[str, Any]) -> Dict[str, Any]:
-    snapshot = native["preview"]["current_snapshot"]
-    baseline = native["baseline"]
-    pins = native["persisted"]["comparison"]["pinned_versions"]
-    record = {
-        key: value
-        for key, value in baseline.items()
-        if key not in {"snapshot", "is_active", "baseline_type", "legacy"}
-    }
+def _occurrence_input(preview: Dict[str, Any]) -> Dict[str, Any]:
+    baseline = preview["baseline"]
+    limitations = list(
+        baseline.get("baseline_model", {}).get("limitation_codes", [])
+    )
+    if baseline.get("legacy"):
+        limitations.append("legacy_single_scan_baseline")
     return {
-        "status": "resolved",
-        "source_recon_id": native["source_recon_id"],
-        "snapshot_id": snapshot["snapshot_id"],
-        "snapshot_digest": snapshot["snapshot_digest"],
-        "measurement_profile_id": pins["measurement_profile_id"],
-        "measurement_profile_version_id": pins[
-            "measurement_profile_version_id"
-        ],
-        "measurement_profile_digest": pins["measurement_profile_digest"],
-        "baseline_version_id": pins["baseline_version_id"],
-        "baseline_type": "single_scan",
-        "baseline_snapshot_id": baseline["snapshot_id"],
-        "baseline_snapshot_digest": baseline["snapshot_digest"],
-        "baseline_record_digest": _canonical_digest(record),
-        "assurance_profile_version_id": pins[
-            "assurance_profile_version_id"
-        ],
-        "assurance_profile_digest": pins["assurance_profile_digest"],
-        "comparability_status": native["preview"]["diff"][
-            "comparability"
-        ]["status"],
-        "resolved_at": _utc_now(),
+        "observed_changes": preview["observed_changes"],
+        "inventory_reconciliation": preview["inventory_reconciliation"],
+        "policy_deviations": preview["policy_deviations"],
+        "security_findings": preview["security_findings"],
+        "policy_evaluation_status": preview["policy_evaluation_status"],
+        "lifecycle_findings": preview["lifecycle_findings"],
+        "evidence": evidence_records(
+            baseline, preview["current_snapshot"]
+        ),
+        "quality_factors": preview["diff"]["comparability"].get(
+            "quality_factors", []
+        ),
+        "policy_reference": {
+            "assurance_profile_version_id": preview["pinned_versions"].get(
+                "assurance_profile_version_id"
+            ),
+            "assurance_profile_digest": preview["pinned_versions"].get(
+                "assurance_profile_digest"
+            ),
+        },
+        "limitations": sorted(set(limitations)),
     }
 
 
-def _completed_outcome(native: Dict[str, Any]) -> Dict[str, Any]:
-    comparison = native["persisted"]["comparison"]
-    evidence_ids = [
-        item["evidence_id"] for item in native["occurrence"]["evidence"]
-    ][:100]
-    return {
-        "status": "completed",
-        "comparison_id": comparison["comparison_id"],
-        "comparison_digest": _canonical_digest(comparison),
-        "occurrence_set_id": comparison["occurrence_set_id"],
-        "evidence_ids": evidence_ids,
-        "completed_at": _utc_now(),
-    }
+def _current_snapshot_and_preview(
+    native: Dict[str, Any], measurement: Dict[str, Any], index: int
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    scan = _recon_scan()
+    scan["APResults"][0]["channel"] = [1, 6, 11][index % 3]
+    scan["APResults"][0]["signal"] = -41 - index
+    scan["APResults"][0]["last_seen"] = _fixture_time(100 + index)
+    metadata = _scan_metadata(
+        native["assessment_id"],
+        measurement["measurement_point_id"],
+        native["measurement_profile"],
+        100 + index,
+    )
+    snapshot = native["service"].resolve_recon(scan, metadata)["snapshot"]
+    preview = native["service"].comparison_for_pinned_versions(
+        native["assessment_id"],
+        snapshot,
+        measurement["baseline_version_id"],
+        measurement["assurance_profile_version_id"],
+        measurement["measurement_profile_id"],
+        measurement["measurement_profile_version_id"],
+        measurement["measurement_profile_digest"],
+    )
+    return snapshot, preview
 
 
 def _tree_snapshot(root: Path) -> Dict[str, int]:
@@ -491,8 +434,7 @@ def _tree_snapshot(root: Path) -> Dict[str, int]:
     for current, directories, files in os.walk(str(root), followlinks=False):
         current_path = Path(current)
         for name in list(directories):
-            path = current_path / name
-            metadata = path.lstat()
+            metadata = (current_path / name).lstat()
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(
                 metadata.st_mode
             ):
@@ -518,42 +460,29 @@ def _proc_io() -> Optional[Dict[str, int]]:
             key, raw = line.split(":", 1)
             if key in {"write_bytes", "syscw"}:
                 values[key] = int(raw.strip())
-        if set(values) != {"write_bytes", "syscw"}:
-            return None
-        return values
+        return values if set(values) == {"write_bytes", "syscw"} else None
     except (OSError, UnicodeError, ValueError):
         return None
 
 
-def _rss_mib() -> float:
+def _rss_mib(kind: str = "VmRSS:") -> float:
     try:
         for line in Path("/proc/self/status").read_text(
             encoding="ascii"
         ).splitlines():
-            if line.startswith("VmRSS:"):
+            if line.startswith(kind):
                 return float(line.split()[1]) / 1024.0
     except (OSError, UnicodeError, ValueError):
         pass
     return 0.0
 
 
-def _peak_rss_mib() -> float:
-    try:
-        for line in Path("/proc/self/status").read_text(
-            encoding="ascii"
-        ).splitlines():
-            if line.startswith("VmHWM:"):
-                return float(line.split()[1]) / 1024.0
-    except (OSError, UnicodeError, ValueError):
-        pass
-    return _rss_mib()
-
-
 def _document_sizes(config_root: Path) -> Dict[str, int]:
     categories = {
         "measurement_points_max": 0,
-        "audit_run_max": 0,
+        "audit_run_index_max": 0,
         "audit_run_manifest_max": 0,
+        "audit_measurement_max": 0,
         "events_max": 0,
         "document_max": 0,
     }
@@ -562,8 +491,7 @@ def _document_sizes(config_root: Path) -> Dict[str, int]:
     ):
         current_path = Path(current)
         for name in list(directories):
-            metadata = (current_path / name).lstat()
-            if stat.S_ISLNK(metadata.st_mode):
+            if (current_path / name).is_symlink():
                 raise ScenarioAbort()
         for name in files:
             path = current_path / name
@@ -573,29 +501,20 @@ def _document_sizes(config_root: Path) -> Dict[str, int]:
             ):
                 raise ScenarioAbort()
             size = metadata.st_size
-            categories["document_max"] = max(
-                categories["document_max"], size
-            )
+            categories["document_max"] = max(categories["document_max"], size)
             if name == "measurement_points.json":
-                categories["measurement_points_max"] = max(
-                    categories["measurement_points_max"], size
-                )
+                key = "measurement_points_max"
             elif name == "audit_runs_manifest.json":
-                categories["audit_run_manifest_max"] = max(
-                    categories["audit_run_manifest_max"], size
-                )
+                key = "audit_run_index_max"
+            elif name == "manifest.json" and current_path.name.startswith("ar_"):
+                key = "audit_run_manifest_max"
+            elif current_path.name == "measurements" and name.endswith(".json"):
+                key = "audit_measurement_max"
             elif name == "events.jsonl":
-                categories["events_max"] = max(
-                    categories["events_max"], size
-                )
-            elif (
-                current_path.name == "audit_runs"
-                and name.startswith("ar_")
-                and name.endswith(".json")
-            ):
-                categories["audit_run_max"] = max(
-                    categories["audit_run_max"], size
-                )
+                key = "events_max"
+            else:
+                continue
+            categories[key] = max(categories[key], size)
     return categories
 
 
@@ -611,10 +530,15 @@ def _transaction_residue(config_root: Path) -> int:
 def _capacity_snapshot(
     store: RepeatableAuditStore,
     assessment_id: str,
-    capacity: Dict[str, Any],
     metrics: OperationMetrics,
     violations: List[str],
 ) -> Dict[str, Any]:
+    capacity = _required(
+        metrics,
+        violations,
+        "capacity",
+        lambda: store.get_assessment_capacity(assessment_id),
+    )
     points = _required(
         metrics,
         violations,
@@ -627,16 +551,12 @@ def _capacity_snapshot(
         metrics,
         violations,
         "capacity_audit_runs",
-        lambda: store.list_audit_runs(
-            assessment_id, limit=100, offset=0
-        ),
+        lambda: store.list_audit_runs(assessment_id, limit=100, offset=0),
     )
     result = dict(capacity)
     result.update(
         {
-            "measurement_point_active_limit": (
-                MAX_ACTIVE_MEASUREMENT_POINTS
-            ),
+            "measurement_point_active_limit": MAX_ACTIVE_MEASUREMENT_POINTS,
             "measurement_point_active_used": sum(
                 1
                 for point in points["measurement_points"]
@@ -646,6 +566,7 @@ def _capacity_snapshot(
                 MAX_TOTAL_MEASUREMENT_POINT_RECORDS
             ),
             "measurement_point_total_used": points["total"],
+            "assignments_per_run_limit": MAX_MEASUREMENT_POINTS_PER_RUN,
             "audit_run_limit": MAX_AUDIT_RUNS_PER_ASSESSMENT,
             "audit_run_used": runs["total"],
         }
@@ -658,60 +579,29 @@ def _minimal_workload(
     metrics: OperationMetrics,
     violations: List[str],
 ) -> Tuple[Dict[str, Any], Dict[str, Optional[float]]]:
-    ensure_pseudonymization_key(config_dir)
-    store = RepeatableAuditStore(config_dir)
-    assessment = _required(
-        metrics,
-        violations,
-        "create_assessment",
-        lambda: store.create(
-            {"name": "Minimal", "location": "Lab", "notes": ""}
-        ),
-    )
-    aid = assessment["assessment_id"]
-    profile = _required(
-        metrics,
-        violations,
-        "create_assurance_profile",
-        lambda: store.create_assurance_profile_version(
-            aid, 1, _assurance_profile()
-        ),
-    )
-    version_id = profile["assurance_profile_version"][
-        "assurance_profile_version_id"
-    ]
-    _required(
-        metrics,
-        violations,
-        "activate_assurance_profile",
-        lambda: store.activate_assurance_profile_version(
-            aid, 2, version_id
-        ),
-    )
-    point = _required(
-        metrics,
-        violations,
-        "create_measurement_point",
-        lambda: store.create_measurement_point(
-            aid, 3, _measurement_context(), "Point"
-        ),
-    )
-    point_id = point["measurement_point"]["measurement_point_id"]
-    audit = _required(
+    native = _prepare_native_environment(config_dir, 1, metrics, violations)
+    store = native["store"]
+    aid = native["assessment_id"]
+    created = _required(
         metrics,
         violations,
         "create_audit_run",
         lambda: store.create_audit_run(
-            aid, 4, "Run", version_id, [point_id]
+            aid,
+            _current_revision(store, aid),
+            _audit_run_input(native, "Minimal run", _assignments(native)),
         ),
     )
-    run = audit["audit_run"]
+    run = created["audit_run"]
     started = _required(
         metrics,
         violations,
         "start_audit_run",
         lambda: store.start_audit_run(
-            aid, 5, run["audit_run_id"], run["revision"]
+            aid,
+            _current_revision(store, aid),
+            run["audit_run_id"],
+            run["revision"],
         ),
     )
     _required(
@@ -720,12 +610,14 @@ def _minimal_workload(
         "cancel_audit_run",
         lambda: store.cancel_audit_run(
             aid,
-            6,
+            _current_revision(store, aid),
             run["audit_run_id"],
             started["audit_run"]["revision"],
+            "benchmark terminal transition",
         ),
     )
-    reopened_started = time.monotonic_ns()
+
+    reopen_started = time.monotonic_ns()
     reopened = RepeatableAuditStore(config_dir)
     _required(
         metrics,
@@ -733,7 +625,7 @@ def _minimal_workload(
         "reopen_read",
         lambda: reopened.get_audit_run(aid, run["audit_run_id"]),
     )
-    reopen_ms = (time.monotonic_ns() - reopened_started) / 1e6
+    reopen_ms = (time.monotonic_ns() - reopen_started) / 1e6
 
     armed = [True]
 
@@ -742,59 +634,32 @@ def _minimal_workload(
             armed[0] = False
             raise RuntimeError("benchmark fault")
 
+    before = reopened.get(aid, 0, 1)
     crashing = RepeatableAuditStore(config_dir, fault_injector=fault)
-    before_recovery = reopened.get(aid, 0, 1)
-    expected_recovery_revision = before_recovery["revision"] + 1
-    expected_recovery_event_sequence = (
-        before_recovery["last_event_sequence"] + 1
-    )
     try:
-        crashing.update(
-            aid,
-            before_recovery["revision"],
-            {"name": "Recovered"},
-        )
+        crashing.update(aid, before["revision"], {"name": "Recovered"})
         violations.append("fault_injection_missing")
     except RuntimeError:
         pass
     except BaseException as error:
-        violations.append(
-            "fault_injection_error:{0}".format(_error_code(error))
-        )
+        violations.append("fault_injection_error:{0}".format(_error_code(error)))
     recovery_started = time.monotonic_ns()
     recovered = RepeatableAuditStore(config_dir)
     recovered_assessment = _required(
         metrics,
         violations,
         "recovery_read",
-        lambda: recovered.get(
-            aid, expected_recovery_event_sequence - 1, 1
-        ),
+        lambda: recovered.get(aid, before["last_event_sequence"], 1),
     )
     recovery_ms = (time.monotonic_ns() - recovery_started) / 1e6
     if (
         recovered_assessment.get("name") != "Recovered"
-        or recovered_assessment.get("revision")
-        != expected_recovery_revision
-        or recovered_assessment.get("last_event_sequence")
-        != expected_recovery_event_sequence
-        or not recovered_assessment.get("events")
-        or recovered_assessment["events"][-1].get("event_type")
-        != "assessment_updated"
+        or recovered_assessment.get("revision") != before["revision"] + 1
     ):
         violations.append("recovery_state_mismatch")
     if _transaction_residue(Path(config_dir)):
         violations.append("recovery_transaction_residue")
-    capacity = _required(
-        metrics,
-        violations,
-        "capacity",
-        lambda: recovered.get_assessment_capacity(aid),
-    )
-    capacity = _capacity_snapshot(
-        recovered, aid, capacity, metrics, violations
-    )
-    return capacity, {
+    return _capacity_snapshot(recovered, aid, metrics, violations), {
         "reopen_ms": reopen_ms,
         "recovery_ms": recovery_ms,
     }
@@ -805,51 +670,20 @@ def _realistic_workload(
     metrics: OperationMetrics,
     violations: List[str],
 ) -> Tuple[Dict[str, Any], Dict[str, Optional[float]]]:
-    native = _prepare_native_artifacts(config_dir, metrics, violations)
-    native_artifacts = [native]
-    for index in range(1, 8):
-        native_artifacts.append(
-            _prepare_additional_native_artifact(
-                config_dir, native, index, metrics, violations
-            )
-        )
-    if len(
-        {
-            item["persisted"]["comparison"]["comparison_id"]
-            for item in native_artifacts
-        }
-    ) != 8:
-        violations.append("realistic_comparison_reuse")
+    native = _prepare_native_environment(config_dir, 8, metrics, violations)
     store = native["store"]
     aid = native["assessment_id"]
-    version_id = native["assurance_profile_version_id"]
-    point_ids = []
-    for _index in range(8):
-        point = _required(
-            metrics,
-            violations,
-            "create_measurement_point",
-            lambda: store.create_measurement_point(
-                aid,
-                _current_revision(store, aid),
-                _measurement_context(),
-                "Point",
-            ),
-        )
-        point_ids.append(point["measurement_point"]["measurement_point_id"])
-    audit = _required(
+    created = _required(
         metrics,
         violations,
         "create_audit_run",
         lambda: store.create_audit_run(
             aid,
             _current_revision(store, aid),
-            "Realistic run",
-            version_id,
-            point_ids,
+            _audit_run_input(native, "Realistic run", _assignments(native)),
         ),
     )
-    run = audit["audit_run"]
+    run = created["audit_run"]
     started = _required(
         metrics,
         violations,
@@ -862,40 +696,80 @@ def _realistic_workload(
         ),
     )
     run_revision = started["audit_run"]["revision"]
-    for point_id, artifact in zip(point_ids, native_artifacts):
+    measurements = created["measurements"]
+
+    for index, initial in enumerate(measurements):
+        snapshot, preview = _required(
+            metrics,
+            violations,
+            "build_native_preview",
+            lambda index=index, initial=initial: _current_snapshot_and_preview(
+                native, initial, index
+            ),
+        )
         resolved = _required(
             metrics,
             violations,
             "resolve_measurement",
-            lambda point_id=point_id, run_revision=run_revision: (
+            lambda initial=initial, snapshot=snapshot, preview=preview: (
                 store.resolve_audit_measurement(
                     aid,
                     _current_revision(store, aid),
                     run["audit_run_id"],
                     run_revision,
-                    point_id,
-                    _resolved_outcome(artifact),
+                    initial["measurement_id"],
+                    initial["revision"],
+                    snapshot={
+                        "document": snapshot,
+                        "comparability_status": preview["diff"][
+                            "comparability"
+                        ]["status"],
+                        "resolved_at": _utc_now(),
+                        "source_recon_id": snapshot["scan_metadata"]["scan_id"],
+                    },
                 )
             ),
         )
         run_revision = resolved["audit_run"]["revision"]
-        completed = _required(
+        resolved_measurement = resolved["measurement"]
+        analysis = _required(
+            metrics,
+            violations,
+            "build_measurement_analysis",
+            lambda preview=preview, resolved_measurement=resolved_measurement: (
+                store.build_audit_measurement_analysis(
+                    aid,
+                    _current_revision(store, aid),
+                    run["audit_run_id"],
+                    run_revision,
+                    resolved_measurement["measurement_id"],
+                    resolved_measurement["revision"],
+                    preview["diff"],
+                    preview["lifecycle_findings"],
+                    _occurrence_input(preview),
+                    completed_at=_utc_now(),
+                )
+            ),
+        )
+        saved = _required(
             metrics,
             violations,
             "save_comparison",
-            lambda point_id=point_id, run_revision=run_revision: (
+            lambda analysis=analysis, resolved_measurement=resolved_measurement: (
                 store.save_audit_measurement_comparison(
                     aid,
                     _current_revision(store, aid),
                     run["audit_run_id"],
                     run_revision,
-                    point_id,
-                    _completed_outcome(artifact),
+                    resolved_measurement["measurement_id"],
+                    resolved_measurement["revision"],
+                    analysis=analysis,
                 )
             ),
         )
-        run_revision = completed["audit_run"]["revision"]
-    completed_run = _required(
+        run_revision = saved["audit_run"]["revision"]
+
+    completed = _required(
         metrics,
         violations,
         "complete_audit_run",
@@ -906,35 +780,23 @@ def _realistic_workload(
             run_revision,
         ),
     )
-    reopened_started = time.monotonic_ns()
+    reopen_started = time.monotonic_ns()
     reopened = RepeatableAuditStore(config_dir)
-    reopened_run = _required(
+    detail = _required(
         metrics,
         violations,
         "reopen_read",
         lambda: reopened.get_audit_run(aid, run["audit_run_id"]),
     )
-    reopen_ms = (time.monotonic_ns() - reopened_started) / 1e6
+    reopen_ms = (time.monotonic_ns() - reopen_started) / 1e6
     if (
-        completed_run["audit_run"].get("status") != "completed"
-        or reopened_run["audit_run"].get("status") != "completed"
-        or len(reopened_run.get("measurements", [])) != 8
-        or any(
-            measurement.get("status") != "completed"
-            for measurement in reopened_run.get("measurements", [])
-        )
+        completed["audit_run"].get("status") != "completed"
+        or detail["audit_run"].get("status") != "completed"
+        or len(detail.get("measurements", [])) != 8
+        or any(item.get("status") != "completed" for item in detail["measurements"])
     ):
         violations.append("realistic_completed_state_mismatch")
-    capacity = _required(
-        metrics,
-        violations,
-        "capacity",
-        lambda: reopened.get_assessment_capacity(aid),
-    )
-    capacity = _capacity_snapshot(
-        reopened, aid, capacity, metrics, violations
-    )
-    return capacity, {
+    return _capacity_snapshot(reopened, aid, metrics, violations), {
         "reopen_ms": reopen_ms,
         "recovery_ms": None,
     }
@@ -945,150 +807,123 @@ def _frozen_limit_workload(
     metrics: OperationMetrics,
     violations: List[str],
 ) -> Tuple[Dict[str, Any], Dict[str, Optional[float]]]:
-    if (
-        MAX_ACTIVE_MEASUREMENT_POINTS
-        != FROZEN_ACTIVE_MEASUREMENT_POINTS
-        or MAX_TOTAL_MEASUREMENT_POINT_RECORDS
-        != FROZEN_TOTAL_MEASUREMENT_POINT_RECORDS
-        or MAX_AUDIT_RUNS_PER_ASSESSMENT
-        != FROZEN_AUDIT_RUNS_PER_ASSESSMENT
-    ):
+    expected = (
+        FROZEN_ACTIVE_MEASUREMENT_POINTS,
+        FROZEN_TOTAL_MEASUREMENT_POINT_RECORDS,
+        FROZEN_MEASUREMENTS_PER_RUN,
+        FROZEN_AUDIT_RUNS_PER_ASSESSMENT,
+    )
+    actual = (
+        MAX_ACTIVE_MEASUREMENT_POINTS,
+        MAX_TOTAL_MEASUREMENT_POINT_RECORDS,
+        MAX_MEASUREMENT_POINTS_PER_RUN,
+        MAX_AUDIT_RUNS_PER_ASSESSMENT,
+    )
+    if actual != expected:
         violations.append("frozen_limit_constant_drift")
         raise ScenarioAbort()
-    ensure_pseudonymization_key(config_dir)
-    store = RepeatableAuditStore(config_dir)
-    assessment = _required(
-        metrics,
-        violations,
-        "create_assessment",
-        lambda: store.create(
-            {"name": "Frozen limits", "location": "Lab", "notes": ""}
-        ),
+
+    native = _prepare_native_environment(
+        config_dir, MAX_MEASUREMENT_POINTS_PER_RUN, metrics, violations
     )
-    aid = assessment["assessment_id"]
-    profile = _required(
-        metrics,
-        violations,
-        "create_assurance_profile",
-        lambda: store.create_assurance_profile_version(
-            aid, 1, _assurance_profile()
-        ),
-    )
-    version_id = profile["assurance_profile_version"][
-        "assurance_profile_version_id"
-    ]
-    _required(
-        metrics,
-        violations,
-        "activate_assurance_profile",
-        lambda: store.activate_assurance_profile_version(
-            aid, 2, version_id
-        ),
-    )
-    revision = 3
-    points = []
-    for _index in range(MAX_ACTIVE_MEASUREMENT_POINTS):
-        point = _required(
-            metrics,
-            violations,
-            "create_measurement_point",
-            lambda revision=revision: store.create_measurement_point(
-                aid, revision, _measurement_context(), "Point"
-            ),
-        )
-        points.append(point["measurement_point"])
-        revision += 1
+    store = native["store"]
+    aid = native["assessment_id"]
+    initial_point = native["measurement_points"][0]
     _expected_failure(
         metrics,
         violations,
         "active_point_limit",
-        "storage_limit_exceeded",
+        "capacity_exceeded",
         lambda: store.create_measurement_point(
-            aid, revision, _measurement_context(), "Point"
+            aid, _current_revision(store, aid), "Beyond active limit"
         ),
     )
-
-    for point in points[:-1]:
+    _required(
+        metrics,
+        violations,
+        "create_max_assignment_audit_run",
+        lambda: store.create_audit_run(
+            aid,
+            _current_revision(store, aid),
+            _audit_run_input(
+                native, "Maximum assignment run", _assignments(native)
+            ),
+        ),
+    )
+    for point in native["measurement_points"][1:]:
         _required(
             metrics,
             violations,
             "archive_measurement_point",
-            lambda point=point, revision=revision: (
-                store.archive_measurement_point(
-                    aid,
-                    revision,
-                    point["measurement_point_id"],
-                    point["revision"],
-                )
+            lambda point=point: store.archive_measurement_point(
+                aid,
+                _current_revision(store, aid),
+                point["measurement_point_id"],
+                point["revision"],
             ),
         )
-        revision += 1
-    for _index in range(
-        MAX_TOTAL_MEASUREMENT_POINT_RECORDS
-        - MAX_ACTIVE_MEASUREMENT_POINTS
+    for index in range(
+        MAX_TOTAL_MEASUREMENT_POINT_RECORDS - MAX_ACTIVE_MEASUREMENT_POINTS
     ):
         point = _required(
             metrics,
             violations,
             "create_measurement_point",
-            lambda revision=revision: store.create_measurement_point(
-                aid, revision, _measurement_context(), "Point"
+            lambda index=index: store.create_measurement_point(
+                aid,
+                _current_revision(store, aid),
+                "Archived capacity point {0}".format(index + 1),
             ),
         )["measurement_point"]
-        revision += 1
         _required(
             metrics,
             violations,
             "archive_measurement_point",
-            lambda point=point, revision=revision: (
-                store.archive_measurement_point(
-                    aid,
-                    revision,
-                    point["measurement_point_id"],
-                    point["revision"],
-                )
+            lambda point=point: store.archive_measurement_point(
+                aid,
+                _current_revision(store, aid),
+                point["measurement_point_id"],
+                point["revision"],
             ),
         )
-        revision += 1
     _expected_failure(
         metrics,
         violations,
         "total_point_limit",
-        "storage_limit_exceeded",
+        "capacity_exceeded",
         lambda: store.create_measurement_point(
-            aid, revision, _measurement_context(), "Point"
+            aid, _current_revision(store, aid), "Beyond total limit"
         ),
     )
 
-    active_point_id = points[-1]["measurement_point_id"]
-    for _index in range(MAX_AUDIT_RUNS_PER_ASSESSMENT):
+    assignment = [_assignments(native)[0]]
+    for index in range(1, MAX_AUDIT_RUNS_PER_ASSESSMENT):
         _required(
             metrics,
             violations,
             "create_audit_run",
-            lambda revision=revision: store.create_audit_run(
+            lambda index=index: store.create_audit_run(
                 aid,
-                revision,
-                "Run",
-                version_id,
-                [active_point_id],
+                _current_revision(store, aid),
+                _audit_run_input(
+                    native,
+                    "Capacity run {0}".format(index + 1),
+                    assignment,
+                ),
             ),
         )
-        revision += 1
     _expected_failure(
         metrics,
         violations,
         "audit_run_limit",
-        "storage_limit_exceeded",
+        "capacity_exceeded",
         lambda: store.create_audit_run(
             aid,
-            revision,
-            "Run",
-            version_id,
-            [active_point_id],
+            _current_revision(store, aid),
+            _audit_run_input(native, "Beyond run limit", assignment),
         ),
     )
-    reopened_started = time.monotonic_ns()
+    reopen_started = time.monotonic_ns()
     reopened = RepeatableAuditStore(config_dir)
     listed = _required(
         metrics,
@@ -1096,59 +931,24 @@ def _frozen_limit_workload(
         "reopen_read",
         lambda: reopened.list_audit_runs(aid, limit=100, offset=0),
     )
+    reopen_ms = (time.monotonic_ns() - reopen_started) / 1e6
     if listed["total"] != MAX_AUDIT_RUNS_PER_ASSESSMENT:
         violations.append("frozen_run_count_mismatch")
-    points_after = _required(
-        metrics,
-        violations,
-        "reopen_measurement_points",
-        lambda: reopened.list_measurement_points(
-            aid, include_archived=True, limit=100, offset=0
-        ),
-    )
-    active_after = sum(
-        1
-        for point in points_after["measurement_points"]
-        if point["status"] == "active"
+    points = reopened.list_measurement_points(
+        aid, include_archived=True, limit=100, offset=0
     )
     if (
-        points_after["total"] != MAX_TOTAL_MEASUREMENT_POINT_RECORDS
-        or active_after != 1
+        points["total"] != MAX_TOTAL_MEASUREMENT_POINT_RECORDS
+        or sum(1 for item in points["measurement_points"] if item["status"] == "active") != 1
+        or points["measurement_points"][0]["assessment_id"] != aid
+        or initial_point["measurement_point_id"]
+        not in {item["measurement_point_id"] for item in points["measurement_points"]}
     ):
         violations.append("frozen_measurement_point_count_mismatch")
-    manifest_path = (
-        Path(config_dir)
-        / "assessments"
-        / aid
-        / "audit_runs_manifest.json"
-    )
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
-        violations.append("frozen_manifest_unreadable")
-        manifest = {}
-    runs_map = manifest.get("runs")
-    if (
-        not isinstance(runs_map, dict)
-        or len(runs_map) != MAX_AUDIT_RUNS_PER_ASSESSMENT
-        or manifest.get("active_closure_reserve")
-        != MAX_AUDIT_RUNS_PER_ASSESSMENT
-        or set(runs_map.values()) != {"draft"}
-    ):
-        violations.append("frozen_manifest_state_mismatch")
-    capacity = _required(
-        metrics,
-        violations,
-        "capacity",
-        lambda: reopened.get_assessment_capacity(aid),
-    )
-    capacity = _capacity_snapshot(
-        reopened, aid, capacity, metrics, violations
-    )
-    return capacity, {
-        "reopen_ms": (time.monotonic_ns() - reopened_started) / 1e6,
-        "recovery_ms": None,
-    }
+    capacity = _capacity_snapshot(reopened, aid, metrics, violations)
+    if capacity.get("event_reserved_for_run_closure") != 32:
+        violations.append("frozen_event_reserve_mismatch")
+    return capacity, {"reopen_ms": reopen_ms, "recovery_ms": None}
 
 
 def run_repeatable_store_benchmark(
@@ -1157,14 +957,14 @@ def run_repeatable_store_benchmark(
     if scenario not in SCENARIOS or not isinstance(iterations, int) or (
         isinstance(iterations, bool)
         or iterations < 1
-        or (
-            scenario in MAX_SCENARIO_ITERATIONS
-            and iterations > MAX_SCENARIO_ITERATIONS[scenario]
-        )
+        or iterations > MAX_SCENARIO_ITERATIONS.get(scenario, 0)
     ):
         return {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "mode": "repeatable-store",
+            "product": "PineAssure",
+            "product_mode": "repeatable_field_audit",
+            "pineai_version": __version__,
             "scenario": scenario,
             "iterations": iterations,
             "validation_scope": "workstation_software_only",
@@ -1182,7 +982,8 @@ def run_repeatable_store_benchmark(
     workload_ms = []  # type: List[float]
     reopen_ms = []  # type: List[float]
     recovery_ms = []  # type: List[float]
-    final_logical_bytes = []  # type: List[float]
+    logical_bytes_added = []  # type: List[float]
+    files_added = []  # type: List[float]
     final_file_counts = []  # type: List[float]
     max_documents = {}  # type: Dict[str, int]
     final_capacity_snapshot = None
@@ -1196,73 +997,78 @@ def run_repeatable_store_benchmark(
     }[scenario]
     for _iteration in range(iterations):
         with tempfile.TemporaryDirectory(
-            prefix="pineai-repeatable-benchmark-"
+            prefix="pineassure-repeatable-benchmark-"
         ) as directory:
             config_root = Path(directory) / "config"
+            before = _tree_snapshot(config_root)
             started = time.monotonic_ns()
-            scenario_succeeded = False
+            succeeded = False
             try:
-                capacity, lifecycle_timings = workload(
+                capacity, timings = workload(
                     str(config_root), metrics, violations
                 )
                 final_capacity_snapshot = capacity
-                reopen_value = lifecycle_timings.get("reopen_ms")
-                recovery_value = lifecycle_timings.get("recovery_ms")
-                if reopen_value is not None:
-                    reopen_ms.append(float(reopen_value))
-                if recovery_value is not None:
-                    recovery_ms.append(float(recovery_value))
-                scenario_succeeded = True
+                if timings.get("reopen_ms") is not None:
+                    reopen_ms.append(float(timings["reopen_ms"]))
+                if timings.get("recovery_ms") is not None:
+                    recovery_ms.append(float(timings["recovery_ms"]))
+                succeeded = True
             except ScenarioAbort:
                 violations.append("scenario_aborted")
             except BaseException as error:
-                violations.append(
-                    "scenario_failed:{0}".format(_error_code(error))
-                )
-            if scenario_succeeded:
-                workload_ms.append(
-                    (time.monotonic_ns() - started) / 1e6
-                )
+                violations.append("scenario_failed:{0}".format(_error_code(error)))
+            if succeeded:
+                workload_ms.append((time.monotonic_ns() - started) / 1e6)
             try:
                 after = _tree_snapshot(config_root)
-                final_logical_bytes.append(float(sum(after.values())))
-                final_file_counts.append(float(len(after)))
-                sizes = _document_sizes(config_root)
-                for name, size in sizes.items():
-                    max_documents[name] = max(
-                        max_documents.get(name, 0), size
+                logical_bytes_added.append(
+                    float(
+                        sum(after.values())
+                        - sum(before.get(name, 0) for name in after)
                     )
-                residue = _transaction_residue(config_root)
-                if residue:
+                )
+                files_added.append(float(len(set(after) - set(before))))
+                final_file_counts.append(float(len(after)))
+                for name, size in _document_sizes(config_root).items():
+                    max_documents[name] = max(max_documents.get(name, 0), size)
+                if _transaction_residue(config_root):
                     violations.append("transaction_residue")
             except ScenarioAbort:
                 violations.append("unsafe_filesystem_entry")
 
-    steady_rss = _rss_mib()
-    peak_rss = _peak_rss_mib()
+    rss_after = _rss_mib()
     io_after = _proc_io()
-    io_result = None
+    process_io = None
     if io_before is not None and io_after is not None:
-        io_result = {
+        process_io = {
             "scope": "benchmark_process_delta_including_runtime",
             "write_bytes": max(
                 0, io_after["write_bytes"] - io_before["write_bytes"]
             ),
-            "write_syscalls": max(
-                0, io_after["syscw"] - io_before["syscw"]
-            ),
+            "write_syscalls": max(0, io_after["syscw"] - io_before["syscw"]),
         }
     unique_violations = sorted(set(violations))
     functional_passed = not unique_violations
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "mode": "repeatable-store",
+        "product": "PineAssure",
+        "product_mode": "repeatable_field_audit",
+        "pineai_version": __version__,
+        "storage_contract": "split_run_manifest_and_measurement_v1.1",
+        "native_pins": True,
         "scenario": scenario,
         "iterations": iterations,
         "validation_scope": "workstation_software_only",
         "hardware_validated": False,
         "protocol_validated": False,
         "performance_thresholds_applied": False,
+        "measurement_notes": [
+            "latency uses monotonic workstation process time",
+            "RSS and proc I/O are process-wide observations when available",
+            "logical disk deltas include benchmark-created private artifacts",
+            "results are not Mark VII hardware calibration",
+        ],
         "operations": metrics.result(),
         "workload_ms": {
             "p50": round(_percentile(workload_ms, 50), 3),
@@ -1282,16 +1088,21 @@ def run_repeatable_store_benchmark(
         },
         "rss_mib": {
             "before": round(rss_before, 2),
-            "steady": round(steady_rss, 2),
-            "steady_delta": round(steady_rss - rss_before, 2),
-            "process_lifetime_peak": round(peak_rss, 2),
+            "steady": round(rss_after, 2),
+            "steady_delta": round(rss_after - rss_before, 2),
+            "process_lifetime_peak": round(_rss_mib("VmHWM:"), 2),
         },
-        "process_io": io_result,
-        "logical_filesystem": {
-            "final_bytes": {
-                "p50": int(_percentile(final_logical_bytes, 50)),
-                "p95": int(_percentile(final_logical_bytes, 95)),
-                "max": int(max(final_logical_bytes or [0.0])),
+        "process_io": process_io,
+        "logical_disk_delta": {
+            "bytes_added": {
+                "p50": int(_percentile(logical_bytes_added, 50)),
+                "p95": int(_percentile(logical_bytes_added, 95)),
+                "max": int(max(logical_bytes_added or [0.0])),
+            },
+            "files_added": {
+                "p50": int(_percentile(files_added, 50)),
+                "p95": int(_percentile(files_added, 95)),
+                "max": int(max(files_added or [0.0])),
             },
             "final_file_count": {
                 "p50": int(_percentile(final_file_counts, 50)),

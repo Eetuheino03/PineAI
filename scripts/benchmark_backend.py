@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PineAI Backend Benchmark Harness (v0.6.3).
+"""PineAssure backend benchmark harness (v0.7.0).
 
 Supports two modes:
 1. --mode local-adapter: Runs in CI and local dev workstations using isolated module adapter.
@@ -30,6 +30,7 @@ ASSETS_DIR = SRC_DIR / "assets"
 if str(ASSETS_DIR) not in sys.path:
     sys.path.insert(0, str(ASSETS_DIR))
 
+from pineai_backend import __version__ as PINEAI_VERSION  # noqa: E402
 from pineai_backend.errors import BackendError  # noqa: E402
 
 
@@ -39,6 +40,19 @@ REQUIRED_ACTIONS = [
     "list_assessments",
     "list_measurement_profiles",
     "assurance_capabilities",
+    "repeatable_audit_capabilities",
+    "resource_telemetry",
+]
+REPEATABLE_REQUIRED_ACTIONS = [
+    "repeatable_audit_capabilities",
+    "resource_telemetry",
+    "create_measurement_point",
+    "create_audit_run",
+    "start_audit_run",
+    "resolve_audit_measurement",
+    "save_audit_measurement_comparison",
+    "complete_audit_run",
+    "generate_audit_run_report",
 ]
 ERROR_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
@@ -135,11 +149,15 @@ def validate_action_response(action_name: str, payload: any) -> tuple:
     if action_name == "health":
         if payload.get("status") != "ok" or payload.get("module") != "PineAI":
             return False, "health_contract"
+        if payload.get("product_name") != "PineAssure":
+            return False, "health_product_name"
+        if payload.get("product_mode") != "repeatable_field_audit":
+            return False, "health_product_mode"
         ver = payload.get("version")
         b_ver = payload.get("backend_version")
-        if not isinstance(ver, str) or len(ver) == 0:
+        if ver != PINEAI_VERSION:
             return False, "health_version"
-        if not isinstance(b_ver, str) or len(b_ver) == 0:
+        if b_ver != PINEAI_VERSION:
             return False, "health_backend_version"
 
     elif action_name == "platform_capabilities":
@@ -170,10 +188,12 @@ def validate_action_response(action_name: str, payload: any) -> tuple:
     elif action_name == "assurance_capabilities":
         if payload.get("schema_version") != "1.2":
             return False, "assurance_schema"
-        if payload.get("product_mode") != "customer_audit_foundation":
+        if payload.get("product_name") != "PineAssure":
+            return False, "assurance_product_name"
+        if payload.get("product_mode") != "repeatable_field_audit":
             return False, "assurance_product_mode"
         b_ver = payload.get("backend_version")
-        if not isinstance(b_ver, str) or len(b_ver) == 0:
+        if b_ver != PINEAI_VERSION:
             return False, "assurance_backend_version"
         mod_actions = payload.get("module_actions")
         if not isinstance(mod_actions, list):
@@ -188,6 +208,35 @@ def validate_action_response(action_name: str, payload: any) -> tuple:
         if payload.get("recon_control") is not False:
             return False, "assurance_recon_control"
 
+    elif action_name == "repeatable_audit_capabilities":
+        if payload.get("schema_version") != "1.0":
+            return False, "repeatable_schema"
+        product = payload.get("product")
+        if not isinstance(product, dict) or product.get("name") != "PineAssure":
+            return False, "repeatable_product"
+        actions = payload.get("public_actions")
+        if not isinstance(actions, list):
+            return False, "repeatable_actions"
+        if not set(REPEATABLE_REQUIRED_ACTIONS).issubset(set(actions)):
+            return False, "repeatable_actions_missing"
+        limits = payload.get("limits")
+        if not isinstance(limits, dict):
+            return False, "repeatable_limits"
+        if payload.get("hardware_calibrated") is not False:
+            return False, "repeatable_hardware_claim"
+
+    elif action_name == "resource_telemetry":
+        if payload.get("schema_version") != "1.0":
+            return False, "telemetry_schema"
+        guard = payload.get("guard")
+        if not isinstance(guard, dict):
+            return False, "telemetry_guard"
+        if guard.get("hardware_calibrated") is not False:
+            return False, "telemetry_hardware_claim"
+        for field in ("memory", "storage", "artifacts", "scan_processing"):
+            if not isinstance(payload.get(field), dict):
+                return False, "telemetry_{0}".format(field)
+
     return True, ""
 
 
@@ -196,7 +245,9 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
         return {
             "schema_version": "1.0",
             "mode": "local-adapter",
-            "pineai_version": "0.6.3",
+            "product": "PineAssure",
+            "product_mode": "repeatable_field_audit",
+            "pineai_version": PINEAI_VERSION,
             "iterations": iterations,
             "service_reinitialization_ms": None,
             "actions": {},
@@ -310,7 +361,9 @@ def run_local_adapter_benchmark(iterations=20, cold_start_runs=3):
             return {
                 "schema_version": "1.0",
                 "mode": "local-adapter",
-                "pineai_version": "0.6.3",
+                "product": "PineAssure",
+                "product_mode": "repeatable_field_audit",
+                "pineai_version": PINEAI_VERSION,
                 "iterations": iterations,
                 "validation_scope": "workstation_software_only",
                 "protocol_validated": False,
@@ -352,7 +405,9 @@ def run_mark_vii_socket_benchmark(iterations=50, socket_path=None, timeout_secon
         return {
             "schema_version": "1.0",
             "mode": "mark-vii-socket",
-            "pineai_version": "0.6.3",
+            "product": "PineAssure",
+            "product_mode": "repeatable_field_audit",
+            "pineai_version": PINEAI_VERSION,
             "iterations": iterations,
             "socket_configured": bool(socket_path),
             "connection_mode": "attach",
@@ -463,7 +518,9 @@ def run_mark_vii_socket_benchmark(iterations=50, socket_path=None, timeout_secon
     return {
         "schema_version": "1.0",
         "mode": "mark-vii-socket",
-        "pineai_version": "0.6.3",
+        "product": "PineAssure",
+        "product_mode": "repeatable_field_audit",
+        "pineai_version": PINEAI_VERSION,
         "iterations": iterations,
         "socket_configured": True,
         "connection_mode": "attach",
@@ -571,7 +628,9 @@ def main():
         results = {
             "schema_version": "1.0",
             "mode": args.mode,
-            "pineai_version": "0.6.3",
+            "product": "PineAssure",
+            "product_mode": "repeatable_field_audit",
+            "pineai_version": PINEAI_VERSION,
             "iterations": args.iterations,
             "validation_scope": "workstation_software_only",
             "hardware_validated": False,
@@ -589,7 +648,7 @@ def main():
     if args.json:
         print(json.dumps(results, indent=2))
     else:
-        print(f"=== PineAI Benchmark Results ({results['mode']}) ===")
+        print(f"=== PineAssure Benchmark Results ({results['mode']}) ===")
         print(json.dumps(results, indent=2))
 
     sys.exit(0 if results.get("passed") else 1)
