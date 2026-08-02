@@ -1,4 +1,5 @@
 import base64
+import gzip
 import io
 import json
 import os
@@ -6,6 +7,7 @@ import stat
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -24,6 +26,7 @@ import pineai_cli  # noqa: E402
 import pineai_backend.backup as backup_module  # noqa: E402
 from pineai_backend.backup import (  # noqa: E402
     MAX_ARCHIVE_BYTES,
+    MAX_MEMBER_BYTES,
     create_backup,
     restore_backup_staging,
     verify_backup,
@@ -34,6 +37,40 @@ ASSESSMENT_ID = (
     "assessment_00000000-0000-4000-8000-000000000001"
 )
 SNAPSHOT_ID = "snapshot_0000000000000001"
+
+
+def pax_record(key, value):
+    body = key + b"=" + value + b"\n"
+    length = len(body) + 2
+    while True:
+        record = str(length).encode("ascii") + b" " + body
+        if len(record) == length:
+            return record
+        length = len(record)
+
+
+def prefix_pax_header(source, output, payload):
+    original_tar = gzip.decompress(Path(source).read_bytes())
+    info = tarfile.TarInfo("././@PaxHeader")
+    info.type = tarfile.XHDTYPE
+    info.mode = 0o600
+    info.uid = 0
+    info.gid = 0
+    info.mtime = 0
+    info.size = len(payload)
+    header = info.tobuf(
+        format=tarfile.USTAR_FORMAT, encoding="utf-8", errors="strict"
+    )
+    padding = b"\0" * (
+        ((len(payload) + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE)
+        * tarfile.BLOCKSIZE
+        - len(payload)
+    )
+    with Path(output).open("wb") as raw:
+        with gzip.GzipFile(
+            filename="", mode="wb", fileobj=raw, mtime=0, compresslevel=9
+        ) as compressed:
+            compressed.write(header + payload + padding + original_tar)
 
 
 class BackupTests(unittest.TestCase):
@@ -106,6 +143,70 @@ class BackupTests(unittest.TestCase):
         )
         (source / "openai.key").write_text("sk-never-back-up\n", encoding="utf-8")
         return source
+
+    def crafted_archive(self, path, relative, payload):
+        identity = base64.b64encode(b"k" * 32) + b"\n"
+        contents = {
+            "pseudonymization.key": identity,
+            relative: payload,
+        }
+        files = [
+            {
+                "path": name,
+                "size": len(contents[name]),
+                "sha256": backup_module.hashlib.sha256(
+                    contents[name]
+                ).hexdigest(),
+            }
+            for name in sorted(contents)
+        ]
+        directories = ["assessments", "measurement_profiles"]
+        total_bytes = sum(item["size"] for item in files)
+        manifest_payload = {
+            "directories": directories,
+            "files": files,
+            "total_bytes": total_bytes,
+        }
+        manifest = {
+            "schema_version": "1.0",
+            "backup_type": "pineai_device_continuity",
+            "created_at": "2026-08-02T12:00:00Z",
+            "included_roots": [
+                "assessments",
+                "measurement_profiles",
+                "config.json",
+                "pseudonymization.key",
+            ],
+            "excluded": [
+                ".lock",
+                ".transactions",
+                "exports",
+                "openai.key",
+            ],
+            "directories": directories,
+            "files": files,
+            "file_count": len(files),
+            "total_bytes": total_bytes,
+            "payload_sha256": backup_module.hashlib.sha256(
+                backup_module._canonical_bytes(manifest_payload)
+            ).hexdigest(),
+        }
+        manifest_bytes = json.dumps(manifest, sort_keys=True).encode("utf-8")
+        with tarfile.open(str(path), "w:gz") as archive:
+            manifest_info = tarfile.TarInfo("manifest.json")
+            manifest_info.mode = 0o600
+            manifest_info.size = len(manifest_bytes)
+            archive.addfile(manifest_info, io.BytesIO(manifest_bytes))
+            for directory in directories:
+                info = tarfile.TarInfo("data/" + directory)
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o700
+                archive.addfile(info)
+            for name in sorted(contents):
+                info = tarfile.TarInfo("data/" + name)
+                info.mode = 0o600
+                info.size = len(contents[name])
+                archive.addfile(info, io.BytesIO(contents[name]))
 
     def test_create_verify_and_restore_round_trip_excludes_openai_key(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -429,6 +530,52 @@ class BackupTests(unittest.TestCase):
             )
             self.assertFalse(output.exists())
 
+    def test_verify_and_restore_reject_crafted_contract_violations(self):
+        cases = (
+            (
+                "raw-recon",
+                "assessments/{0}/snapshots/{1}.json".format(
+                    ASSESSMENT_ID, SNAPSHOT_ID
+                ),
+                json.dumps({"APResults": []}).encode("utf-8"),
+                "raw_recon_not_allowed",
+            ),
+            (
+                "unsupported-path",
+                "assessments/{0}/arbitrary-secret.json".format(
+                    ASSESSMENT_ID
+                ),
+                json.dumps({"api_key": "secret-canary"}).encode("utf-8"),
+                "backup_unsafe_source",
+            ),
+            (
+                "secret-config",
+                "config.json",
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "language": "fi",
+                        "api_key": "secret-canary",
+                    }
+                ).encode("utf-8"),
+                "backup_unsafe_source",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for name, relative, payload, error_code in cases:
+                with self.subTest(name=name):
+                    archive = Path(directory) / (name + ".tar.gz")
+                    self.crafted_archive(archive, relative, payload)
+                    with self.assertRaises(BackendError) as raised:
+                        verify_backup(str(archive))
+                    self.assertEqual(raised.exception.code, error_code)
+
+                    target = Path(directory) / (name + "-staging")
+                    with self.assertRaises(BackendError) as raised:
+                        restore_backup_staging(str(archive), str(target))
+                    self.assertEqual(raised.exception.code, error_code)
+                    self.assertFalse(target.exists())
+
     def test_verify_rejects_oversized_compressed_input_before_parsing(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "oversized.tar.gz"
@@ -441,6 +588,84 @@ class BackupTests(unittest.TestCase):
                     verify_backup(str(archive))
             self.assertEqual(failure.exception.code, "backup_limit")
             archive_open.assert_not_called()
+
+    def test_verify_rejects_oversized_first_compressed_member_from_header(self):
+        class ZeroReader:
+            def __init__(self, remaining):
+                self.remaining = remaining
+
+            def read(self, size=-1):
+                if self.remaining <= 0:
+                    return b""
+                if size < 0:
+                    size = self.remaining
+                count = min(size, self.remaining)
+                self.remaining -= count
+                return b"\0" * count
+
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "compressed-member-bomb.tar.gz"
+            declared_size = MAX_MEMBER_BYTES + 1
+            with tarfile.open(str(archive), "w:gz") as handle:
+                oversized = tarfile.TarInfo(
+                    "data/assessments/oversized.json"
+                )
+                oversized.mode = 0o600
+                oversized.size = declared_size
+                handle.addfile(oversized, ZeroReader(declared_size))
+
+            self.assertLess(archive.stat().st_size, declared_size // 100)
+            with self.assertRaises(BackendError) as failure:
+                verify_backup(str(archive))
+            self.assertEqual(failure.exception.code, "backup_limit")
+
+    def test_verify_rejects_oversized_pax_metadata_before_parsing_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "pax-metadata-bomb.tar.gz"
+            with tarfile.open(
+                str(archive), "w:gz", format=tarfile.PAX_FORMAT
+            ) as handle:
+                member = tarfile.TarInfo("manifest.json")
+                member.mode = 0o600
+                member.size = 0
+                member.pax_headers = {"comment": "x" * (64 * 1024)}
+                handle.addfile(member, io.BytesIO(b""))
+
+            self.assertLess(archive.stat().st_size, 4096)
+            started = time.monotonic()
+            with self.assertRaises(BackendError) as failure:
+                verify_backup(str(archive))
+            elapsed = time.monotonic() - started
+            self.assertEqual(failure.exception.code, "backup_limit")
+            self.assertLess(elapsed, 2.0)
+
+    def test_verify_rejects_malformed_local_pax_metadata(self):
+        cases = {
+            "bad-length": b"12 path=x\n",
+            "bad-key": pax_record(b"comment", b"x"),
+            "bad-utf8": pax_record(b"path", b"\xff"),
+            "trailing": pax_record(b"path", b"data/example") + b"x",
+            "duplicate": (
+                pax_record(b"path", b"data/example")
+                + pax_record(b"path", b"data/example")
+            ),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            valid = Path(directory) / "valid.tar.gz"
+            create_backup(str(source), str(valid))
+            for name, payload in cases.items():
+                with self.subTest(name=name):
+                    archive = Path(directory) / (name + ".tar.gz")
+                    prefix_pax_header(valid, archive, payload)
+                    started = time.monotonic()
+                    with self.assertRaises(BackendError) as failure:
+                        verify_backup(str(archive))
+                    self.assertIn(
+                        failure.exception.code,
+                        ("backup_invalid", "backup_unsafe_member"),
+                    )
+                    self.assertLess(time.monotonic() - started, 2.0)
 
 
 if __name__ == "__main__":

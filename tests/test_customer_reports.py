@@ -1,3 +1,4 @@
+import copy
 import json
 import sys
 import unittest
@@ -184,26 +185,65 @@ class CustomerReportTests(unittest.TestCase):
             )
 
     def test_share_safe_redacts_direct_identifiers_and_ssids(self):
+        values = list(self.values())
+        values[2] = copy.deepcopy(values[2])
+        values[2]["policy_deviations"] = [
+            {
+                "rule_id": "ssid_not_allowed",
+                "expected": ["Other", "Factory-Corp"],
+                "observed": "Factory-Corp",
+                "before_after": {
+                    "before": ["Other"],
+                    "after": "Factory-Corp",
+                },
+                "summary": (
+                    "Observed AABB.CCDD.EEFF and AABBCCDDEEFF near the target"
+                ),
+            }
+        ]
         result = generate_report(
-            *self.values(),
+            *values,
             output_format="json",
             scope="comparison",
             privacy_profile="share_safe",
         )
         content = result["content"]
         self.assertNotIn("AA:BB:CC", content)
+        self.assertNotIn("AABB.CCDD.EEFF", content)
+        self.assertNotIn("AABBCCDDEEFF", content)
+        self.assertIn("[redacted-mac]", content)
         self.assertNotIn("Factory-Corp", content)
         self.assertNotIn("Helsinki", content)
         parsed = json.loads(content)
         self.assertEqual(parsed["privacy"]["profile"], "share_safe")
         self.assertEqual(parsed["assessment"]["name"], "[redacted]")
+        self.assertEqual(parsed["baseline"]["label"], "[redacted]")
         self.assertEqual(
             parsed["evidence_appendix"]["records"][0]["observed"]["ssid"],
             "[redacted-ssid]",
         )
+        deviation = parsed["policy_deviations"][0]
+        self.assertEqual(
+            deviation["expected"], ["Other", "[redacted-ssid]"]
+        )
+        self.assertEqual(deviation["observed"], "[redacted-ssid]")
+        self.assertEqual(
+            deviation["before_after"]["after"], "[redacted-ssid]"
+        )
+
+        html_result = generate_report(
+            *values,
+            output_format="html",
+            scope="comparison",
+            privacy_profile="share_safe",
+        )
+        self.assertNotIn("Factory-Corp", html_result["content"])
+        self.assertNotIn("AABB.CCDD.EEFF", html_result["content"])
+        self.assertNotIn("AABBCCDDEEFF", html_result["content"])
+        self.assertIn("[redacted-ssid]", html_result["content"])
 
         with_ssids = generate_report(
-            *self.values(),
+            *values,
             output_format="json",
             scope="comparison",
             privacy_profile="share_safe",
@@ -211,6 +251,134 @@ class CustomerReportTests(unittest.TestCase):
         )
         self.assertIn("Factory-Corp", with_ssids["content"])
         self.assertNotIn("AA:BB:CC", with_ssids["content"])
+
+    def test_share_safe_redacts_known_ssids_from_ai_json_and_html_prose(self):
+        analysis = {
+            "analysis_id": "analysis_privacy",
+            "model": "model",
+            "language": "en",
+            "summary": "Factory-Corp changed during the audit.",
+            "finding_explanations": [
+                {
+                    "finding_id": "finding_current",
+                    "explanation": "Validate Factory-Corp with the owner.",
+                    "alternative_explanations": ["Factory-Corp may be planned."],
+                    "validation_steps": ["Review Factory-Corp configuration."],
+                    "evidence_ids": ["evidence_current"],
+                }
+            ],
+            "report_sections": {
+                "executive_summary": "Factory-Corp requires review.",
+                "technical_summary": "Observed Factory-Corp.",
+                "change_summary": "Factory-Corp changed.",
+                "limitations": ["Factory-Corp ownership was not checked."],
+            },
+        }
+        for output_format in ("json", "html"):
+            with self.assertRaises(BackendError) as raised:
+                generate_report(
+                    *self.values(),
+                    output_format=output_format,
+                    scope="comparison",
+                    privacy_profile="share_safe",
+                    share_ssids=False,
+                    ai_analysis=analysis,
+                )
+            self.assertEqual(raised.exception.code, "privacy_violation")
+
+            local = generate_report(
+                *self.values(),
+                output_format=output_format,
+                scope="comparison",
+                privacy_profile="local_full",
+                ai_analysis=analysis,
+            )
+            self.assertIn("Factory-Corp", local["content"])
+
+    def test_short_ssid_redaction_preserves_structural_values(self):
+        for ssid in ("a", "1"):
+            with self.subTest(ssid=ssid):
+                values = copy.deepcopy(self.values())
+                values[1]["snapshot"]["evidence"][0]["observed"]["ssid"] = ssid
+                values[2]["diff"]["access_points"]["added"][0]["ssid"] = ssid
+                values[2]["current_snapshot"]["evidence"][0]["observed"][
+                    "ssid"
+                ] = ssid
+                analysis = {
+                    "analysis_id": "analysis_short_ssid",
+                    "model": "model",
+                    "language": "en",
+                    "summary": "SSID={0} changed".format(ssid),
+                    "finding_explanations": [],
+                    "report_sections": {
+                        "executive_summary": "SSID={0} changed".format(ssid),
+                        "technical_summary": "",
+                        "change_summary": "",
+                        "limitations": [],
+                    },
+                }
+                result = generate_report(
+                    *values,
+                    output_format="json",
+                    scope="comparison",
+                    privacy_profile="local_full",
+                    share_ssids=False,
+                    ai_analysis=analysis,
+                )
+                parsed = json.loads(result["content"])
+                self.assertEqual(parsed["schema_version"], "1.1")
+                self.assertEqual(
+                    parsed["assessment"]["assessment_id"],
+                    "assessment_example",
+                )
+                self.assertEqual(parsed["assessment"]["status"], "active")
+                self.assertEqual(
+                    parsed["ai_analysis"]["summary"],
+                    "SSID={0} changed".format(ssid),
+                )
+                html_result = generate_report(
+                    *values,
+                    output_format="html",
+                    scope="comparison",
+                    privacy_profile="local_full",
+                    share_ssids=False,
+                    ai_analysis=analysis,
+                )
+                self.assertIn("assessment_example", html_result["content"])
+                self.assertIn("SSID={0} changed".format(ssid), html_result["content"])
+
+    def test_ssid_collision_does_not_redact_customer_status(self):
+        values = copy.deepcopy(self.values())
+        values[0]["status"] = "active"
+        values[1]["snapshot"]["evidence"][0]["observed"]["ssid"] = "active"
+        values[2]["current_snapshot"]["evidence"][0]["observed"][
+            "ssid"
+        ] = "active"
+        values[2]["policy_deviations"] = [
+            {
+                "rule_id": "ssid_not_allowed",
+                "protected_ssid": "active",
+                "expected": "active",
+                "observed": "active",
+            }
+        ]
+        result = generate_report(
+            *values,
+            output_format="json",
+            scope="comparison",
+            privacy_profile="share_safe",
+            share_ssids=False,
+        )
+        facts = json.loads(result["content"])
+        self.assertEqual(facts["assessment"]["status"], "active")
+        self.assertEqual(
+            facts["policy_deviations"][0]["expected"],
+            "[redacted-ssid]",
+        )
+        self.assertEqual(
+            facts["policy_deviations"][0]["observed"],
+            "[redacted-ssid]",
+        )
 
     def test_html_is_script_free_escaped_and_contains_evidence_appendix(self):
         result = generate_report(

@@ -5,8 +5,10 @@ import os
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,7 +79,7 @@ class PackageToolTests(unittest.TestCase):
                 archive, run_import_check=True
             )
             self.assertTrue(result["verified"])
-            self.assertEqual(result["file_count"], 24)
+            self.assertEqual(result["file_count"], 28)
             self.assertEqual(result["directory_count"], 3)
             names = {
                 member.name for member, _data in self.entries(archive)
@@ -86,6 +88,40 @@ class PackageToolTests(unittest.TestCase):
                 "PineAI/assets/pineai_backend/"
                 "repeatable_audit_store.py",
                 names,
+            )
+
+    def test_isolated_import_check_models_stripped_mark_vii_stdlib(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "PineAI"
+            backend = root / "assets" / "pineai_backend"
+            backend.mkdir(parents=True)
+            (backend / "__init__.py").write_text(
+                "__version__ = '0.7.0'\n", encoding="utf-8"
+            )
+            probe = backend / "probe.py"
+            probe.write_text("VALUE = 1\n", encoding="utf-8")
+            (root / "assets" / "pineai_cli.py").write_text(
+                "", encoding="utf-8"
+            )
+            (root / "module.py").write_text(
+                "from pineapple.modules import Module\n"
+                "module = Module('PineAI')\n",
+                encoding="utf-8",
+            )
+            (root / "module.json").write_text(
+                json.dumps({"version": "0.7.0"}), encoding="utf-8"
+            )
+
+            package_tool._isolated_import_check(
+                root, ["pineai_backend.probe"]
+            )
+            probe.write_text("import statistics\n", encoding="utf-8")
+            with self.assertRaises(package_tool.PackageError) as raised:
+                package_tool._isolated_import_check(
+                    root, ["pineai_backend.probe"]
+                )
+            self.assertEqual(
+                raised.exception.code, "package_import_failed"
             )
 
     def test_generated_bundle_is_sanitized_and_bound_to_verification(self):
@@ -171,6 +207,40 @@ class PackageToolTests(unittest.TestCase):
             metadata_entries[0][0].mtime = 1
             self.write_entries(metadata, metadata_entries)
             self.assert_package_error(metadata, "archive_metadata")
+
+    def test_pax_metadata_is_rejected_before_stdlib_parses_its_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "pax-metadata-bomb.tar.gz"
+            tar_payload = io.BytesIO()
+            with tarfile.open(
+                fileobj=tar_payload, mode="w", format=tarfile.PAX_FORMAT
+            ) as handle:
+                member = tarfile.TarInfo("PineAI")
+                member.type = tarfile.DIRTYPE
+                member.mode = 0o755
+                member.pax_headers = {"comment": "x" * (64 * 1024)}
+                handle.addfile(member)
+            with archive.open("wb") as raw:
+                with gzip.GzipFile(
+                    filename="",
+                    mode="wb",
+                    fileobj=raw,
+                    mtime=0,
+                    compresslevel=9,
+                ) as compressed:
+                    compressed.write(tar_payload.getvalue())
+
+            self.assertLess(archive.stat().st_size, 4096)
+            self.assertEqual(
+                archive.read_bytes()[:10], package_tool.CANONICAL_GZIP_HEADER
+            )
+            manifest = package_tool.load_manifest()
+            started = time.monotonic()
+            with mock.patch.object(
+                package_tool, "load_manifest", return_value=manifest
+            ):
+                self.assert_package_error(archive, "archive_special")
+            self.assertLess(time.monotonic() - started, 2.0)
 
     def test_missing_and_changed_runtime_files_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:

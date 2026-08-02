@@ -26,7 +26,7 @@ class VersionConsistencyTests(unittest.TestCase):
             backend_version,
             f"module.json version ({module_version}) != backend __version__ ({backend_version})",
         )
-        self.assertEqual(module_version, "0.6.3")
+        self.assertEqual(module_version, "0.7.0")
 
 
 if __name__ == "__main__":

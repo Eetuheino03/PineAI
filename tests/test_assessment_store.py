@@ -305,7 +305,49 @@ class AssessmentStoreTests(unittest.TestCase):
             loaded = store.get_baseline_version(
                 created["assessment_id"], "baseline_v0001"
             )
-            self.assertEqual(loaded["snapshot"], first_snapshot)
+            self.assertEqual(
+                {
+                    key: value
+                    for key, value in loaded["snapshot"].items()
+                    if key != "snapshot_record_digest"
+                },
+                first_snapshot,
+            )
+            self.assertRegex(
+                loaded["snapshot"]["snapshot_record_digest"],
+                r"^[0-9a-f]{64}$",
+            )
+
+    def test_single_scan_baseline_record_tampering_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, assessment, _baseline = active_store(directory)
+            version_id = assessment["active_baseline_version"]
+            path = store._baseline_path(
+                assessment["assessment_id"], version_id
+            )
+            original = json.loads(path.read_text(encoding="utf-8"))
+            corruptions = []
+            unknown = copy.deepcopy(original)
+            unknown["unexpected"] = "corruption"
+            corruptions.append(unknown)
+            wrong_version = copy.deepcopy(original)
+            wrong_version["version"] += 1
+            corruptions.append(wrong_version)
+            invalid_time = copy.deepcopy(original)
+            invalid_time["created_at"] = "2026-07-27 12:00:00"
+            corruptions.append(invalid_time)
+            invalid_snapshot = copy.deepcopy(original)
+            invalid_snapshot["snapshot_digest"] = "f" * 63
+            corruptions.append(invalid_snapshot)
+            for corrupted in corruptions:
+                path.write_text(json.dumps(corrupted), encoding="utf-8")
+                with self.subTest(fields=sorted(corrupted)):
+                    with self.assertRaises(BackendError) as raised:
+                        store.get_baseline_version(
+                            assessment["assessment_id"], version_id
+                        )
+                    self.assertEqual(raised.exception.code, "storage_error")
+            path.write_text(json.dumps(original), encoding="utf-8")
 
     def test_single_scan_baseline_respects_snapshot_capacity(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -430,6 +472,109 @@ class AssessmentStoreTests(unittest.TestCase):
             )
             self.assertEqual(
                 loaded["current_snapshot_id"], recurring["snapshot_id"]
+            )
+
+    def test_stored_comparison_tampering_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, assessment, baseline = active_store(directory)
+            current = snapshot("2", channel=11)
+            persisted = store.persist_analysis(
+                assessment["assessment_id"],
+                assessment["revision"],
+                comparison(baseline, current),
+                current,
+                [finding()],
+            )
+            comparison_id = persisted["comparison"]["comparison_id"]
+            path = store._comparison_path(
+                assessment["assessment_id"], comparison_id
+            )
+            original = json.loads(path.read_text(encoding="utf-8"))
+
+            corruptions = []
+            unknown = copy.deepcopy(original)
+            unknown["unexpected"] = "corruption"
+            corruptions.append(unknown)
+            nested_identity = copy.deepcopy(original)
+            nested_identity["comparison"]["current_snapshot_id"] = (
+                "snapshot_ffffffffffffffff"
+            )
+            corruptions.append(nested_identity)
+            digest_mismatch = copy.deepcopy(original)
+            digest_mismatch["current_snapshot_digest"] = "f" * 64
+            corruptions.append(digest_mismatch)
+            lifecycle = copy.deepcopy(original)
+            lifecycle["lifecycle"]["opened"] = ["not-a-finding"]
+            corruptions.append(lifecycle)
+
+            for corrupted in corruptions:
+                path.write_text(json.dumps(corrupted), encoding="utf-8")
+                with self.subTest(fields=sorted(corrupted)):
+                    with self.assertRaises(BackendError) as raised:
+                        store.get_comparison(
+                            assessment["assessment_id"], comparison_id
+                        )
+                    self.assertEqual(raised.exception.code, "storage_error")
+            path.write_text(json.dumps(original), encoding="utf-8")
+            self.assertEqual(
+                store.get_comparison(
+                    assessment["assessment_id"], comparison_id
+                )["comparison_id"],
+                comparison_id,
+            )
+
+    def test_new_snapshot_record_digest_rejects_content_tampering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, assessment, baseline = active_store(directory)
+            baseline_record = store.get_baseline_version(
+                assessment["assessment_id"],
+                assessment["active_baseline_version"],
+            )
+            stored_snapshot = baseline_record["snapshot"]
+            self.assertIn("snapshot_record_digest", stored_snapshot)
+            path = store._snapshot_path(
+                assessment["assessment_id"], stored_snapshot["snapshot_id"]
+            )
+            corrupted = json.loads(path.read_text(encoding="utf-8"))
+            corrupted["access_points"][0]["vendor"] = "Tampered vendor"
+            path.write_text(json.dumps(corrupted), encoding="utf-8")
+            with self.assertRaises(BackendError) as raised:
+                store.get_baseline_version(
+                    assessment["assessment_id"],
+                    assessment["active_baseline_version"],
+                )
+            self.assertEqual(raised.exception.code, "invalid_snapshot")
+
+    def test_identical_legacy_snapshot_is_reused_without_rewrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store, assessment, baseline = active_store(directory)
+            path = store._snapshot_path(
+                assessment["assessment_id"], baseline["snapshot_id"]
+            )
+            legacy = json.loads(path.read_text(encoding="utf-8"))
+            legacy.pop("snapshot_record_digest")
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+            before = path.read_bytes()
+
+            clean = copy.deepcopy(baseline)
+            result = store.persist_analysis(
+                assessment["assessment_id"],
+                assessment["revision"],
+                comparison(baseline, clean),
+                clean,
+                [],
+            )
+            self.assertEqual(
+                result["comparison"]["current_snapshot_id"],
+                baseline["snapshot_id"],
+            )
+            self.assertEqual(path.read_bytes(), before)
+            self.assertNotIn(
+                "snapshot_record_digest",
+                store.get_baseline_version(
+                    assessment["assessment_id"],
+                    assessment["active_baseline_version"],
+                )["snapshot"],
             )
 
     def test_false_positive_is_preserved_when_absent_or_recurring(self):

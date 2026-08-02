@@ -1,5 +1,7 @@
 import io
 import json
+import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -30,6 +32,96 @@ def write_json(directory, name, value):
 
 
 class CliTests(unittest.TestCase):
+    def _report_command(self, directory, output):
+        result = {
+            "content": '{"privacy_profile":"local_full"}\n',
+            "mime_type": "application/json",
+        }
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with mock.patch.object(
+            pineai_cli.AssuranceService,
+            "generate_report",
+            return_value=result,
+        ):
+            exit_code = pineai_cli.main(
+                [
+                    "--config-dir",
+                    directory,
+                    "report",
+                    "assessment_00000000-0000-4000-8000-000000000001",
+                    "comparison_0000000000000001",
+                    "--format",
+                    "json",
+                    "--output",
+                    str(output),
+                ],
+                stdout=stdout,
+                stderr=stderr,
+            )
+        return exit_code, stdout, stderr
+
+    def test_report_output_is_exclusive_and_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "report.json"
+            exit_code, stdout, _stderr = self._report_command(
+                directory, output
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                output.read_text(encoding="utf-8"),
+                '{"privacy_profile":"local_full"}\n',
+            )
+            if os.name == "posix":
+                self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
+            self.assertEqual(json.loads(stdout.getvalue())["output"], str(output))
+
+            original = output.read_bytes()
+            exit_code, _stdout, stderr = self._report_command(directory, output)
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(
+                json.loads(stderr.getvalue())["error"]["code"],
+                "output_exists",
+            )
+            self.assertEqual(output.read_bytes(), original)
+
+    @unittest.skipIf(os.name == "nt", "symlink creation is not portable on Windows")
+    def test_report_output_does_not_follow_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "target.json"
+            target.write_text("keep", encoding="utf-8")
+            output = Path(directory) / "report.json"
+            output.symlink_to(target)
+            exit_code, _stdout, stderr = self._report_command(directory, output)
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(
+                json.loads(stderr.getvalue())["error"]["code"],
+                "output_exists",
+            )
+            self.assertEqual(target.read_text(encoding="utf-8"), "keep")
+
+    def test_json_input_is_bounded_before_parsing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            oversized = Path(directory) / "oversized.json"
+            with oversized.open("wb") as handle:
+                handle.truncate(pineai_cli.MAX_CLI_JSON_INPUT_BYTES + 1)
+            stderr = io.StringIO()
+            exit_code = pineai_cli.main(
+                [
+                    "--config-dir",
+                    directory,
+                    "resolve",
+                    "--input",
+                    str(oversized),
+                ],
+                stderr=stderr,
+            )
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(
+                json.loads(stderr.getvalue())["error"]["code"],
+                "invalid_input",
+            )
+
     def test_configure_and_status_never_print_key(self):
         with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()

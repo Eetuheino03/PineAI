@@ -51,7 +51,7 @@ class ModuleAdapterTests(unittest.TestCase):
             spec.loader.exec_module(loaded)
         return loaded
 
-    def test_only_v06_actions_are_registered_and_health_is_safe(self):
+    def test_v07_actions_are_registered_and_health_is_safe(self):
         loaded = self.load_module()
         expected = {
             "health",
@@ -93,13 +93,31 @@ class ModuleAdapterTests(unittest.TestCase):
             "generate_ai_analysis",
             "prepare_report",
             "generate_report",
+            "repeatable_audit_capabilities",
+            "resource_telemetry",
+            "create_measurement_point",
+            "list_measurement_points",
+            "get_measurement_point",
+            "update_measurement_point",
+            "archive_measurement_point",
+            "create_audit_run",
+            "list_audit_runs",
+            "get_audit_run",
+            "start_audit_run",
+            "cancel_audit_run",
+            "complete_audit_run",
+            "resolve_audit_measurement",
+            "save_audit_measurement_comparison",
+            "retry_audit_measurement",
+            "generate_audit_run_report",
         }
         self.assertEqual(set(loaded.module.actions), expected)
         with tempfile.TemporaryDirectory() as directory:
             with mock.patch.dict(os.environ, {"PINEAI_CONFIG_DIR": directory}):
                 response = loaded.health(FakeRequest())
-        self.assertEqual(response["version"], "0.6.3")
-        self.assertEqual(response["product_mode"], "customer_audit_foundation")
+        self.assertEqual(response["version"], "0.7.0")
+        self.assertEqual(response["product_name"], "PineAssure")
+        self.assertEqual(response["product_mode"], "repeatable_field_audit")
         self.assertTrue(response["offline_complete"])
         self.assertFalse(response["recon_control"])
         self.assertFalse(response["api_key_configured"])
@@ -112,6 +130,38 @@ class ModuleAdapterTests(unittest.TestCase):
             "adaptive_recon_capabilities",
         ):
             self.assertNotIn(old_action, loaded.module.actions)
+
+    def test_v07_handlers_reject_unknown_public_request_fields(self):
+        loaded = self.load_module()
+        request = FakeRequest()
+        request.module = "PineAI"
+        request.action = "repeatable_audit_capabilities"
+        request.unexpected_payload = "must fail closed"
+        result = loaded.repeatable_audit_capabilities(request)
+        self.assertEqual(result[0]["error"]["code"], "invalid_request")
+
+        update = FakeRequest()
+        update.assessment_id = "assessment_00000000-0000-4000-8000-000000000000"
+        update.expected_assessment_revision = 1
+        update.measurement_point_id = "mp_0000000000000000"
+        update.expected_measurement_point_revision = 1
+        update.changes = {"name": "legacy alias"}
+        result = loaded.update_measurement_point(update)
+        self.assertEqual(
+            result[0]["error"]["code"], "invalid_measurement_point"
+        )
+
+        telemetry = FakeRequest()
+        telemetry.assessment_id = "not-a-canonical-assessment-id"
+        result = loaded.resource_telemetry_action(telemetry)
+        self.assertEqual(result[0]["error"]["code"], "invalid_assessment_id")
+
+        report = FakeRequest()
+        report.assessment_id = "assessment_00000000-0000-4000-8000-000000000000"
+        report.audit_run_id = "ar_0000000000000000"
+        report.format = "json"
+        result = loaded.generate_audit_run_report(report)
+        self.assertEqual(result[0]["error"]["code"], "invalid_privacy_profile")
 
     def test_settings_and_api_key_actions_never_echo_secret(self):
         loaded = self.load_module()
@@ -158,6 +208,19 @@ class ModuleAdapterTests(unittest.TestCase):
                 response, success = loaded.resolve_recon(invalid)
         self.assertFalse(success)
         self.assertEqual(response["error"]["code"], "invalid_recon")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.dict(os.environ, {"PINEAI_CONFIG_DIR": directory}):
+                invalid_time = FakeRequest()
+                invalid_time.scan = json.loads(
+                    FIXTURE.read_text(encoding="utf-8")
+                )
+                invalid_time.scan_metadata = {"date": "not-rfc3339"}
+                response, success = loaded.resolve_recon(invalid_time)
+        self.assertFalse(success)
+        self.assertEqual(
+            response["error"]["code"], "invalid_scan_metadata"
+        )
 
     def test_deprecated_relative_position_input_is_rejected(self):
         loaded = self.load_module()
@@ -269,6 +332,226 @@ class ModuleAdapterTests(unittest.TestCase):
                 res = loaded.generate_report_action(invalid_req)
                 self.assertEqual(res[0]["error"]["code"], "invalid_report_scope")
 
+    def test_module_actions_complete_repeatable_field_audit_workflow(self):
+        loaded = self.load_module()
+        scan = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.dict(
+                os.environ, {"PINEAI_CONFIG_DIR": directory}
+            ):
+                loaded._reset_singletons()
+                profile_request = FakeRequest()
+                profile_request.profile = {
+                    "name": "Saved Recon",
+                    "description": "",
+                    "scan_profile_id": "saved-recon",
+                    "radio_profile_id": "wlan1",
+                    "interface": "wlan1mon",
+                    "declared_bands": ["2.4"],
+                    "declared_channels": [1, 6, 11],
+                    "scan_time": 180,
+                    "is_default": True,
+                    "five_ghz_operator_confirmed": False,
+                }
+                profile = loaded.create_measurement_profile(profile_request)[
+                    "measurement_profile"
+                ]
+                profile_version = profile["active_version"]
+
+                assessment_request = FakeRequest()
+                assessment_request.assessment = {
+                    "name": "Repeatable site",
+                    "location": "Lab",
+                    "notes": "",
+                }
+                assessment = loaded.create_assessment(assessment_request)
+
+                point_request = FakeRequest()
+                point_request.assessment_id = assessment["assessment_id"]
+                point_request.expected_assessment_revision = assessment[
+                    "revision"
+                ]
+                point_request.measurement_point = {
+                    "location_label": "North desk",
+                    "physical_notes": "Blue marker",
+                    "operator_instructions": "Keep antenna vertical",
+                }
+                point_result = loaded.create_measurement_point(point_request)
+                point = point_result["measurement_point"]
+
+                metadata = {
+                    "scan_id": "baseline",
+                    "date": "2026-07-31T09:00:00Z",
+                    "scan_time": 180,
+                    "coverage": ["2.4"],
+                    "measurement_context": {
+                        "location_id": assessment["assessment_id"],
+                        "measurement_point_id": point[
+                            "measurement_point_id"
+                        ],
+                        "scan_profile_id": "saved-recon",
+                        "radio_profile_id": "wlan1",
+                        "interface": "wlan1mon",
+                        "declared_bands": ["2.4"],
+                        "declared_channels": [1, 6, 11],
+                        "measurement_profile_id": profile[
+                            "measurement_profile_id"
+                        ],
+                        "measurement_profile_version_id": profile_version[
+                            "version_id"
+                        ],
+                        "measurement_profile_digest": profile_version[
+                            "digest"
+                        ],
+                    },
+                }
+                baseline_request = FakeRequest()
+                baseline_request.assessment_id = assessment["assessment_id"]
+                baseline_request.expected_revision = point_result[
+                    "assessment_revision"
+                ]
+                baseline_request.scan = scan
+                baseline_request.scan_metadata = metadata
+                baseline_request.label = "Approved north desk"
+                baseline = loaded.create_baseline_version(baseline_request)
+
+                inventory_request = FakeRequest()
+                inventory_request.content = (
+                    "site,ssid,bssid,vendor,role,approved\n"
+                    "Lab,Example-Corp,AA:BB:CC:00:00:01,Unknown,corp,true\n"
+                )
+                inventory_request.delimiter = "comma"
+                inventory = loaded.preview_inventory_csv(inventory_request)
+                assurance_request = FakeRequest()
+                assurance_request.assessment_id = assessment["assessment_id"]
+                assurance_request.expected_revision = baseline["assessment"][
+                    "revision"
+                ]
+                assurance_request.label = "Approved inventory"
+                assurance_request.inventory_preview = inventory
+                assurance_request.coverage_mode = "partial"
+                assurance = loaded.create_assurance_profile_version(
+                    assurance_request
+                )
+
+                run_request = FakeRequest()
+                run_request.assessment_id = assessment["assessment_id"]
+                run_request.expected_assessment_revision = assurance[
+                    "assessment"
+                ]["revision"]
+                run_request.audit_run = {
+                    "name": "July round",
+                    "description": "Operator driven",
+                    "assurance_profile_version_id": assurance[
+                        "assurance_profile"
+                    ]["assurance_profile_version_id"],
+                    "assignments": [
+                        {
+                            "measurement_point_id": point[
+                                "measurement_point_id"
+                            ],
+                            "measurement_profile_id": profile[
+                                "measurement_profile_id"
+                            ],
+                            "measurement_profile_version_id": profile_version[
+                                "version_id"
+                            ],
+                            "baseline_version_id": baseline["baseline"][
+                                "baseline_version_id"
+                            ],
+                        }
+                    ],
+                }
+                created = loaded.create_audit_run(run_request)
+
+                start_request = FakeRequest()
+                start_request.assessment_id = assessment["assessment_id"]
+                start_request.expected_assessment_revision = created[
+                    "assessment_revision"
+                ]
+                start_request.audit_run_id = created["audit_run"][
+                    "audit_run_id"
+                ]
+                start_request.expected_audit_run_revision = created[
+                    "audit_run"
+                ]["revision"]
+                started = loaded.start_audit_run(start_request)
+                measurement = started["measurements"][0]
+
+                resolve_request = FakeRequest()
+                resolve_request.assessment_id = assessment["assessment_id"]
+                resolve_request.expected_assessment_revision = started[
+                    "assessment_revision"
+                ]
+                resolve_request.audit_run_id = started["audit_run"][
+                    "audit_run_id"
+                ]
+                resolve_request.expected_audit_run_revision = started[
+                    "audit_run"
+                ]["revision"]
+                resolve_request.measurement_id = measurement[
+                    "measurement_id"
+                ]
+                resolve_request.expected_measurement_revision = measurement[
+                    "revision"
+                ]
+                resolve_request.scan = scan
+                resolve_request.scan_metadata = {
+                    "scan_id": "current",
+                    "date": "2026-07-31T10:00:00Z",
+                    "scan_time": 180,
+                    "coverage": ["2.4"],
+                }
+                resolved = loaded.resolve_audit_measurement(resolve_request)
+                self.assertEqual(resolved["measurement"]["status"], "resolved")
+
+                compare_request = FakeRequest()
+                compare_request.assessment_id = assessment["assessment_id"]
+                compare_request.expected_assessment_revision = resolved[
+                    "assessment_revision"
+                ]
+                compare_request.audit_run_id = resolved["audit_run"][
+                    "audit_run_id"
+                ]
+                compare_request.expected_audit_run_revision = resolved[
+                    "audit_run"
+                ]["revision"]
+                compare_request.measurement_id = measurement[
+                    "measurement_id"
+                ]
+                compare_request.expected_measurement_revision = resolved[
+                    "measurement"
+                ]["revision"]
+                compared = loaded.save_audit_measurement_comparison(
+                    compare_request
+                )
+                self.assertEqual(compared["measurement"]["status"], "completed")
+
+                complete_request = FakeRequest()
+                complete_request.assessment_id = assessment["assessment_id"]
+                complete_request.expected_assessment_revision = compared[
+                    "assessment_revision"
+                ]
+                complete_request.audit_run_id = compared["audit_run"][
+                    "audit_run_id"
+                ]
+                complete_request.expected_audit_run_revision = compared[
+                    "audit_run"
+                ]["revision"]
+                completed = loaded.complete_audit_run(complete_request)
+
+                report_request = FakeRequest()
+                report_request.assessment_id = assessment["assessment_id"]
+                report_request.audit_run_id = completed["audit_run"][
+                    "audit_run_id"
+                ]
+                report_request.format = "html"
+                report_request.privacy_profile = "share_safe"
+                report = loaded.generate_audit_run_report(report_request)
+                self.assertEqual(report["format"], "html")
+                self.assertNotIn("AA:BB:CC", report["content"])
+                self.assertNotIn("Blue marker", report["content"])
+
     def test_adapter_cold_start_does_not_import_analysis_graph(self):
         service_modules = {
             "pineai_backend.assurance_service",
@@ -287,7 +570,7 @@ class ModuleAdapterTests(unittest.TestCase):
         try:
             loaded = self.load_module()
             loaded._reset_singletons()
-            self.assertEqual(loaded.__version__, "0.6.3")
+            self.assertEqual(loaded.__version__, "0.7.0")
             self.assertTrue(service_modules.isdisjoint(sys.modules))
 
             # Metadata actions should use store directly without loading reports or AI analysis

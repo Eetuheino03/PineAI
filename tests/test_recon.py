@@ -1,8 +1,11 @@
 import copy
 import json
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +17,7 @@ from pineai_backend.recon import (  # noqa: E402
     MAX_CLIENTS,
     MAX_INPUT_BYTES,
     ReconValidationError,
+    _load_oui_database,
     contains_mac_address,
     validate_and_normalize_scan,
 )
@@ -27,6 +31,27 @@ def load_fixture():
 
 
 class ReconNormalizerTests(unittest.TestCase):
+    def test_oui_database_is_cached_by_file_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ouis"
+            path.write_text('{"AABBCC":"Vendor One"}', encoding="utf-8")
+            with mock.patch("pineai_backend.recon.json.load", wraps=json.load) as load:
+                first = _load_oui_database(str(path))
+                second = _load_oui_database(str(path))
+            self.assertEqual(first, {"AABBCC": "Vendor One"})
+            self.assertIs(first, second)
+            self.assertEqual(load.call_count, 1)
+
+            previous_mtime = path.stat().st_mtime_ns
+            path.write_text('{"AABBCC":"Vendor Two"}', encoding="utf-8")
+            os.utime(
+                str(path),
+                ns=(previous_mtime + 1_000_000_000, previous_mtime + 1_000_000_000),
+            )
+            self.assertEqual(
+                _load_oui_database(str(path)), {"AABBCC": "Vendor Two"}
+            )
+
     def test_documented_aliases_and_vendor_lookup(self):
         scan = {
             "APResults": [

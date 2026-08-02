@@ -51,9 +51,12 @@ class BenchmarkHarnessTests(unittest.TestCase):
         )
 
     def test_local_adapter_benchmark_returns_valid_shape(self):
-        results = benchmark_backend.run_local_adapter_benchmark(iterations=3, cold_start_runs=2)
+        results = benchmark_backend.run_local_adapter_benchmark(iterations=1, cold_start_runs=1)
         self.assertEqual(results["schema_version"], "1.0")
         self.assertEqual(results["mode"], "local-adapter")
+        self.assertEqual(results["product"], "PineAssure")
+        self.assertEqual(results["product_mode"], "repeatable_field_audit")
+        self.assertEqual(results["pineai_version"], "0.7.0")
         self.assertTrue(results["passed"])
         self.assertIn("service_reinitialization_ms", results)
         self.assertIn("actions", results)
@@ -160,7 +163,8 @@ class BenchmarkHarnessTests(unittest.TestCase):
         def invalid_capabilities(_req):
             return {
                 "schema_version": "1.2",
-                "product_mode": "customer_audit_foundation",
+                "product_name": "PineAssure",
+                "product_mode": "repeatable_field_audit",
                 "module_actions": [],  # missing required benchmark actions
                 "result_types": [],  # list instead of dict
                 "report_scopes": [],
@@ -226,7 +230,16 @@ class BenchmarkHarnessTests(unittest.TestCase):
             "minimal", 1
         )
         self.assertTrue(results["passed"], results["violations"])
+        self.assertEqual(results["schema_version"], "1.1")
         self.assertEqual(results["mode"], "repeatable-store")
+        self.assertEqual(results["product"], "PineAssure")
+        self.assertEqual(results["product_mode"], "repeatable_field_audit")
+        self.assertEqual(results["pineai_version"], "0.7.0")
+        self.assertTrue(results["native_pins"])
+        self.assertEqual(
+            results["storage_contract"],
+            "split_run_manifest_and_measurement_v1.1",
+        )
         self.assertEqual(results["scenario"], "minimal")
         self.assertEqual(
             results["validation_scope"], "workstation_software_only"
@@ -245,6 +258,10 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertFalse(results["performance_thresholds_applied"])
         self.assertTrue(results["functional_workload_passed"])
         self.assertEqual(results["violations"], [])
+        self.assertIn("logical_disk_delta", results)
+        self.assertGreater(
+            results["logical_disk_delta"]["files_added"]["max"], 0
+        )
         serialized = json.dumps(results)
         self.assertNotIn("AA:BB:CC", serialized)
         self.assertNotIn("Example-Corp", serialized)
@@ -264,14 +281,17 @@ class BenchmarkHarnessTests(unittest.TestCase):
             8,
         )
         self.assertEqual(
-            results["operations"]["analyze_recon"]["successes"],
+            results["operations"]["build_measurement_analysis"]["successes"],
             8,
         )
         self.assertEqual(
             results["final_capacity_snapshot"]["audit_run_used"], 1
         )
         self.assertGreater(
-            results["document_sizes"]["audit_run_max"], 0
+            results["document_sizes"]["audit_run_manifest_max"], 0
+        )
+        self.assertGreater(
+            results["document_sizes"]["audit_measurement_max"], 0
         )
 
     def test_repeatable_store_frozen_limit_boundaries(self):
@@ -281,21 +301,28 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertTrue(results["passed"], results["violations"])
         capacity = results["final_capacity_snapshot"]
         self.assertEqual(
-            capacity["measurement_point_active_limit"], 64
+            capacity["measurement_point_active_limit"], 16
         )
         self.assertEqual(
             capacity["measurement_point_active_used"], 1
         )
         self.assertEqual(
-            capacity["measurement_point_total_limit"], 90
+            capacity["measurement_point_total_limit"], 32
         )
         self.assertEqual(
-            capacity["measurement_point_total_used"], 90
+            capacity["measurement_point_total_used"], 32
         )
-        self.assertEqual(capacity["audit_run_limit"], 128)
-        self.assertEqual(capacity["audit_run_used"], 128)
+        self.assertEqual(capacity["assignments_per_run_limit"], 16)
+        self.assertEqual(capacity["audit_run_limit"], 32)
+        self.assertEqual(capacity["audit_run_used"], 32)
         self.assertEqual(
-            capacity["event_reserved_for_run_closure"], 128
+            results["operations"]["create_max_assignment_audit_run"][
+                "successes"
+            ],
+            1,
+        )
+        self.assertEqual(
+            capacity["event_reserved_for_run_closure"], 32
         )
 
     def test_repeatable_store_scenario_iteration_caps(self):
@@ -387,7 +414,14 @@ class SyntheticSocketServerTests(unittest.TestCase):
             req = json.loads(req_data.decode("utf-8").strip())
             action = req.get("action")
             if action == "health":
-                resp = {"status": "ok", "module": "PineAI", "version": "0.6.3", "backend_version": "0.6.3"}
+                resp = {
+                    "status": "ok",
+                    "module": "PineAI",
+                    "product_name": "PineAssure",
+                    "product_mode": "repeatable_field_audit",
+                    "version": "0.7.0",
+                    "backend_version": "0.7.0",
+                }
             elif action == "platform_capabilities":
                 resp = {"schema_version": "1.0", "status": "ready", "storage": {}, "identity": {}, "recon_control": False}
             elif action == "list_assessments":
@@ -397,25 +431,39 @@ class SyntheticSocketServerTests(unittest.TestCase):
             elif action == "assurance_capabilities":
                 resp = {
                     "schema_version": "1.2",
-                    "product_mode": "customer_audit_foundation",
-                    "backend_version": "0.6.3",
-                    "module_actions": [
-                        "health",
-                        "platform_capabilities",
-                        "list_assessments",
-                        "list_measurement_profiles",
-                        "assurance_capabilities",
-                    ],
+                    "product_name": "PineAssure",
+                    "product_mode": "repeatable_field_audit",
+                    "backend_version": "0.7.0",
+                    "module_actions": list(benchmark_backend.REQUIRED_ACTIONS),
                     "result_types": {},
                     "report_scopes": [],
                     "recon_control": False,
+                }
+            elif action == "repeatable_audit_capabilities":
+                resp = {
+                    "schema_version": "1.0",
+                    "product": {"name": "PineAssure"},
+                    "public_actions": list(
+                        benchmark_backend.REPEATABLE_REQUIRED_ACTIONS
+                    ),
+                    "limits": {},
+                    "hardware_calibrated": False,
+                }
+            elif action == "resource_telemetry":
+                resp = {
+                    "schema_version": "1.0",
+                    "memory": {},
+                    "storage": {},
+                    "artifacts": {},
+                    "scan_processing": {},
+                    "guard": {"hardware_calibrated": False},
                 }
             else:
                 resp = {"error": {"code": "unknown_action"}}
             sock.sendall(json.dumps(resp).encode("utf-8") + b"\n")
 
         self.start_mock_server(valid_handler)
-        results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=2, socket_path=self.socket_path)
+        results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=1, socket_path=self.socket_path)
         self.assertTrue(results["passed"])
         self.assertEqual(results["connection_mode"], "attach")
         self.assertFalse(results["protocol_validated"])
@@ -425,7 +473,14 @@ class SyntheticSocketServerTests(unittest.TestCase):
     def test_valid_json_without_newline_fails_framing(self):
         def no_newline_handler(sock):
             sock.recv(1024)
-            valid_json = json.dumps({"status": "ok", "module": "PineAI", "version": "0.6.3", "backend_version": "0.6.3"})
+            valid_json = json.dumps({
+                "status": "ok",
+                "module": "PineAI",
+                "product_name": "PineAssure",
+                "product_mode": "repeatable_field_audit",
+                "version": "0.7.0",
+                "backend_version": "0.7.0",
+            })
             sock.sendall(valid_json.encode("utf-8"))  # Missing trailing \n
 
         self.start_mock_server(no_newline_handler)
@@ -446,7 +501,14 @@ class SyntheticSocketServerTests(unittest.TestCase):
     def test_fragmented_response_succeeds(self):
         def fragmented_handler(sock):
             sock.recv(1024)
-            resp = json.dumps({"status": "ok", "module": "PineAI", "version": "0.6.3", "backend_version": "0.6.3"}).encode("utf-8") + b"\n"
+            resp = json.dumps({
+                "status": "ok",
+                "module": "PineAI",
+                "product_name": "PineAssure",
+                "product_mode": "repeatable_field_audit",
+                "version": "0.7.0",
+                "backend_version": "0.7.0",
+            }).encode("utf-8") + b"\n"
             mid = len(resp) // 2
             sock.sendall(resp[:mid])
             time.sleep(0.02)

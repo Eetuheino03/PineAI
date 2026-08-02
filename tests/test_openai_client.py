@@ -18,12 +18,18 @@ ASSETS = (
 sys.path.insert(0, str(ASSETS))
 
 from pineai_backend import __version__  # noqa: E402
-from pineai_backend.openai_client import OpenAIClient, OpenAIClientError  # noqa: E402
+from pineai_backend.openai_client import (  # noqa: E402
+    MAX_RESPONSE_BYTES,
+    OpenAIClient,
+    OpenAIClientError,
+)
 
 
 class FakeResponse:
-    def __init__(self, body):
-        self.body = json.dumps(body).encode("utf-8")
+    def __init__(self, body, headers=None, encoded=False):
+        self.body = body if encoded else json.dumps(body).encode("utf-8")
+        self.headers = headers or Message()
+        self.read_count = 0
 
     def __enter__(self):
         return self
@@ -31,8 +37,9 @@ class FakeResponse:
     def __exit__(self, *_args):
         return False
 
-    def read(self):
-        return self.body
+    def read(self, size=-1):
+        self.read_count += 1
+        return self.body if size < 0 else self.body[:size]
 
 
 def response_body(content):
@@ -146,6 +153,35 @@ class OpenAIClientTests(unittest.TestCase):
         with self.assertRaises(OpenAIClientError) as response:
             invalid.analyze_assurance({}, "en", "device_test")
         self.assertEqual(response.exception.code, "invalid_response")
+
+    def test_oversized_responses_are_rejected_before_json_parsing(self):
+        declared_headers = Message()
+        declared_headers["Content-Length"] = str(MAX_RESPONSE_BYTES + 1)
+        declared = FakeResponse(b"{}", headers=declared_headers, encoded=True)
+
+        oversized = b"x" * (MAX_RESPONSE_BYTES + 1)
+        undeclared = FakeResponse(oversized, encoded=True)
+
+        chunked_headers = Message()
+        chunked_headers["Transfer-Encoding"] = "chunked"
+        chunked = FakeResponse(
+            oversized, headers=chunked_headers, encoded=True
+        )
+
+        for response in (declared, undeclared, chunked):
+            client = OpenAIClient(
+                "secret",
+                "model",
+                opener=lambda *_args, _response=response, **_kwargs: _response,
+                max_attempts=1,
+            )
+            with self.assertRaises(OpenAIClientError) as raised:
+                client.analyze_assurance({}, "en", "device_test")
+            self.assertEqual(raised.exception.code, "response_too_large")
+
+        self.assertEqual(declared.read_count, 0)
+        self.assertEqual(undeclared.read_count, 1)
+        self.assertEqual(chunked.read_count, 1)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,10 @@
+import copy
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -162,6 +164,53 @@ class CustomerAuditIntegrationTests(unittest.TestCase):
         )["assessment"]
         return service, assessment, measurement, preview
 
+    def test_customer_comparison_linked_tampering_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service, assessment, measurement, _preview = (
+                self.create_active_foundation(directory)
+            )
+            current = fixture_scan()
+            current["APResults"].append(
+                {
+                    "ssid": "Example-Corp",
+                    "bssid": "AA:BB:CC:00:00:03",
+                    "encryption": 4,
+                    "channel": 11,
+                    "wps": 0,
+                }
+            )
+            persisted = service.analyze_recon(
+                assessment["assessment_id"],
+                assessment["revision"],
+                current,
+                self.build_context(measurement, 4),
+            )
+            comparison_id = persisted["comparison"]["comparison_id"]
+            path = service.store._comparison_path(
+                assessment["assessment_id"], comparison_id
+            )
+            original = json.loads(path.read_text(encoding="utf-8"))
+            self.assertTrue(original["observed_finding_ids"])
+
+            occurrence_digest = copy.deepcopy(original)
+            occurrence_digest["occurrence_digest"] = "f" * 64
+            missing_observed = copy.deepcopy(original)
+            missing_observed["observed_finding_ids"] = []
+            baseline_pin = copy.deepcopy(original)
+            baseline_pin["pinned_versions"]["baseline_digest"] = "f" * 64
+            for corrupted in (
+                occurrence_digest,
+                missing_observed,
+                baseline_pin,
+            ):
+                path.write_text(json.dumps(corrupted), encoding="utf-8")
+                with self.assertRaises(BackendError) as raised:
+                    service.store.get_comparison(
+                        assessment["assessment_id"], comparison_id
+                    )
+                self.assertEqual(raised.exception.code, "storage_error")
+            path.write_text(json.dumps(original), encoding="utf-8")
+
     def test_full_consensus_policy_evidence_and_report_workflow(self):
         with tempfile.TemporaryDirectory() as directory:
             (
@@ -274,6 +323,79 @@ class CustomerAuditIntegrationTests(unittest.TestCase):
                 },
                 "local_full",
             )
+            with mock.patch.object(
+                service.store,
+                "list_occurrence_sets",
+                wraps=service.store.list_occurrence_sets,
+            ) as occurrence_listing:
+                service.prepare_report(
+                    assessment["assessment_id"],
+                    {
+                        "type": "comparison",
+                        "comparison_id": comparison_id,
+                    },
+                    "local_full",
+                )
+                service.prepare_report(
+                    assessment["assessment_id"],
+                    {"type": "assessment_current"},
+                    "local_full",
+                )
+                occurrence_listing.assert_not_called()
+            with mock.patch.object(
+                service.store,
+                "_read_events",
+                wraps=service.store._read_events,
+            ) as comparison_event_reads:
+                service.store.list_comparisons(
+                    assessment["assessment_id"]
+                )
+            self.assertEqual(comparison_event_reads.call_count, 1)
+            with mock.patch.object(
+                service.store,
+                "_read_events",
+                wraps=service.store._read_events,
+            ) as profile_event_reads:
+                service.store.list_assurance_profile_versions(
+                    assessment["assessment_id"]
+                )
+            self.assertEqual(profile_event_reads.call_count, 1)
+            with mock.patch(
+                "pineai_backend.assessment_store.MAX_CUSTOMER_LIST_BYTES",
+                1,
+            ), mock.patch.object(
+                service.store,
+                "_read_comparison_record_unlocked",
+                wraps=service.store._read_comparison_record_unlocked,
+            ) as comparison_reader:
+                with self.assertRaises(BackendError) as comparison_limit:
+                    service.store.list_comparisons(
+                        assessment["assessment_id"]
+                    )
+            self.assertEqual(
+                comparison_limit.exception.code,
+                "storage_limit_exceeded",
+            )
+            comparison_reader.assert_not_called()
+            with mock.patch(
+                "pineai_backend.customer_store.MAX_CUSTOMER_LIST_BYTES",
+                1,
+            ), mock.patch.object(
+                service.store,
+                "_read_assurance_profile_record_unlocked",
+                wraps=(
+                    service.store._read_assurance_profile_record_unlocked
+                ),
+            ) as profile_reader:
+                with self.assertRaises(BackendError) as profile_limit:
+                    service.store.list_assurance_profile_versions(
+                        assessment["assessment_id"]
+                    )
+            self.assertEqual(
+                profile_limit.exception.code,
+                "storage_limit_exceeded",
+            )
+            profile_reader.assert_not_called()
             report = service.generate_report(
                 assessment["assessment_id"],
                 comparison_id,
@@ -343,16 +465,61 @@ class CustomerAuditIntegrationTests(unittest.TestCase):
                 assessment["assessment_id"], comparison_id
             )
             finding = analyzed["findings"][0]
-            service.store.update_finding(
+            prepared_before = service.prepare_ai_analysis(
+                assessment["assessment_id"], comparison_id, None, None
+            )["cloud_payload"]
+            updated = service.store.update_finding(
                 assessment["assessment_id"],
                 analyzed["assessment"]["revision"],
                 finding["finding_id"],
                 "acknowledged",
             )
+            prepared_after = service.prepare_ai_analysis(
+                assessment["assessment_id"], comparison_id, None, None
+            )["cloud_payload"]
+            self.assertEqual(prepared_before, prepared_after)
+            self.assertEqual(
+                prepared_after["comparison"]["finding_source"],
+                "immutable_occurrence",
+            )
+            self.assertFalse(
+                prepared_after["comparison"]["legacy_limited"]
+            )
             after = service.store.get_occurrence_set(
                 assessment["assessment_id"], comparison_id
             )
             self.assertEqual(before, after)
+
+            unrelated_scan = fixture_scan()
+            hidden = next(
+                item
+                for item in unrelated_scan["APResults"]
+                if item["bssid"] == "DE:AD:BE:EF:00:01"
+            )
+            hidden["wps"] = 1
+            unrelated = service.analyze_recon(
+                assessment["assessment_id"],
+                updated["assessment"]["revision"],
+                unrelated_scan,
+                self.build_context(measurement, 6),
+            )
+            original_ids = {
+                item["finding_id"]
+                for item in before["lifecycle_findings"]
+            }
+            unrelated_id = next(
+                item["finding_id"]
+                for item in unrelated["findings"]
+                if item["finding_id"] not in original_ids
+            )
+            with self.assertRaises(BackendError) as raised:
+                service.prepare_ai_analysis(
+                    assessment["assessment_id"],
+                    comparison_id,
+                    [unrelated_id],
+                    None,
+                )
+            self.assertEqual(raised.exception.code, "finding_not_found")
             current_report = service.prepare_report(
                 assessment["assessment_id"],
                 {"type": "assessment_current"},
@@ -365,6 +532,27 @@ class CustomerAuditIntegrationTests(unittest.TestCase):
                 current_report["scope_digest"],
                 history_report["scope_digest"],
             )
+            with self.assertRaises(BackendError) as raised:
+                service.store.list_occurrence_sets(
+                    assessment["assessment_id"], max_total_bytes=1
+                )
+            self.assertEqual(raised.exception.code, "report_limit")
+            with mock.patch(
+                "pineai_backend.assurance_service."
+                "MAX_REPORT_HISTORY_MATERIAL_BYTES",
+                1,
+            ):
+                with self.assertRaises(BackendError) as raised:
+                    service.prepare_report(
+                        assessment["assessment_id"],
+                        {"type": "assessment_history"},
+                    )
+                with self.assertRaises(BackendError) as list_raised:
+                    service.list_observed_changes(
+                        assessment["assessment_id"]
+                    )
+            self.assertEqual(raised.exception.code, "report_limit")
+            self.assertEqual(list_raised.exception.code, "report_limit")
 
     def test_consensus_model_and_occurrence_fields_are_source_bound(self):
         with tempfile.TemporaryDirectory() as directory:

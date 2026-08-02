@@ -78,6 +78,7 @@ def _snapshot(number, assets, observed_at=None, context=None):
         "snapshot_id": "snapshot_{0:016x}".format(number),
         "snapshot_digest": digest,
         "observed_at": observed_at,
+        "scan_metadata": {"scan_id": "saved-scan-{0}".format(number)},
         "comparability_profile": profile,
         "access_points": copy.deepcopy(assets),
     }
@@ -361,6 +362,114 @@ class ConsensusTests(unittest.TestCase):
             "unknown",
         )
 
+    def test_consensus_time_uses_shared_strict_rfc3339_rules(self):
+        scans = self._five_snapshots()[:2]
+        scans[0]["observed_at"] = "2026-07-28t10:00:00.123456789z"
+        scans[1]["observed_at"] = "2026-07-28T12:00:00+02:00"
+        window = build_consensus_baseline(scans)["observation_window"]
+        self.assertEqual(window["status"], "bounded")
+        self.assertEqual(window["duration_seconds"], 0)
+
+        for invalid in (
+            "2026-07-28 10:00:00Z",
+            "2026-07-28T10:00:00",
+            "2026-07-28",
+            "2026-07-28T24:00:00Z",
+        ):
+            candidate = copy.deepcopy(self._five_snapshots()[:2])
+            candidate[0]["observed_at"] = invalid
+            with self.subTest(value=invalid):
+                with self.assertRaises(BackendError) as raised:
+                    build_consensus_baseline(candidate)
+                self.assertEqual(
+                    raised.exception.code, "invalid_consensus_time"
+                )
+
+        for outside_utc_range in (
+            "0001-01-01T00:00:00+23:59",
+            "9999-12-31T23:59:59-23:59",
+        ):
+            candidate = copy.deepcopy(self._five_snapshots()[:2])
+            candidate[0]["observed_at"] = outside_utc_range
+            with self.subTest(value=outside_utc_range):
+                with self.assertRaises(BackendError) as raised:
+                    build_consensus_baseline(candidate)
+                self.assertEqual(
+                    raised.exception.code, "invalid_consensus_time"
+                )
+
+    def test_consensus_window_preserves_nanosecond_order_and_exact_limit(self):
+        scans = self._five_snapshots()[:2]
+        scans[0]["observed_at"] = "2026-07-28T10:00:00.123456788Z"
+        scans[1]["observed_at"] = "2026-07-28T10:00:00.123456789Z"
+        window = build_consensus_baseline(scans)["observation_window"]
+        self.assertEqual(window["started_at"], "2026-07-28T10:00:00.123456788Z")
+        self.assertEqual(window["ended_at"], "2026-07-28T10:00:00.123456789Z")
+        self.assertEqual(window["duration_seconds"], 0)
+
+        scans[0]["observed_at"] = "2026-07-28T10:00:00.100000000Z"
+        scans[1]["observed_at"] = "2026-07-29T10:00:00.900000000Z"
+        with self.assertRaises(BackendError) as raised:
+            build_consensus_baseline(scans, max_source_age_hours=24)
+        self.assertEqual(
+            raised.exception.code, "consensus_time_window_exceeded"
+        )
+
+    def test_same_saved_scan_cannot_be_inflated_by_label_changes(self):
+        scan = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        metadata = {
+            "scan_id": "saved-scan-42",
+            "date": "2026-07-28T10:00:00Z",
+            "scan_time": 180,
+            "coverage": ["2.4"],
+        }
+        first = resolve_assets(
+            scan,
+            dict(metadata, label="First label"),
+            b"s" * 32,
+        )
+        second = resolve_assets(
+            scan,
+            dict(metadata, label="Second label"),
+            b"s" * 32,
+        )
+        self.assertNotEqual(first["snapshot_id"], second["snapshot_id"])
+        with self.assertRaises(BackendError) as raised:
+            build_consensus_baseline([first, second])
+        self.assertEqual(
+            raised.exception.code, "duplicate_consensus_snapshot"
+        )
+
+    def test_consensus_requires_a_stable_saved_scan_identifier(self):
+        for scan_metadata in (None, {}, {"scan_id": None}, {"scan_id": ""}):
+            scans = self._five_snapshots()[:2]
+            scans[0]["scan_metadata"] = scan_metadata
+            with self.subTest(scan_metadata=scan_metadata):
+                with self.assertRaises(BackendError) as raised:
+                    build_consensus_baseline(scans)
+                self.assertEqual(
+                    raised.exception.code, "invalid_consensus_input"
+                )
+
+    def test_identical_facts_from_distinct_saved_scans_are_allowed(self):
+        assets = [_asset(1)]
+        first = _snapshot(
+            1, assets, observed_at="2026-07-28T10:00:00Z"
+        )
+        later = _snapshot(
+            2, assets, observed_at="2026-07-28T11:00:00Z"
+        )
+        first["scan_metadata"] = {
+            "scan_id": "saved-scan-a",
+            "label": "same facts",
+        }
+        later["scan_metadata"] = {
+            "scan_id": "saved-scan-b",
+            "label": "same facts",
+        }
+        model = build_consensus_baseline([first, later])
+        self.assertEqual(model["sample_count"], 2)
+
     def test_source_age_override_is_bounded_or_explicitly_unbounded(self):
         scans = self._five_snapshots()
         with self.assertRaises(BackendError) as raised:
@@ -385,6 +494,12 @@ class ConsensusTests(unittest.TestCase):
                 self.assertEqual(
                     raised.exception.code, "invalid_max_source_age"
                 )
+
+    def test_capabilities_describe_default_not_maximum_window(self):
+        policy = consensus_capabilities()["policies"][0]
+        self.assertEqual(policy["default_window_seconds"], 86400)
+        self.assertNotIn("maximum_window_seconds", policy)
+        self.assertEqual(policy["maximum_max_source_age_hours"], 168)
 
     def test_capabilities_publish_operator_limits(self):
         policy = consensus_capabilities()["policies"][0]
