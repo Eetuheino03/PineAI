@@ -158,6 +158,50 @@ class PackageToolTests(unittest.TestCase):
                 )
             self.assertEqual(raised.exception.code, "bundle_mismatch")
 
+    def test_stage_rejects_mark_vii_unsupported_umd_dependencies(self):
+        dependency_expressions = (
+            "require('rxjs')",
+            'require ( "rxjs/operators" )',
+            "require('@angular/cdk/scrolling')",
+            'require ( "@angular/cdk/scrolling/testing" )',
+        )
+        for expression in dependency_expressions:
+            with self.subTest(expression=expression):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    bundle = root / "PineAI.umd.js"
+                    bundle.write_text(
+                        "(function(){%s;}());\n" % expression,
+                        encoding="utf-8",
+                    )
+                    with self.assertRaises(package_tool.PackageError) as raised:
+                        package_tool.stage_runtime(bundle, root / "dist")
+                    self.assertEqual(
+                        raised.exception.code,
+                        "unsupported_umd_dependency",
+                    )
+
+    def test_archive_rejects_mark_vii_unsupported_umd_dependency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = self.build_package(directory)
+            entries = self.entries(original)
+            for index, (member, payload) in enumerate(entries):
+                if member.name == "PineAI/PineAI.umd.js":
+                    entries[index] = (
+                        member,
+                        b"(function(){require('rxjs/operators');}());\n",
+                    )
+                    break
+            else:
+                self.fail("runtime bundle was missing from the package")
+
+            tampered = root / "unsupported-dependency.tar.gz"
+            self.write_entries(tampered, entries)
+            self.assert_package_error(
+                tampered, "unsupported_umd_dependency"
+            )
+
     @unittest.skipIf(
         os.name == "nt", "symlink creation is not portable on Windows"
     )

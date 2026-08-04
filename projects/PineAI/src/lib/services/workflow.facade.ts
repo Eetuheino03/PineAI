@@ -1,5 +1,4 @@
 import {Injectable} from '@angular/core';
-import {BehaviorSubject, Observable} from 'rxjs';
 import {
     Assessment,
     MeasurementProfile,
@@ -52,14 +51,12 @@ function initialState(): WorkflowState {
 
 @Injectable({providedIn: 'root'})
 export class WorkflowFacade {
-    private stateSubject = new BehaviorSubject<WorkflowState>(initialState());
+    private currentState = initialState();
     private rawScans: {[scanId: string]: any} = {};
     private rawScanOrder: string[] = [];
 
-    readonly state$: Observable<WorkflowState> = this.stateSubject.asObservable();
-
     get snapshot(): WorkflowState {
-        return this.stateSubject.value;
+        return this.currentState;
     }
 
     setAssessment(assessment: Assessment | null, activeBaselineId: string = ''): void {
@@ -312,11 +309,11 @@ export class WorkflowFacade {
         if (emit) {
             this.emit(next);
         } else {
-            this.stateSubject.next(next);
+            this.currentState = next;
         }
     }
 
     private emit(next: WorkflowState): void {
-        this.stateSubject.next(next);
+        this.currentState = next;
     }
 }

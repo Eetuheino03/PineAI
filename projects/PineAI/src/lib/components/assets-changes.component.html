@@ -189,15 +189,12 @@
             <mat-card-subtitle>Observed identifiers are displayed as untrusted data.</mat-card-subtitle>
             <mat-card-content>
                 <div *ngIf="!accessPoints.length" class="empty-state">No access points resolved.</div>
-                <cdk-virtual-scroll-viewport
+                <div
                     *ngIf="accessPoints.length"
                     class="ap-viewport"
-                    [itemSize]="72"
-                    minBufferPx="288"
-                    maxBufferPx="576"
                     style="height: 360px;">
                     <mat-list>
-                        <mat-list-item *cdkVirtualFor="let ap of accessPoints; trackBy: trackByBssid">
+                        <mat-list-item *ngFor="let ap of accessPoints; trackBy: trackByBssid">
                             <mat-icon mat-list-icon>router</mat-icon>
                             <div mat-line>
                                 <span class="untrusted">{{ ssid(ap) }}</span>
@@ -209,7 +206,7 @@
                                 ap.encryption_code : (ap.encryption || 'unknown') }}</span>
                         </mat-list-item>
                     </mat-list>
-                </cdk-virtual-scroll-viewport>
+                </div>
             </mat-card-content>
         </mat-card>
 

@@ -44,6 +44,12 @@ PRIVATE_KEY_LABELS = (
 SOURCE_MAP_TRAILER = b"//# sourceMappingURL=PineAI.umd.js.map"
 CANONICAL_GZIP_HEADER = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff"
 USTAR_MAGIC = b"ustar\x0000"
+UNSUPPORTED_MARK_VII_UMD_DEPENDENCIES = re.compile(
+    rb"require\s*\(\s*(['\"])(?:"
+    rb"rxjs(?:/[^'\"\s]+)?|"
+    rb"@angular/cdk/scrolling(?:/[^'\"\s]+)?"
+    rb")\1\s*\)"
+)
 
 
 class PackageError(Exception):
@@ -309,6 +315,14 @@ def _validate_runtime_bytes(path: str, payload: bytes) -> None:
         marker in payload for marker in private_key_markers
     ):
         raise PackageError("secret_detected", "package contains a likely secret")
+    if (
+        path == "PineAI.umd.js"
+        and UNSUPPORTED_MARK_VII_UMD_DEPENDENCIES.search(payload)
+    ):
+        raise PackageError(
+            "unsupported_umd_dependency",
+            "frontend bundle requires a dependency unavailable on Mark VII",
+        )
 
 
 def _sanitize_generated_bundle(payload: bytes) -> bytes:

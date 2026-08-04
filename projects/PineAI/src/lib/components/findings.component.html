@@ -81,19 +81,15 @@
         </div>
 
         <div *ngIf="filteredFindings.length" class="findings-split-grid">
-            <!-- Left Pane: Virtualized Summary List -->
+            <!-- Left Pane: Bounded Summary List -->
             <mat-card class="finding-summary-card">
                 <mat-card-title style="font-size: 14px; padding: 12px 16px 0;">
                     Finding List ({{ filteredFindings.length }})
                 </mat-card-title>
-                <cdk-virtual-scroll-viewport
-                    class="finding-summary-viewport"
-                    [itemSize]="64"
-                    minBufferPx="256"
-                    maxBufferPx="512">
+                <div class="finding-summary-viewport">
                     <mat-nav-list>
                         <mat-list-item
-                            *cdkVirtualFor="let finding of filteredFindings; trackBy: trackByFindingId"
+                            *ngFor="let finding of filteredFindings; trackBy: trackByFindingId"
                             (click)="selectFinding(finding)"
                             [class.active-finding]="selectedFinding?.finding_id === finding.finding_id"
                             style="cursor: pointer;">
@@ -106,7 +102,7 @@
                             </div>
                         </mat-list-item>
                     </mat-nav-list>
-                </cdk-virtual-scroll-viewport>
+                </div>
             </mat-card>
 
             <!-- Right Pane: Detail View for Selected Finding -->

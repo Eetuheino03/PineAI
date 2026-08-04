@@ -405,6 +405,13 @@ table {
 
 .finding-summary-viewport {
     height: 460px;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.ap-viewport {
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 @media (min-width: 721px) and (max-width: 980px) {
