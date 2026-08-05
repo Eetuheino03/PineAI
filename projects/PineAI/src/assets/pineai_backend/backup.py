@@ -20,6 +20,7 @@ import shutil
 import stat
 import tarfile
 import tempfile
+import time
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -55,10 +56,29 @@ MAX_ASSESSMENTS_FOR_BACKUP = 1000
 MAX_PAX_HEADER_BYTES = 4 * 1024
 MAX_PAX_TOTAL_BYTES = 2 * 1024 * 1024
 MAX_PAX_HEADERS = MAX_MEMBERS
+RESTORE_REPLACE_RETRY_SECONDS = 2.0
+RESTORE_REPLACE_RETRY_INTERVAL_SECONDS = 0.05
 RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
     r"(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$"
 )
+
+
+def _publish_restore_staging(staging: Path, target: Path) -> None:
+    """Publish a complete restore tree across transient Windows file locks."""
+
+    deadline = time.monotonic() + RESTORE_REPLACE_RETRY_SECONDS
+    while True:
+        try:
+            os.replace(str(staging), str(target))
+            return
+        except PermissionError:
+            # Antivirus and sync providers can briefly retain directory
+            # handles after archive validation. Retrying the same atomic
+            # replacement keeps the fail-closed publication boundary.
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(RESTORE_REPLACE_RETRY_INTERVAL_SECONDS)
 
 
 def _validate_local_pax_payload(archive: tarfile.TarFile, size: int) -> str:
@@ -1546,7 +1566,7 @@ def restore_backup_staging(input_path: str, target: str) -> Dict[str, Any]:
                     "could not prepare restore target",
                 )
         try:
-            os.replace(str(staging), str(target_path))
+            _publish_restore_staging(staging, target_path)
         except OSError:
             if removed_empty_target and not target_path.exists():
                 try:

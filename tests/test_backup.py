@@ -280,6 +280,45 @@ class BackupTests(unittest.TestCase):
                     0o600,
                 )
 
+    def test_restore_retries_transient_atomic_replace_denial(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            archive = Path(directory) / "retry.tar.gz"
+            create_backup(str(source), str(archive))
+            target = Path(directory) / "restore-retry"
+            real_replace = os.replace
+            publish_attempts = []
+
+            def transient_replace(source_path, target_path):
+                if Path(target_path) == target:
+                    publish_attempts.append((source_path, target_path))
+                    if len(publish_attempts) < 3:
+                        raise PermissionError("transient scanner lock")
+                return real_replace(source_path, target_path)
+
+            with mock.patch.dict(
+                os.environ, {"PINEAI_CONFIG_DIR": str(source)}, clear=False
+            ):
+                with mock.patch.object(
+                    backup_module.os,
+                    "replace",
+                    side_effect=transient_replace,
+                ):
+                    with mock.patch.object(
+                        backup_module.time, "sleep"
+                    ) as sleep:
+                        restored = restore_backup_staging(
+                            str(archive), str(target)
+                        )
+
+            self.assertTrue(restored["restored"])
+            self.assertEqual(len(publish_attempts), 3)
+            self.assertEqual(sleep.call_count, 2)
+            self.assertEqual(
+                (target / "pseudonymization.key").read_bytes(),
+                (source / "pseudonymization.key").read_bytes(),
+            )
+
     def test_create_requires_identity_and_never_overwrites_output(self):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source(directory)
