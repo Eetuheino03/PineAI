@@ -1,7 +1,15 @@
-# Customer Audit Foundation workflow
+# PineAssure Customer Audit Foundation
 
-PineAI `0.6.3` uses saved Hak5 Recon observations to create repeatable,
-evidence-backed wireless change audits. It never starts or stops a radio.
+PineAssure `0.7.0` uses saved Hak5 Recon observations to create repeatable,
+evidence-backed wireless change audits. The technical Hak5 module ID remains
+`PineAI`. It never starts or stops a radio.
+
+Customer Audit remains the deterministic analysis foundation beneath the
+v0.7.0 Repeatable Field Audit workflow. It owns normalized assets, consensus
+baselines, comparability, inventory and policy evaluation, immutable
+occurrences, evidence, and finding lifecycle. Repeatable Field Audit pins those
+versioned inputs to physical MeasurementPoints and a durable AuditRun; it does
+not replace or weaken Customer Audit authority.
 
 ## Guided workflow
 
@@ -21,6 +29,29 @@ performs a mutation automatically.
 
 Expert mode exposes the original nine domain views. Both modes use the same
 backend contracts and revision checks.
+
+## Repeatable Field Audit integration
+
+An AuditRun assigns 1-16 location-only MeasurementPoints. Every assignment
+pins the point revision and digest, an immutable MeasurementProfile version,
+and a baseline version. The run pins one AssuranceProfile version. A later
+edit cannot silently change those facts.
+
+For each measurement, the operator selects an existing saved Recon observation
+and reviews the deterministic resolution and comparison before saving it. Raw
+Recon JSON remains transient. Completed comparison and occurrence identifiers
+link the run back to the immutable Customer Audit evidence chain.
+
+Multiple draft runs are allowed, but only one run per assessment may be
+`in_progress`. There is no paused state and no background execution. The
+operator may retry an independently failed measurement, complete a run whose
+measurements all succeeded, or cancel it. Only `completed` and `cancelled` runs
+can produce AuditRun reports.
+
+Exact limits, revisions, state transitions, and fields are defined in
+[repeatable-audits-api-v1.md](repeatable-audits-api-v1.md). Workstation and CI
+checks do not establish physical compatibility; the exact `v0.7.0` asset still
+requires the pending [Mark VII validation](mark-vii-validation-v0.7.md).
 
 ## Consensus baseline
 
@@ -131,3 +162,8 @@ identity key. It excludes `openai.key`. The archive is integrity-checked but
 not encrypted, so store and transport it as sensitive material. Restore only
 extracts into an empty staging directory; it never overwrites live state.
 
+Assessment state includes the split Repeatable Field Audit paths under
+`assessments/<assessment_id>/audit_runs/<audit_run_id>/`: the run manifest,
+optional migration marker, and every per-measurement document. Verification and
+staging restore preserve these files and their hashes, so durable in-progress
+runs remain recoverable with the rest of the evidence chain.

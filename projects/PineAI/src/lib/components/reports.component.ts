@@ -116,6 +116,13 @@ export class ReportsComponent {
         this.successMessage = '';
     }
 
+    privacyChanged(): void {
+        if (this.privacyProfile === 'share_safe') {
+            this.includeAi = false;
+        }
+        this.resetReportPreview();
+    }
+
     async prepareReport(): Promise<void> {
         await this.run(async () => {
             await this.pineai.prepareReportScope(

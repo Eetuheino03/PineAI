@@ -14,6 +14,7 @@ import {
     InventoryItem,
     MeasurementContext,
     MeasurementProfile,
+    MeasurementProfileContext,
     PanelErrorMap,
     PineAISettings,
     ReconScan,
@@ -466,8 +467,6 @@ export class PineAIService {
             status: value.status || 'active',
             is_default: !!profile.is_default,
             context: {
-                location_id: profile.location_id || '',
-                measurement_point_id: profile.measurement_point_id || '',
                 scan_profile_id: profile.scan_profile_id || '',
                 radio_profile_id: profile.radio_profile_id || '',
                 interface: profile.interface || '',
@@ -500,8 +499,6 @@ export class PineAIService {
         return {
             name: value.name || '',
             description: value.description || '',
-            location_id: context.location_id || '',
-            measurement_point_id: context.measurement_point_id || '',
             scan_profile_id: context.scan_profile_id || '',
             radio_profile_id: context.radio_profile_id || '',
             interface: context.interface || '',
@@ -518,7 +515,7 @@ export class PineAIService {
         name: string;
         description?: string;
         is_default?: boolean;
-        context: MeasurementContext;
+        context: MeasurementProfileContext;
     }): Promise<MeasurementProfile> {
         const result: any = await this.module<any>(
             this.actionName(
@@ -596,10 +593,11 @@ export class PineAIService {
             this.workflow.selectMeasurementProfile(null);
             return;
         }
-        const source = profile.context || {} as MeasurementContext;
+        const source = profile.context || {} as MeasurementProfileContext;
         this.measurementContext = {
-            location_id: source.location_id || '',
-            measurement_point_id: source.measurement_point_id || '',
+            location_id: this.measurementContext.location_id || '',
+            measurement_point_id:
+                this.measurementContext.measurement_point_id || '',
             scan_profile_id: source.scan_profile_id || '',
             radio_profile_id: source.radio_profile_id || '',
             interface: source.interface || '',
@@ -1629,6 +1627,12 @@ export class PineAIService {
         privacyProfile: 'local_full' | 'share_safe' = 'local_full'
     ): Promise<any> {
         this.requireAssessment();
+        if (privacyProfile === 'share_safe' && includeAi) {
+            throw {
+                code: 'privacy_violation',
+                message: 'Share-safe reports cannot include inline AI prose.'
+            };
+        }
         const selectedScope = scope || this.defaultReportScope();
         if (!this.reportScopePreview ||
             !this.reportScopePreview.scope_digest) {

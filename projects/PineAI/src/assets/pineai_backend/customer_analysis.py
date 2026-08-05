@@ -458,6 +458,7 @@ def lifecycle_findings(
     policy_deviations: List[Dict[str, Any]],
     security_findings: List[Dict[str, Any]],
     secret: bytes,
+    measurement_point_id: str = None,
 ) -> List[Dict[str, Any]]:
     """Adapt authoritative lifecycle issues to the legacy mutable store core."""
     results = []
@@ -472,15 +473,31 @@ def lifecycle_findings(
                 continue
             subject_id = item.get("subject_id")
             rule_id = item.get("rule_id")
-            finding_id = _stable_id(
-                secret,
-                "finding",
+            identity_parts = [
                 assessment_id,
                 result_type,
                 rule_id,
                 subject_id,
+            ]
+            if measurement_point_id is not None:
+                identity_parts.append(measurement_point_id)
+            finding_id = _stable_id(
+                secret,
+                "finding",
+                *identity_parts
             )
             summary = item.get("title") or rule_id
+            details = {
+                "result_type": result_type,
+                "certainty": certainty,
+                "source_result_id": item.get("deviation_id")
+                or item.get("finding_id"),
+                "expected": item.get("expected"),
+                "observed": item.get("observed"),
+                "before_after": item.get("before_after"),
+            }
+            if measurement_point_id is not None:
+                details["measurement_point_id"] = measurement_point_id
             results.append(
                 {
                     "finding_id": finding_id,
@@ -493,15 +510,7 @@ def lifecycle_findings(
                     "evidence_ids": sorted(
                         set(item.get("evidence_ids", []))
                     ),
-                    "details": {
-                        "result_type": result_type,
-                        "certainty": certainty,
-                        "source_result_id": item.get("deviation_id")
-                        or item.get("finding_id"),
-                        "expected": item.get("expected"),
-                        "observed": item.get("observed"),
-                        "before_after": item.get("before_after"),
-                    },
+                    "details": details,
                     "confidence_factors": {
                         "presentation": "categorical_only",
                         "certainty": certainty,

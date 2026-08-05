@@ -17,6 +17,7 @@ from .recon import (
     contains_mac_address,
     validate_and_normalize_scan,
 )
+from .timestamps import rfc3339_order_key, validate_rfc3339
 
 
 ASSURANCE_SCHEMA_VERSION = "1.2"
@@ -332,11 +333,31 @@ def normalize_scan_metadata(value: Any) -> Dict[str, Any]:
             )
         measurement_context = normalize_measurement_context(raw_mc)
 
+    timestamps = {
+        field: validate_rfc3339(
+            value.get(field),
+            field,
+            "invalid_scan_metadata",
+            nullable=True,
+        )
+        for field in ("date", "started_at", "completed_at")
+    }
+    if (
+        timestamps["started_at"] is not None
+        and timestamps["completed_at"] is not None
+        and rfc3339_order_key(timestamps["started_at"])
+        > rfc3339_order_key(timestamps["completed_at"])
+    ):
+        raise BackendError(
+            "invalid_scan_metadata",
+            "completed_at must not precede started_at",
+        )
+
     result = {
         "scan_id": _clean_text(scan_id_value, 128) or None,
-        "date": _clean_text(value.get("date"), 64) or None,
-        "started_at": _clean_text(value.get("started_at"), 64) or None,
-        "completed_at": _clean_text(value.get("completed_at"), 64) or None,
+        "date": timestamps["date"],
+        "started_at": timestamps["started_at"],
+        "completed_at": timestamps["completed_at"],
         "scan_time": None,
         "coverage": [],
         "source": _clean_text(value.get("source"), 64) or "hak5_recon",
@@ -571,7 +592,7 @@ def resolve_assets(
         "median_absolute_deviation_db": _mad(valid_signals, med_signal),
     }
 
-    return {
+    snapshot = {
         "schema_version": ASSURANCE_SCHEMA_VERSION,
         "snapshot_id": snapshot_id,
         "snapshot_digest": snapshot_digest,
@@ -618,6 +639,8 @@ def resolve_assets(
         "networks": network_list,
         "evidence": evidence,
     }
+    snapshot["snapshot_record_digest"] = canonical_digest(snapshot)
+    return snapshot
 
 
 def _profile(snapshot: Dict[str, Any]) -> Dict[str, Any]:
@@ -1255,9 +1278,21 @@ def build_ai_payload(
             raise BackendError("invalid_finding", "finding must be an object")
         details = finding.get("details") if isinstance(finding.get("details"), dict) else {}
         safe_details = {}
-        for key in ("asset_id", "network_id", "before", "after"):
+        for key in ("asset_id", "network_id"):
             if key in details:
                 safe_details[key] = details[key]
+        if finding.get("rule_id") == "security_profile_divergence":
+            for key in ("before", "after"):
+                codes = details.get(key)
+                if (
+                    isinstance(codes, list)
+                    and len(codes) <= 64
+                    and all(
+                        isinstance(code, int) and not isinstance(code, bool)
+                        for code in codes
+                    )
+                ):
+                    safe_details[key] = list(codes)
         changes = details.get("changes")
         if isinstance(changes, dict):
             allowed_change_fields = {
@@ -1294,6 +1329,89 @@ def build_ai_payload(
             }
         )
 
+    comparability = comparison.get("comparability")
+    if not isinstance(comparability, dict):
+        comparability = {}
+    safe_comparability = {}
+    status = comparability.get("status")
+    if status in COMPARABILITY_STATES:
+        safe_comparability["status"] = status
+    for key in (
+        "positive_findings_allowed",
+        "absence_findings_allowed",
+        "lifecycle_updates_allowed",
+        "location_match",
+        "measurement_point_match",
+        "scan_profile_match",
+        "radio_profile_match",
+        "interface_match",
+        "measurement_profile_provenance_match",
+    ):
+        value = comparability.get(key)
+        if value is None or isinstance(value, bool):
+            safe_comparability[key] = value
+    for key in (
+        "comparison_quality_score",
+        "channel_coverage_ratio",
+        "eligible_baseline_ap_count",
+        "reobserved_baseline_ap_count",
+        "baseline_ap_detection_ratio",
+    ):
+        value = comparability.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            safe_comparability[key] = value
+    reasons = comparability.get("reasons")
+    if isinstance(reasons, list):
+        safe_comparability["reasons"] = sorted(
+            set(
+                reason
+                for reason in reasons[:100]
+                if isinstance(reason, str)
+                and re.fullmatch(r"[a-z0-9_]{1,64}", reason)
+            )
+        )
+    quality_factors = comparability.get("quality_factors")
+    if isinstance(quality_factors, dict):
+        projected_quality = {}
+        for key in (
+            "duration_score",
+            "channel_coverage_score",
+            "baseline_detection_score",
+            "radio_profile_score",
+        ):
+            value = quality_factors.get(key)
+            if value is None or (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+            ):
+                projected_quality[key] = value
+        safe_comparability["quality_factors"] = projected_quality
+    signal = comparability.get("matched_ap_signal_stability")
+    if isinstance(signal, dict):
+        projected_signal = {}
+        for key in ("matched_ap_count", "median_absolute_delta_db"):
+            value = signal.get(key)
+            if value is None or (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+            ):
+                projected_signal[key] = value
+        safe_comparability["matched_ap_signal_stability"] = projected_signal
+
+    safe_comparison = {
+        "comparison_id": comparison.get("comparison_id"),
+        "comparability": safe_comparability,
+        "summary": comparison.get("summary"),
+    }
+    if comparison.get("finding_source") in {
+        "immutable_occurrence",
+        "legacy_live_fallback",
+    }:
+        safe_comparison["finding_source"] = comparison["finding_source"]
+        safe_comparison["legacy_limited"] = bool(
+            comparison.get("legacy_limited")
+        )
+
     payload = {
         "schema_version": ASSURANCE_SCHEMA_VERSION,
         "task": "explain_deterministic_wireless_findings",
@@ -1301,11 +1419,7 @@ def build_ai_payload(
         "assessment": {
             "assessment_id": assessment.get("assessment_id"),
         },
-        "comparison": {
-            "comparison_id": comparison.get("comparison_id"),
-            "comparability": comparison.get("comparability"),
-            "summary": comparison.get("summary"),
-        },
+        "comparison": safe_comparison,
         "findings": safe_findings,
         "allowed_evidence_ids": sorted(evidence_ids),
         "authority_notice": (

@@ -1,14 +1,14 @@
-# PineAI
+# PineAssure — Wireless Assurance for WiFi Pineapple
 
-PineAI Baseline & Drift is a portable, offline wireless change-auditing
-module for the WiFi Pineapple Mark VII. It answers what a site looked like in
-an approved state, what changed, how trustworthy the comparison is, and which
-evidence proves each result.
+**Baseline. Detect drift. Prove changes.**
+
+PineAssure is a portable, offline wireless change-auditing module for the WiFi Pineapple Mark VII. It answers what a site looked like in an approved state, what changed, how trustworthy the comparison is, and which evidence proves each result.
 
 ![PineAI Banner](docs/asset.png)
 
-PineAI is not an attack module. Version `0.6.3` is the Customer Audit
-Foundation:
+PineAI is the unchanged Hak5 module identifier; PineAssure is the product
+name. Version `0.7.0` adds Repeatable Field Audits to the existing Customer
+Audit Foundation:
 
 1. load a saved Recon scan through the authenticated Hak5 session;
 2. resolve access points and SSIDs into stable local assets;
@@ -18,6 +18,11 @@ Foundation:
 6. separate observed changes, policy deviations, and security findings;
 7. inspect point-in-time before/after evidence;
 8. export comparison, current-state, or full-history JSON/HTML reports.
+9. define up to 16 physical MeasurementPoints per assessment;
+10. run a durable, operator-driven multi-point AuditRun against immutable
+    profile, baseline, and policy pins;
+11. close and export a deterministic AuditRun report, then resume the same
+    state after closing the browser or restarting the module.
 
 The complete workflow works without an API key or internet connection. An
 optional AI provider may explain existing findings or draft clearly labelled
@@ -48,17 +53,17 @@ Create an installable archive with:
 
 ```bash
 ./build.sh package
-bash scripts/verify-package.sh PineAI-0.6.3.tar.gz
+bash scripts/verify-package.sh PineAI-0.7.0.tar.gz
 ```
 
-The resulting `PineAI-0.6.3.tar.gz` archive can be uploaded through the WiFi
+The resulting `PineAI-0.7.0.tar.gz` archive can be uploaded through the WiFi
 Pineapple management interface. During development, copy the built
 `dist/PineAI/` directory to `/pineapple/modules/PineAI/`.
 
-The `v0.6.3` release is published as a pre-release until its smoke test is
-completed on a physical Mark VII. Automated tests, package integrity, and
-offline behavior are verified independently; no physical-device verification
-is claimed yet.
+The `v0.7.0-rc.1` release candidate remains a pre-release until the exact
+published archive passes the documented physical Mark VII validation. The
+automated suite, package integrity, and offline behavior are separate gates;
+no physical-device verification is claimed by the RC.
 
 ## Operator workflow
 
@@ -73,23 +78,27 @@ The Angular frontend uses the already-authenticated Hak5 session and passes
 the loaded JSON to the PineAI module backend. PineAI does not store the
 Pineapple root password and does not start or stop a Recon scan.
 
-The recommended sequence is:
+The baseline workflow remains available. The v0.7 repeatable field workflow
+is:
 
 ```text
-create assessment
-    -> select a versioned measurement profile
-    -> resolve 2-5 saved Recon scans
-    -> preview, create, and explicitly activate consensus baseline
-    -> import/edit and activate inventory plus fixed policy
-    -> compare and save a later observation
-    -> inspect immutable evidence
-    -> prepare and export a scoped JSON or HTML report
+create assessment and immutable technical profiles
+    -> create physical MeasurementPoints
+    -> create a baseline and AssuranceProfile for each assignment
+    -> create an AuditRun with exact version identifiers
+    -> start the run explicitly
+    -> select and resolve one saved Recon result per point
+    -> save each deterministic comparison
+    -> retry a failed stage or continue after reopening the browser
+    -> complete or cancel the run
+    -> export a local_full or share_safe JSON/HTML report
 ```
 
-See [the frontend guide](docs/frontend.md) for the operator workflow and
-[the backend API](docs/backend-api.md) for module action contracts. The
-machine-readable contract is
-[`baseline-drift-v1.schema.json`](docs/schemas/baseline-drift-v1.schema.json).
+See [the repeatable-audit API](docs/repeatable-audits-api-v1.md) for the
+operator workflow and public action contract, and [the backend API](docs/backend-api.md)
+for the baseline actions. The machine-readable contracts are
+[`repeatable-audits-v1.schema.json`](docs/schemas/repeatable-audits-v1.schema.json)
+and [`baseline-drift-v1.schema.json`](docs/schemas/baseline-drift-v1.schema.json).
 Installation and first-run checks are in
 [the Mark VII installation guide](docs/install-mark-vii.md).
 
@@ -154,10 +163,11 @@ pineai backup restore-staging --input /root/pineai-backup.tar.gz \
 ```
 
 Backups contain assessments, profiles, configuration, and the
-pseudonymization key. They never contain `openai.key`, are not encrypted, and
-must be handled as sensitive material.
+pseudonymization key. Assessment content includes split AuditRun manifests and
+per-measurement documents. Backups never contain `openai.key`, are not
+encrypted, and must be handled as sensitive material.
 
-Legacy engagement data is neither migrated nor read by `0.6.3`. It is left
+Legacy engagement data is neither migrated nor read by `0.7.0`. It is left
 untouched so an operator can recover or remove it separately.
 
 ## Upstream contribution
@@ -178,13 +188,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md),
 
 ## Safety and scope
 
-Use PineAI only with wireless environments you own or are authorized to
-assess. The module is read-only toward the radio in `0.6.3`: it analyzes saved
+Use PineAssure only with wireless environments you own or are authorized to
+assess. The module is read-only toward the radio in `0.7.0`: it analyzes saved
 Recon results and cannot execute validation steps, shell commands, deauth,
 evil-twin, association, capture, or scan-start actions.
 
-The physical Mark VII smoke test for `v0.6.3` is pending. This limitation is
-also recorded in the release notes and implementation handoff.
+The physical Mark VII validation for `v0.7.0` is pending. The release candidate
+is therefore not a final hardware-validated release. The passive validation
+harness and rollback-safe operator instructions are shipped under
+`scripts/markvii/` and `docs/mark-vii-validation-v0.7.md`.
 
 ## License
 

@@ -1,8 +1,10 @@
-# PineAI v0.6.3 Customer Audit Foundation architecture
+# PineAssure v0.7.0 architecture
 
-PineAI is a portable, offline-first wireless change-audit layer for the WiFi
-Pineapple Mark VII. It analyzes saved Hak5 Recon observations. It is not an
-attack assistant, and it never starts, stops, or reconfigures a radio.
+PineAssure is a portable, offline-first wireless assurance and repeatable
+field-audit layer for the WiFi Pineapple Mark VII. The technical Hak5 module
+ID, package root, CLI, and state directory remain `PineAI`, `PineAI/`,
+`pineai`, and `/root/.PineAI`. It analyzes saved Hak5 Recon observations. It is
+not an attack assistant, and it never starts, stops, or reconfigures a radio.
 
 ## Authority boundary
 
@@ -63,6 +65,12 @@ Operator saves analysis
                       |
                       v
 Prepared report scope -> scope digest -> JSON/HTML export
+                      |
+                      v
+Location-only MeasurementPoints -> pinned AuditRun
+                      |
+                      v
+Per-point resolve/compare -> terminal deterministic run report
 ```
 
 Raw Hak5 Recon JSON is held only in memory. PineAI persists normalized
@@ -70,14 +78,18 @@ snapshots and the evidence required to reproduce its conclusions.
 
 ## Measurement profiles and provenance
 
-A MeasurementProfile describes how and where observations are collected:
+A MeasurementProfile describes the operator-declared technical collection
+contract, not the physical measurement location:
 
-- location and measurement-point identifiers;
 - scan- and radio-profile identifiers;
 - interface;
 - declared bands and channels;
 - expected scan duration;
 - explicit confirmation when 5 GHz coverage is claimed.
+
+Physical location and placement instructions belong only to the versioned
+MeasurementPoint. AuditRun assignments bind that location-only point to an
+immutable MeasurementProfile version, baseline, and AssuranceProfile.
 
 Profiles are versioned. A resolved snapshot pins the profile version and
 digest used at collection time. Consensus inputs must use matching measurement
@@ -85,9 +97,22 @@ provenance. A later comparison exposes mismatches as deterministic
 comparability reasons instead of silently treating unlike observations as
 equivalent.
 
+An AuditRun assignment additionally binds a baseline to one physical
+MeasurementPoint: the baseline's
+`measurement_context.measurement_point_id` must equal the assigned point. The
+current scan context is reconstructed from the immutable assignment and pinned
+MeasurementProfile, so untrusted scan metadata cannot override the point
+identity.
+
+This pin is an operator-declared collection contract. Hak5 saved Recon does
+not independently bind the scan to the declared interface, bands, channels,
+duration, or radio profile. The resolve UI and every AuditRun report disclose
+that limitation; PineAssure does not present those settings as device-verified
+measurement facts.
+
 ## Consensus baseline
 
-The primary v0.6.2 baseline is constructed from two to five non-empty resolved
+The consensus baseline is constructed from two to five non-empty resolved
 scans. Input order and AP order do not affect the model digest.
 
 The fixed `strict_80_v1` policy classifies each AP as:
@@ -203,6 +228,13 @@ v0.6.0/v0.6.1 assessments, baselines, comparisons, and findings remain
 readable. Legacy findings are labelled `legacy_read_only`; Customer Audit does
 not reclassify or mutate them retrospectively.
 
+Snapshots written by the current writer include a canonical
+`snapshot_record_digest`. A legacy snapshot without that field remains
+readable, but its record content is explicitly integrity-unbound. Identical
+legacy content may be referenced without rewriting the immutable file, and
+the limitation code `legacy_snapshot_integrity_unbound` is carried into new
+occurrence/report facts.
+
 ## Report boundary
 
 Every report uses one explicit scope:
@@ -226,6 +258,16 @@ report HTML into the module page.
 `local_full` retains local audit identifiers. `share_safe` removes or
 pseudonymizes local identifiers; SSIDs remain hidden unless sharing was
 explicitly enabled. Optional AI prose is clearly labelled non-authoritative.
+Structured `ssid`, `*_ssid`, and `*_ssids` fields are always redacted when
+sharing is disabled. Known SSID literals are also removed from defined finding
+and AI prose fields without rewriting schema versions, IDs, timestamps,
+digests, statuses, or other structural values.
+
+Customer history loading uses a 512 KiB aggregate occurrence budget and the
+canonical customer fact model is capped at 1 MiB. AuditRun reporting loads one
+immutable artifact at a time into a 512 KiB canonical-fact budget and reads
+audit events in bounded pages. These are admission limits, not Mark VII
+performance claims.
 
 ## Persistence and transactions
 
@@ -251,7 +293,12 @@ Runtime state is rooted at `/root/.PineAI/`:
         ├── comparisons/
         ├── findings/
         ├── occurrences/
-        └── exports/
+        ├── exports/
+        └── audit_runs/
+            └── ar_<id>/
+                ├── manifest.json
+                └── measurements/
+                    └── arm_<id>.json
 ```
 
 Private directories are `0700`; JSON, JSONL, key, configuration, occurrence,
@@ -270,15 +317,24 @@ exists, a missing or invalid identity key is a hard failure; PineAI never
 silently generates a replacement identity.
 
 The continuity-backup CLI includes assessments, measurement profiles,
-`config.json`, and the pseudonymization key. It excludes `openai.key`,
-transient locks, and transaction journals. Restore always targets a new or
-empty staging directory and never overwrites live state.
+`config.json`, and the pseudonymization key. Assessment content includes split
+AuditRun manifests and their per-measurement documents. It excludes
+`openai.key`, transient locks, and transaction journals. Restore always targets
+a new or empty staging directory and never overwrites live state.
+
+Creation, verification, and staging restore enforce the same file-path and
+content allowlist. Verification rejects unsupported state files, invalid
+configuration or identity content, raw Hak5 Recon structures, links, special
+files, size mismatches, and digest mismatches before staging writes begin.
+Tar member paths, modes, types, duplicates, declared sizes, and cumulative
+payload size are rejected from each header before advancing through that
+member's compressed body.
 
 See [install-mark-vii.md](install-mark-vii.md) for the exact SSH commands.
 
 ## Radio and network boundaries
 
-PineAI v0.6.3 reads only:
+PineAssure v0.7.0 reads only:
 
 ```text
 GET /api/recon/status
@@ -292,11 +348,32 @@ stop endpoints and does not alter PineAP or radio settings.
 Only optional AI explanation requires an outbound provider connection. All
 authoritative analysis, lifecycle, evidence, and reporting remain local.
 
-## v0.7.0 Repeatable Field Audits Architecture (Contract Frozen)
+## v0.7.0 Repeatable Field Audit architecture
 
-PineAI v0.7.0 introduces multi-point offline wireless change auditing (`MeasurementPoint` and `AuditRun`).
-* **Contract Specification**: `docs/repeatable-audits-api-v1.md`
-* **JSON Schemas**: `docs/schemas/repeatable-audits-v1.schema.json` and `docs/schemas/audit-run-report-v1.schema.json`
-* **Capacity & Storage Bounds**: Assessment-wide snapshot/comparison pools (100 each), 128MB RAM hardware constraints, dynamic event closure reserve, and 3 discriminated failed measurement branches.
-* **Transaction Recovery**: Standardized recovery hooks (`staged`, `prepared`, `target_written`, `committed`, `before_cleanup`, `cleanup_failed`) and abandoned pre-prepare transaction cleanup.
-* **Hardware Validation Gate**: Physical Mark VII validation for `v0.6.3` remains pending. Contract design for `v0.7.0` is frozen as a pre-implementation specification by user authorization.
+PineAssure v0.7 adds operator-driven multi-point auditing to the technical
+`PineAI` module. MeasurementPoints hold only location context. Technical
+settings remain versioned MeasurementProfiles and are pinned with the baseline
+and AssuranceProfile when a run is created.
+
+Limits are 16 active and 32 total points, 16 assignments per run, 32 runs per
+assessment, one `in_progress` run per assessment, and one Recon resolution at a
+time. Runs use one manifest and one file per measurement. Mutations retain the
+existing journal, commit-marker, atomic-replace, and recovery guarantees.
+
+See [Repeatable Field Audit architecture](repeatable-audits.md), the
+[public action guide](repeatable-audits-api-v1.md), and the
+[versioned schema](schemas/repeatable-audits-v1.schema.json).
+
+Workstation and CI validation do not establish Mark VII performance. The
+stable release remains gated by the exact-asset
+[physical validation procedure](mark-vii-validation-v0.7.md).
+
+## PineAI / PineAssure Companion System Architecture (Proposed v0.9.0)
+
+The optional **PineAI Companion** allows a WiFi Pineapple Mark VII to push sealed, privacy-filtered audit bundles directly to an operator-controlled Companion instance over an outbound-only ingress tunnel without public IP addresses, router port forwarding, or stored root SSH credentials.
+
+* **Detailed Specification**: See [docs/companion-architecture.md](companion-architecture.md).
+* **Companion Core**: Shared Python backend (`pineai_companion_core`) serving single-container Docker, native Windows desktop, and native Linux desktop distributions.
+* **Mark VII Outbox**: Bounded local delivery outbox under `/root/.PineAI/outbox/` (max 5 bundles / 64 MiB RAM/disk ceiling) with exponential backoff retry.
+* **Ingress Isolation**: Admin UI binds to `127.0.0.1:8741`. Ingress adapter exposes strictly an allowlisted ingest service (`127.0.0.1:8742`).
+* **Offline Authority**: Mark VII retains 100% deterministic authority. The Companion is strictly an optional storage, analytics, and reporting enhancement.

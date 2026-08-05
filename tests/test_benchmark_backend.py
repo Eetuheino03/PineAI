@@ -14,6 +14,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import benchmark_backend  # noqa: E402
+import benchmark_repeatable_store  # noqa: E402
 
 
 class BenchmarkHarnessTests(unittest.TestCase):
@@ -26,30 +27,44 @@ class BenchmarkHarnessTests(unittest.TestCase):
     def test_iterations_less_than_one_rejected(self):
         res1 = benchmark_backend.run_local_adapter_benchmark(iterations=0, cold_start_runs=1)
         self.assertFalse(res1["passed"])
-        self.assertIn("iterations and cold_start_runs must be >= 1", res1["violations"])
+        self.assertIn("invalid_benchmark_arguments", res1["violations"])
 
         res2 = benchmark_backend.run_local_adapter_benchmark(iterations=-1, cold_start_runs=1)
         self.assertFalse(res2["passed"])
 
         res3 = benchmark_backend.run_mark_vii_socket_benchmark(iterations=0, socket_path="/tmp/test.sock")
         self.assertFalse(res3["passed"])
-        self.assertIn("iterations must be >= 1", res3["violations"])
+        self.assertIn("invalid_benchmark_arguments", res3["violations"])
 
     def test_cold_start_runs_less_than_one_rejected(self):
         res = benchmark_backend.run_local_adapter_benchmark(iterations=1, cold_start_runs=0)
         self.assertFalse(res["passed"])
-        self.assertIn("iterations and cold_start_runs must be >= 1", res["violations"])
+        self.assertIn("invalid_benchmark_arguments", res["violations"])
+
+    def test_untrusted_exception_code_is_not_exposed(self):
+        class UntrustedError(RuntimeError):
+            code = "secret_canary_path"
+
+        self.assertEqual(
+            benchmark_backend.benchmark_exception_code(UntrustedError()),
+            "unexpected_exception",
+        )
 
     def test_local_adapter_benchmark_returns_valid_shape(self):
-        results = benchmark_backend.run_local_adapter_benchmark(iterations=3, cold_start_runs=2)
+        results = benchmark_backend.run_local_adapter_benchmark(iterations=1, cold_start_runs=1)
         self.assertEqual(results["schema_version"], "1.0")
         self.assertEqual(results["mode"], "local-adapter")
+        self.assertEqual(results["product"], "PineAssure")
+        self.assertEqual(results["product_mode"], "repeatable_field_audit")
+        self.assertEqual(results["pineai_version"], "0.7.0")
         self.assertTrue(results["passed"])
-        self.assertIn("service_initialization_ms", results)
+        self.assertIn("service_reinitialization_ms", results)
         self.assertIn("actions", results)
         self.assertIn("health", results["actions"])
         self.assertIn("rss_mib", results)
         self.assertIn("cache", results)
+        self.assertFalse(results["performance_thresholds_applied"])
+        self.assertTrue(results["functional_workload_passed"])
         self.assertEqual(len(results["violations"]), 0)
 
     def test_local_adapter_environment_and_singletons_restoration(self):
@@ -96,7 +111,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
         try:
             results = benchmark_backend.run_local_adapter_benchmark(iterations=1, cold_start_runs=1)
             self.assertFalse(results["passed"])
-            self.assertTrue(any("Required action handler missing: health" in v for v in results["violations"]))
+            self.assertIn("handler_missing:health", results["violations"])
         finally:
             if saved_handler:
                 module.module._actions["health"] = saved_handler
@@ -106,14 +121,16 @@ class BenchmarkHarnessTests(unittest.TestCase):
         import module
 
         def broken_handler(_req):
-            raise RuntimeError("Backend failure simulated")
+            raise RuntimeError("SECRET-EXCEPTION-CANARY")
 
         saved_handler = module.module._actions.get("health")
         module.module._actions["health"] = broken_handler
         try:
             results = benchmark_backend.run_local_adapter_benchmark(iterations=1, cold_start_runs=1)
             self.assertFalse(results["passed"])
-            self.assertTrue(any("Backend failure simulated" in v for v in results["violations"]))
+            serialized = json.dumps(results)
+            self.assertIn("unexpected_exception", serialized)
+            self.assertNotIn("SECRET-EXCEPTION-CANARY", serialized)
         finally:
             if saved_handler:
                 module.module._actions["health"] = saved_handler
@@ -130,7 +147,11 @@ class BenchmarkHarnessTests(unittest.TestCase):
         try:
             results = benchmark_backend.run_local_adapter_benchmark(iterations=1, cold_start_runs=1)
             self.assertFalse(results["passed"])
-            self.assertTrue(any("health returned backend error" in v for v in results["violations"]))
+            self.assertIn(
+                "action_failed:health:backend_error",
+                results["violations"],
+            )
+            self.assertNotIn("Storage busy", json.dumps(results))
         finally:
             if saved_handler:
                 module.module._actions["health"] = saved_handler
@@ -142,7 +163,8 @@ class BenchmarkHarnessTests(unittest.TestCase):
         def invalid_capabilities(_req):
             return {
                 "schema_version": "1.2",
-                "product_mode": "customer_audit_foundation",
+                "product_name": "PineAssure",
+                "product_mode": "repeatable_field_audit",
                 "module_actions": [],  # missing required benchmark actions
                 "result_types": [],  # list instead of dict
                 "report_scopes": [],
@@ -164,16 +186,17 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertFalse(results["passed"])
         self.assertEqual(results["connection_mode"], "attach")
         self.assertIsNone(results["rss_mib"])
-        self.assertIsNone(results["service_initialization_ms"])
+        self.assertIsNone(results["service_reinitialization_ms"])
         self.assertIsNone(results["cache"])
-        self.assertIn("--socket-path or PINEAI_SOCKET_PATH environment variable is required", results["violations"])
+        self.assertIn("socket_path_required", results["violations"])
 
     def test_mark_vii_socket_unavailable(self):
         results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=1, socket_path="/nonexistent/pineai.sock")
         self.assertFalse(results["passed"])
         self.assertEqual(results["connection_mode"], "attach")
         self.assertIsNone(results["rss_mib"])
-        self.assertIn("Socket path does not exist: /nonexistent/pineai.sock", results["violations"])
+        self.assertIn("socket_unavailable", results["violations"])
+        self.assertNotIn("/nonexistent", json.dumps(results))
 
     def test_no_subprocess_spawned_in_attach_mode(self):
         import subprocess
@@ -190,6 +213,151 @@ class BenchmarkHarnessTests(unittest.TestCase):
             self.assertEqual(len(spawned), 0, "No subprocesses should be spawned in attach mode")
         finally:
             subprocess.Popen = original_popen
+
+    def test_regular_file_is_not_accepted_as_unix_socket(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "not-a-socket"
+            path.write_text("canary", encoding="utf-8")
+            results = benchmark_backend.run_mark_vii_socket_benchmark(
+                iterations=1, socket_path=str(path)
+            )
+            self.assertFalse(results["passed"])
+            self.assertIn("socket_not_unix_socket", results["violations"])
+            self.assertNotIn(str(path), json.dumps(results))
+
+    def test_repeatable_store_minimal_benchmark_shape_and_privacy(self):
+        results = benchmark_backend.run_repeatable_store_benchmark(
+            "minimal", 1
+        )
+        self.assertTrue(results["passed"], results["violations"])
+        self.assertEqual(results["schema_version"], "1.1")
+        self.assertEqual(results["mode"], "repeatable-store")
+        self.assertEqual(results["product"], "PineAssure")
+        self.assertEqual(results["product_mode"], "repeatable_field_audit")
+        self.assertEqual(results["pineai_version"], "0.7.0")
+        self.assertTrue(results["native_pins"])
+        self.assertEqual(
+            results["storage_contract"],
+            "split_run_manifest_and_measurement_v1.1",
+        )
+        self.assertEqual(results["scenario"], "minimal")
+        self.assertEqual(
+            results["validation_scope"], "workstation_software_only"
+        )
+        self.assertFalse(results["hardware_validated"])
+        self.assertFalse(results["protocol_validated"])
+        self.assertIn("create_audit_run", results["operations"])
+        self.assertIn("recovery_read", results["operations"])
+        self.assertEqual(results["recovery_ms"]["samples"], 1)
+        self.assertEqual(
+            results["final_capacity_snapshot"][
+                "measurement_point_total_used"
+            ],
+            1,
+        )
+        self.assertFalse(results["performance_thresholds_applied"])
+        self.assertTrue(results["functional_workload_passed"])
+        self.assertEqual(results["violations"], [])
+        self.assertIn("logical_disk_delta", results)
+        self.assertGreater(
+            results["logical_disk_delta"]["files_added"]["max"], 0
+        )
+        serialized = json.dumps(results)
+        self.assertNotIn("AA:BB:CC", serialized)
+        self.assertNotIn("Example-Corp", serialized)
+        self.assertNotIn(tempfile.gettempdir(), serialized)
+
+    def test_repeatable_store_realistic_uses_native_artifacts(self):
+        results = benchmark_backend.run_repeatable_store_benchmark(
+            "realistic", 1
+        )
+        self.assertTrue(results["passed"], results["violations"])
+        self.assertEqual(
+            results["operations"]["resolve_measurement"]["successes"],
+            8,
+        )
+        self.assertEqual(
+            results["operations"]["save_comparison"]["successes"],
+            8,
+        )
+        self.assertEqual(
+            results["operations"]["build_measurement_analysis"]["successes"],
+            8,
+        )
+        self.assertEqual(
+            results["final_capacity_snapshot"]["audit_run_used"], 1
+        )
+        self.assertGreater(
+            results["document_sizes"]["audit_run_manifest_max"], 0
+        )
+        self.assertGreater(
+            results["document_sizes"]["audit_measurement_max"], 0
+        )
+
+    def test_repeatable_store_frozen_limit_boundaries(self):
+        results = benchmark_backend.run_repeatable_store_benchmark(
+            "frozen-limit", 1
+        )
+        self.assertTrue(results["passed"], results["violations"])
+        capacity = results["final_capacity_snapshot"]
+        self.assertEqual(
+            capacity["measurement_point_active_limit"], 16
+        )
+        self.assertEqual(
+            capacity["measurement_point_active_used"], 1
+        )
+        self.assertEqual(
+            capacity["measurement_point_total_limit"], 32
+        )
+        self.assertEqual(
+            capacity["measurement_point_total_used"], 32
+        )
+        self.assertEqual(capacity["assignments_per_run_limit"], 16)
+        self.assertEqual(capacity["audit_run_limit"], 32)
+        self.assertEqual(capacity["audit_run_used"], 32)
+        self.assertEqual(
+            results["operations"]["create_max_assignment_audit_run"][
+                "successes"
+            ],
+            1,
+        )
+        self.assertEqual(
+            capacity["event_reserved_for_run_closure"], 32
+        )
+
+    def test_repeatable_store_scenario_iteration_caps(self):
+        self.assertFalse(
+            benchmark_backend.run_repeatable_store_benchmark(
+                "realistic", 21
+            )["passed"]
+        )
+        self.assertFalse(
+            benchmark_backend.run_repeatable_store_benchmark(
+                "frozen-limit", 2
+            )["passed"]
+        )
+
+    def test_operation_latency_uses_successful_samples_only(self):
+        metrics = benchmark_repeatable_store.OperationMetrics()
+        metrics.record("operation", 5.0, "success")
+        metrics.record(
+            "operation", 999.0, "failure", "unexpected_exception"
+        )
+        result = metrics.result()["operation"]
+        self.assertEqual(result["attempts"], 2)
+        self.assertEqual(result["p50_ms"], 5.0)
+        self.assertEqual(
+            result["latency_basis"], "successful_samples_only"
+        )
+
+    def test_repeatable_store_invalid_arguments_are_fixed_codes(self):
+        results = benchmark_backend.run_repeatable_store_benchmark(
+            "unknown", 0
+        )
+        self.assertFalse(results["passed"])
+        self.assertEqual(
+            results["violations"], ["invalid_benchmark_arguments"]
+        )
 
 
 class SyntheticSocketServerTests(unittest.TestCase):
@@ -246,7 +414,14 @@ class SyntheticSocketServerTests(unittest.TestCase):
             req = json.loads(req_data.decode("utf-8").strip())
             action = req.get("action")
             if action == "health":
-                resp = {"status": "ok", "module": "PineAI", "version": "0.6.3", "backend_version": "0.6.3"}
+                resp = {
+                    "status": "ok",
+                    "module": "PineAI",
+                    "product_name": "PineAssure",
+                    "product_mode": "repeatable_field_audit",
+                    "version": "0.7.0",
+                    "backend_version": "0.7.0",
+                }
             elif action == "platform_capabilities":
                 resp = {"schema_version": "1.0", "status": "ready", "storage": {}, "identity": {}, "recon_control": False}
             elif action == "list_assessments":
@@ -256,40 +431,62 @@ class SyntheticSocketServerTests(unittest.TestCase):
             elif action == "assurance_capabilities":
                 resp = {
                     "schema_version": "1.2",
-                    "product_mode": "customer_audit_foundation",
-                    "backend_version": "0.6.3",
-                    "module_actions": [
-                        "health",
-                        "platform_capabilities",
-                        "list_assessments",
-                        "list_measurement_profiles",
-                        "assurance_capabilities",
-                    ],
+                    "product_name": "PineAssure",
+                    "product_mode": "repeatable_field_audit",
+                    "backend_version": "0.7.0",
+                    "module_actions": list(benchmark_backend.REQUIRED_ACTIONS),
                     "result_types": {},
                     "report_scopes": [],
                     "recon_control": False,
+                }
+            elif action == "repeatable_audit_capabilities":
+                resp = {
+                    "schema_version": "1.0",
+                    "product": {"name": "PineAssure"},
+                    "public_actions": list(
+                        benchmark_backend.REPEATABLE_REQUIRED_ACTIONS
+                    ),
+                    "limits": {},
+                    "hardware_calibrated": False,
+                }
+            elif action == "resource_telemetry":
+                resp = {
+                    "schema_version": "1.0",
+                    "memory": {},
+                    "storage": {},
+                    "artifacts": {},
+                    "scan_processing": {},
+                    "guard": {"hardware_calibrated": False},
                 }
             else:
                 resp = {"error": {"code": "unknown_action"}}
             sock.sendall(json.dumps(resp).encode("utf-8") + b"\n")
 
         self.start_mock_server(valid_handler)
-        results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=2, socket_path=self.socket_path)
+        results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=1, socket_path=self.socket_path)
         self.assertTrue(results["passed"])
         self.assertEqual(results["connection_mode"], "attach")
         self.assertFalse(results["protocol_validated"])
         self.assertFalse(results["hardware_validated"])
+        self.assertTrue(results["response_contract_validated"])
 
     def test_valid_json_without_newline_fails_framing(self):
         def no_newline_handler(sock):
             sock.recv(1024)
-            valid_json = json.dumps({"status": "ok", "module": "PineAI", "version": "0.6.3", "backend_version": "0.6.3"})
+            valid_json = json.dumps({
+                "status": "ok",
+                "module": "PineAI",
+                "product_name": "PineAssure",
+                "product_mode": "repeatable_field_audit",
+                "version": "0.7.0",
+                "backend_version": "0.7.0",
+            })
             sock.sendall(valid_json.encode("utf-8"))  # Missing trailing \n
 
         self.start_mock_server(no_newline_handler)
         results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=1, socket_path=self.socket_path)
         self.assertFalse(results["passed"])
-        self.assertTrue(any("Connection closed before newline frame terminator" in v for v in results["violations"]))
+        self.assertTrue(any("connection_closed" in v for v in results["violations"]))
 
     def test_empty_response_fails(self):
         def empty_handler(sock):
@@ -299,12 +496,19 @@ class SyntheticSocketServerTests(unittest.TestCase):
         self.start_mock_server(empty_handler)
         results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=1, socket_path=self.socket_path)
         self.assertFalse(results["passed"])
-        self.assertTrue(any("Connection closed before newline frame terminator" in v for v in results["violations"]))
+        self.assertTrue(any("connection_closed" in v for v in results["violations"]))
 
     def test_fragmented_response_succeeds(self):
         def fragmented_handler(sock):
             sock.recv(1024)
-            resp = json.dumps({"status": "ok", "module": "PineAI", "version": "0.6.3", "backend_version": "0.6.3"}).encode("utf-8") + b"\n"
+            resp = json.dumps({
+                "status": "ok",
+                "module": "PineAI",
+                "product_name": "PineAssure",
+                "product_mode": "repeatable_field_audit",
+                "version": "0.7.0",
+                "backend_version": "0.7.0",
+            }).encode("utf-8") + b"\n"
             mid = len(resp) // 2
             sock.sendall(resp[:mid])
             time.sleep(0.02)
@@ -323,7 +527,7 @@ class SyntheticSocketServerTests(unittest.TestCase):
         self.start_mock_server(oversized_handler)
         results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=1, socket_path=self.socket_path)
         self.assertFalse(results["passed"])
-        self.assertTrue(any("Response exceeded transport safety limit" in v for v in results["violations"]))
+        self.assertTrue(any("response_limit" in v for v in results["violations"]))
 
     def test_non_dict_json_response(self):
         def list_handler(sock):
@@ -333,7 +537,7 @@ class SyntheticSocketServerTests(unittest.TestCase):
         self.start_mock_server(list_handler)
         results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=1, socket_path=self.socket_path)
         self.assertFalse(results["passed"])
-        self.assertTrue(any("not a JSON object" in v for v in results["violations"]))
+        self.assertTrue(any("response_not_object" in v for v in results["violations"]))
 
     def test_malformed_json_response(self):
         def malformed_handler(sock):
@@ -343,7 +547,7 @@ class SyntheticSocketServerTests(unittest.TestCase):
         self.start_mock_server(malformed_handler)
         results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=1, socket_path=self.socket_path)
         self.assertFalse(results["passed"])
-        self.assertTrue(any("Malformed JSON" in v for v in results["violations"]))
+        self.assertTrue(any("malformed_json" in v for v in results["violations"]))
 
     def test_success_false_response(self):
         def success_false_handler(sock):
@@ -362,7 +566,7 @@ class SyntheticSocketServerTests(unittest.TestCase):
         self.start_mock_server(mid_json_handler)
         results = benchmark_backend.run_mark_vii_socket_benchmark(iterations=1, socket_path=self.socket_path)
         self.assertFalse(results["passed"])
-        self.assertTrue(any("Connection closed before newline frame terminator" in v for v in results["violations"]))
+        self.assertTrue(any("connection_closed" in v for v in results["violations"]))
 
     def test_timeout_handling(self):
         def hanging_handler(sock):
@@ -374,7 +578,7 @@ class SyntheticSocketServerTests(unittest.TestCase):
             iterations=1, socket_path=self.socket_path, timeout_seconds=0.5
         )
         self.assertFalse(results["passed"])
-        self.assertTrue(any("timed out" in v for v in results["violations"]))
+        self.assertTrue(any("socket_timeout" in v for v in results["violations"]))
 
 
 if __name__ == "__main__":

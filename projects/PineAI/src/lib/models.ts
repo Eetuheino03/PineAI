@@ -144,6 +144,16 @@ export interface CapabilitySummary {
     unavailable: string[];
 }
 
+export interface MeasurementProfileContext {
+    scan_profile_id?: string | null;
+    radio_profile_id?: string | null;
+    interface?: string | null;
+    declared_channels?: number[] | null;
+    declared_bands?: string[] | null;
+    scan_time?: number | null;
+    five_ghz_operator_confirmed?: boolean | null;
+}
+
 export interface MeasurementProfile {
     measurement_profile_id: string;
     profile_id?: string;
@@ -153,7 +163,7 @@ export interface MeasurementProfile {
     description?: string;
     status?: 'active' | 'archived';
     is_default?: boolean;
-    context: MeasurementContext;
+    context: MeasurementProfileContext;
     created_at?: string;
     updated_at?: string;
     digest?: string;
@@ -343,4 +353,3 @@ export interface ReportScopePreview {
     warnings?: string[];
     [key: string]: any;
 }
-

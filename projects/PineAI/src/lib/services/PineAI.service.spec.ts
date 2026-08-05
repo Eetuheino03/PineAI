@@ -239,6 +239,43 @@ describe('PineAIService Baseline & Drift', () => {
         expect(service.workflow.snapshot.measurement_profile_revision).toBe(3);
     });
 
+    it('keeps location and point identity out of measurement profile writes', async () => {
+        api.moduleRequest.and.callFake((payload: any) => {
+            if (payload.action === 'create_measurement_profile') {
+                return Promise.resolve({
+                    measurement_profile: {
+                        measurement_profile_id: 'profile_1',
+                        active_version_id: 'mprofile_r0001',
+                        revision: 1,
+                        name: 'Technical profile',
+                        profile: payload.profile
+                    }
+                });
+            }
+            if (payload.action === 'list_measurement_profiles') {
+                return Promise.resolve({measurement_profiles: []});
+            }
+            return Promise.reject(new Error(`Unexpected ${payload.action}`));
+        });
+
+        await service.createMeasurementProfile({
+            name: 'Technical profile',
+            context: {
+                scan_profile_id: 'full',
+                radio_profile_id: 'radios',
+                interface: 'wlan0',
+                declared_bands: ['2.4'],
+                declared_channels: [1, 6, 11],
+                scan_time: 180
+            }
+        });
+
+        const request = api.moduleRequest.calls.first().args[0];
+        expect(request.profile.location_id).toBeUndefined();
+        expect(request.profile.measurement_point_id).toBeUndefined();
+        expect(request.profile.interface).toBe('wlan0');
+    });
+
     it('previews consensus using two to five in-memory observations', async () => {
         service.activeAssessment = {
             assessment_id: 'assessment_1',
@@ -308,6 +345,29 @@ describe('PineAIService Baseline & Drift', () => {
             }));
     });
 
+    it('rejects inline AI prose from share-safe reports', async () => {
+        service.activeAssessment = {
+            assessment_id: 'assessment_1',
+            name: 'Office',
+            revision: 4
+        };
+        service.aiAnalysis = {
+            analysis: {summary: 'caller-supplied local secret'}
+        };
+
+        await expectAsync(
+            service.generateReport(
+                'json',
+                true,
+                {type: 'comparison', comparison_id: 'comparison_1'} as any,
+                'share_safe'
+            )
+        ).toBeRejectedWith(jasmine.objectContaining({
+            code: 'privacy_violation'
+        }));
+        expect(api.moduleRequest).not.toHaveBeenCalled();
+    });
+
     it('caches canonical evidence bundles by comparison and finding', async () => {
         service.activeAssessment = {
             assessment_id: 'assessment_1',
@@ -334,7 +394,7 @@ describe('PineAIService Baseline & Drift', () => {
     it('shares a single initialization promise for concurrent initialize calls', async () => {
         api.moduleRequest.and.callFake((payload: any) => {
             if (payload.action === 'health') {
-                return Promise.resolve({status: 'ok', version: '0.6.3'});
+                return Promise.resolve({status: 'ok', version: '0.7.0'});
             }
             if (payload.action === 'assurance_capabilities') {
                 return Promise.resolve({schema_version: '1.0'});

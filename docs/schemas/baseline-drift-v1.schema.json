@@ -172,6 +172,74 @@
     "generate_report": {
       "request": "#/$defs/reportRequest",
       "response": "#/$defs/reportResponse"
+    },
+    "repeatable_audit_capabilities": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/repeatableAuditCapabilitiesRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/repeatableAuditCapabilitiesResponse"
+    },
+    "resource_telemetry": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/resourceTelemetryRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/resourceTelemetryResponse"
+    },
+    "create_measurement_point": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/createMeasurementPointRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/createMeasurementPointResponse"
+    },
+    "list_measurement_points": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/listMeasurementPointsRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/listMeasurementPointsResponse"
+    },
+    "get_measurement_point": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/getMeasurementPointRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/getMeasurementPointResponse"
+    },
+    "update_measurement_point": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/updateMeasurementPointRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/measurementPointMutationResponse"
+    },
+    "archive_measurement_point": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/archiveMeasurementPointRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/measurementPointMutationResponse"
+    },
+    "create_audit_run": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/createAuditRunRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/createAuditRunResponse"
+    },
+    "list_audit_runs": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/listAuditRunsRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/listAuditRunsResponse"
+    },
+    "get_audit_run": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/getAuditRunRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/getAuditRunResponse"
+    },
+    "start_audit_run": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/startAuditRunRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/auditRunMutationResponse"
+    },
+    "cancel_audit_run": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/cancelAuditRunRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/auditRunMutationResponse"
+    },
+    "complete_audit_run": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/completeAuditRunRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/auditRunMutationResponse"
+    },
+    "resolve_audit_measurement": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/resolveAuditMeasurementRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/resolveAuditMeasurementResponse"
+    },
+    "save_audit_measurement_comparison": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/saveAuditMeasurementComparisonRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/saveAuditMeasurementComparisonResponse"
+    },
+    "retry_audit_measurement": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/retryAuditMeasurementRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/retryAuditMeasurementResponse"
+    },
+    "generate_audit_run_report": {
+      "request": "repeatable-audits-v1.schema.json#/$defs/generateAuditRunReportRequest",
+      "response": "repeatable-audits-v1.schema.json#/$defs/generateAuditRunReportResponse"
     }
   },
   "$defs": {
@@ -183,7 +251,8 @@
     },
     "timestamp": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})$"
     },
     "digest": {
       "type": "string",
@@ -324,8 +393,10 @@
       "additionalProperties": false,
       "required": [
         "schema_version",
+        "product_name",
         "product_mode",
         "product_position",
+        "tagline",
         "offline_complete",
         "comparability_states",
         "finding_statuses",
@@ -345,10 +416,12 @@
       ],
       "properties": {
         "schema_version": { "$ref": "#/$defs/schemaVersion" },
-        "product_mode": { "const": "customer_audit_foundation" },
+        "product_name": { "const": "PineAssure" },
+        "product_mode": { "const": "repeatable_field_audit" },
         "product_position": {
-          "const": "Portable offline wireless change auditing for WiFi Pineapple"
+          "const": "Wireless Assurance for WiFi Pineapple"
         },
+        "tagline": { "const": "Baseline. Detect drift. Prove changes." },
         "offline_complete": { "const": true },
         "comparability_states": {
           "type": "array",
@@ -418,7 +491,7 @@
           }
         },
         "backend_version": {
-          "const": "0.6.3"
+          "const": "0.7.0"
         },
         "module_actions": {
           "type": "array",
@@ -461,7 +534,24 @@
             { "const": "prepare_ai_analysis" },
             { "const": "generate_ai_analysis" },
             { "const": "prepare_report" },
-            { "const": "generate_report" }
+            { "const": "generate_report" },
+            { "const": "repeatable_audit_capabilities" },
+            { "const": "resource_telemetry" },
+            { "const": "create_measurement_point" },
+            { "const": "list_measurement_points" },
+            { "const": "get_measurement_point" },
+            { "const": "update_measurement_point" },
+            { "const": "archive_measurement_point" },
+            { "const": "create_audit_run" },
+            { "const": "list_audit_runs" },
+            { "const": "get_audit_run" },
+            { "const": "start_audit_run" },
+            { "const": "cancel_audit_run" },
+            { "const": "complete_audit_run" },
+            { "const": "resolve_audit_measurement" },
+            { "const": "save_audit_measurement_comparison" },
+            { "const": "retry_audit_measurement" },
+            { "const": "generate_audit_run_report" }
           ],
           "items": false
         },
@@ -789,16 +879,22 @@
           "maxLength": 128
         },
         "date": {
-          "type": "string",
-          "maxLength": 64
+          "oneOf": [
+            { "$ref": "#/$defs/timestamp" },
+            { "type": "null" }
+          ]
         },
         "started_at": {
-          "type": "string",
-          "maxLength": 64
+          "oneOf": [
+            { "$ref": "#/$defs/timestamp" },
+            { "type": "null" }
+          ]
         },
         "completed_at": {
-          "type": "string",
-          "maxLength": 64
+          "oneOf": [
+            { "$ref": "#/$defs/timestamp" },
+            { "type": "null" }
+          ]
         },
         "scan_time": {
           "type": "integer",
@@ -972,28 +1068,19 @@
         },
         "date": {
           "oneOf": [
-            {
-              "type": "string",
-              "maxLength": 64
-            },
+            { "$ref": "#/$defs/timestamp" },
             { "type": "null" }
           ]
         },
         "started_at": {
           "oneOf": [
-            {
-              "type": "string",
-              "maxLength": 64
-            },
+            { "$ref": "#/$defs/timestamp" },
             { "type": "null" }
           ]
         },
         "completed_at": {
           "oneOf": [
-            {
-              "type": "string",
-              "maxLength": 64
-            },
+            { "$ref": "#/$defs/timestamp" },
             { "type": "null" }
           ]
         },
@@ -1402,12 +1489,13 @@
         "schema_version": { "$ref": "#/$defs/schemaVersion" },
         "snapshot_id": { "$ref": "#/$defs/snapshotId" },
         "snapshot_digest": { "$ref": "#/$defs/digest" },
+        "snapshot_record_digest": {
+          "allOf": [{ "$ref": "#/$defs/digest" }],
+          "description": "Content digest emitted by new writers. Its absence identifies a readable but integrity-unbound legacy snapshot."
+        },
         "observed_at": {
           "oneOf": [
-            {
-              "type": "string",
-              "maxLength": 64
-            },
+            { "$ref": "#/$defs/timestamp" },
             { "type": "null" }
           ]
         },

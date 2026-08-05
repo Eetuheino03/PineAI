@@ -1,129 +1,163 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
-MODULENAME=$(basename "$PWD")
+readonly MODULENAME="PineAI"
+readonly PROJECT_ROOT="projects/$MODULENAME"
+readonly PACKAGE_TOOL="scripts/package_tool.py"
+readonly WORKSPACE_ROOT="$(pwd -P)"
 
-check_workspace() {
-    if [[ ! -d "node_modules" ]]; then
-        while true; do
-            read -r -p "[!!] The Angular workspace has not been prepared. Would you like to do it now? [Y/n] " yn
-            case $yn in
-                [Yy]* ) prepare_workspace; break;;
-                [Nn]* ) exit 1;;
-                * ) prepare_workspace; break;;
-            esac
-        done
+resolved_path() {
+    python3 - "$1" <<'PY'
+import sys
+from pathlib import Path
+
+print(Path(sys.argv[1]).resolve(strict=False))
+PY
+}
+
+remove_build_stage() {
+    local target=$1
+    local temp_parent
+    local resolved_target
+
+    temp_parent=$(resolved_path "${TMPDIR:-/tmp}")
+    resolved_target=$(resolved_path "$target")
+    if [[ "$(dirname "$resolved_target")" != "$temp_parent" ]] ||
+       [[ "$(basename "$resolved_target")" != pineai-build.* ]]; then
+        echo "[!] Refusing to remove an unexpected build stage." >&2
+        exit 1
     fi
+    rm -rf -- "$resolved_target"
+}
+
+remove_runtime_dist() {
+    local expected
+    local resolved_target
+
+    expected="$WORKSPACE_ROOT/dist/$MODULENAME"
+    resolved_target=$(resolved_path "dist/$MODULENAME")
+    if [[ "$resolved_target" != "$expected" ]]; then
+        echo "[!] Refusing to remove an unexpected runtime target." >&2
+        exit 1
+    fi
+    rm -rf -- "$resolved_target"
 }
 
 prepare_workspace() {
-    echo "[*] Preparing the Angular workspace."
-
-    if ! command -v npm &> /dev/null; then
-        echo "[!] NPM does not appear to be installed on this system. Failed to create workspace."
+    if [[ -x "./node_modules/.bin/ng" ]]; then
+        return
+    fi
+    if ! command -v npm > /dev/null 2>&1; then
+        echo "[!] npm is required to prepare the Angular workspace." >&2
         exit 1
     fi
-
-    if ! npm install &> /dev/null; then
-        echo "[!] Failed to prepare workspace. Run npm install to see why."
-        exit 1
-    fi
-
-    echo "[*] Prepared the Angular workspace successfully."
+    echo "[*] Preparing the Angular workspace with npm ci."
+    npm ci
 }
 
 build_module() {
-    if [[ ${PINEAI_SKIP_ANGULAR_BUILD:-0} == "1" ]]; then
-        if [[ ! -d "dist/$MODULENAME/bundles" ]]; then
-            echo "[!] Prebuilt Angular bundles were not found in dist/$MODULENAME/bundles."
-            exit 1
-        fi
-        echo "[*] Using prebuilt Angular bundles"
-    else
-        LEGACY_OPT=""
-        if node --openssl-legacy-provider -v > /dev/null 2>&1; then
-            LEGACY_OPT="--openssl-legacy-provider"
-        fi
-        NG_CMD="./node_modules/.bin/ng"
-        if [[ ! -f "$NG_CMD" ]] && command -v ng &> /dev/null; then
-            NG_CMD="ng"
-        fi
-        if ! NODE_OPTIONS="$LEGACY_OPT ${NODE_OPTIONS:-}" "$NG_CMD" build --prod > /dev/null 2>&1 && \
-           ! NODE_OPTIONS="$LEGACY_OPT ${NODE_OPTIONS:-}" npx ng build --prod > /dev/null 2>&1; then
-            echo "[!] Angular Build Failed: Run './node_modules/.bin/ng build --prod' to inspect the error."
-            exit 1
-        fi
-        echo "[*] Angular Build Succeeded"
-    fi
+    local bundle_input
+    local stage_root
 
-    # Step 2: Copy the required files to the build output
-    cp -r "projects/$MODULENAME/src/module.svg" "dist/$MODULENAME/bundles/"
-    cp -r "projects/$MODULENAME/src/module.json" "dist/$MODULENAME/bundles/"
-    cp -r "projects/$MODULENAME/src/module.py" "dist/$MODULENAME/bundles/"
-    if [[ -f "projects/$MODULENAME/src/module.php" ]]; then
-        cp -r "projects/$MODULENAME/src/module.php" "dist/$MODULENAME/bundles/"
-    fi
-    cp -r "projects/$MODULENAME/src/assets/" "dist/$MODULENAME/bundles/"
-
-    # Step 3: Clean up
-    rm -f "dist/$MODULENAME/bundles/"*.map
-    rm -f "dist/$MODULENAME/bundles/"*.min*
-    find "dist/$MODULENAME/bundles" -type d -name "__pycache__" -prune -exec rm -rf {} +
-    find "dist/$MODULENAME/bundles" -type f -name "*.pyc" -delete
-    rm -rf "bundletmp"
-    mv "dist/$MODULENAME/bundles/" "bundletmp"
-    rm -rf "dist/$MODULENAME"
-    mkdir -p "dist/$MODULENAME"
-    mv "bundletmp/"* "dist/$MODULENAME/"
-    rm -rf "bundletmp"
-}
-
-package() {
-    VERS=$(grep '"version"' "dist/$MODULENAME/module.json" | awk '{split($0, a, ": "); gsub("\"", "", a[2]); gsub(",", "", a[2]); print a[2]}')
-    PACKAGE_PATH="$PWD/$MODULENAME-$VERS.tar.gz"
-    PACKAGE_STAGE=$(mktemp -d "${TMPDIR:-/tmp}/pineai-package.XXXXXX")
-
-    cleanup_package_stage() {
-        rm -rf -- "$PACKAGE_STAGE"
+    stage_root=$(mktemp -d "${TMPDIR:-/tmp}/pineai-build.XXXXXX")
+    cleanup_build_stage() {
+        remove_build_stage "$stage_root"
     }
-    trap cleanup_package_stage RETURN
+    trap cleanup_build_stage RETURN
 
-    rm -f "$PACKAGE_PATH"
-    echo "[*] Packaging $MODULENAME (Version $VERS)"
-    mkdir -p "$PACKAGE_STAGE/$MODULENAME"
-    cp -R "dist/$MODULENAME/." "$PACKAGE_STAGE/$MODULENAME/"
-
-    find "$PACKAGE_STAGE/$MODULENAME" -type d -exec chmod 755 {} +
-    find "$PACKAGE_STAGE/$MODULENAME" -type f -exec chmod 644 {} +
-    chmod 755 "$PACKAGE_STAGE/$MODULENAME/module.py"
-    if [[ -f "$PACKAGE_STAGE/$MODULENAME/assets/pineai_cli.py" ]]; then
-        chmod 755 "$PACKAGE_STAGE/$MODULENAME/assets/pineai_cli.py"
+    if [[ ${PINEAI_SKIP_ANGULAR_BUILD:-0} == "1" ]]; then
+        bundle_input="dist/$MODULENAME/PineAI.umd.js"
+        if [[ ! -f "$bundle_input" ]]; then
+            echo "[!] A prebuilt PineAI.umd.js was not found." >&2
+            exit 1
+        fi
+        cp -- "$bundle_input" "$stage_root/PineAI.umd.js"
+        bundle_input="$stage_root/PineAI.umd.js"
+        echo "[*] Using the existing production bundle."
+    else
+        prepare_workspace
+        local legacy_opt=""
+        if node --openssl-legacy-provider -v > /dev/null 2>&1; then
+            legacy_opt="--openssl-legacy-provider"
+        fi
+        NODE_OPTIONS="$legacy_opt ${NODE_OPTIONS:-}" \
+            ./node_modules/.bin/ng build --prod
+        bundle_input="dist/$MODULENAME/bundles/PineAI.umd.js"
+        if [[ ! -f "$bundle_input" ]]; then
+            echo "[!] Angular build did not produce PineAI.umd.js." >&2
+            exit 1
+        fi
+        cp -- "$bundle_input" "$stage_root/PineAI.umd.js"
+        bundle_input="$stage_root/PineAI.umd.js"
+        echo "[*] Angular production build succeeded."
     fi
 
-    tar --owner=0 --group=0 --numeric-owner \
-        -czf "$PACKAGE_PATH" -C "$PACKAGE_STAGE" "$MODULENAME"
+    python3 "$PACKAGE_TOOL" stage \
+        --bundle "$bundle_input" \
+        --output "$stage_root/runtime"
 
-    cleanup_package_stage
+    remove_runtime_dist
+    mkdir -p dist
+    mv -- "$stage_root/runtime" "dist/$MODULENAME"
+    echo "[*] Runtime staging matched scripts/package-manifest.json."
+
+    cleanup_build_stage
     trap - RETURN
 }
 
+module_version() {
+    python3 - <<'PY'
+import json
+import re
+from pathlib import Path
+
+value = json.loads(
+    Path("projects/PineAI/src/module.json").read_text(encoding="utf-8")
+).get("version")
+if not isinstance(value, str) or not re.fullmatch(
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)",
+    value,
+):
+    raise SystemExit("module.json version is not strict SemVer")
+print(value)
+PY
+}
+
+package_module() {
+    local version
+    local package_path
+    version=$(module_version)
+    package_path="$PWD/$MODULENAME-$version.tar.gz"
+    rm -f -- "$package_path"
+    echo "[*] Packaging $MODULENAME version $version."
+    python3 "$PACKAGE_TOOL" create \
+        --dist "dist/$MODULENAME" \
+        --output "$package_path"
+}
+
 copy_to_device() {
-    echo "[*] Copying module to WiFi Pineapple via SCP"
+    echo "[*] Copying the staged module to WiFi Pineapple via SCP."
     scp -r "dist/$MODULENAME" root@172.16.42.1:/pineapple/modules
 }
 
 main() {
-    check_workspace
     build_module
-
-    if [[ $1 == "package" ]]; then
-        package
-    elif [[ $1 == "copy" ]]; then
-        copy_to_device
-    fi
-
-    echo "[*] Success!"
+    case "${1:-}" in
+        "")
+            ;;
+        package)
+            package_module
+            ;;
+        copy)
+            copy_to_device
+            ;;
+        *)
+            echo "Usage: ./build.sh [package|copy]" >&2
+            exit 2
+            ;;
+    esac
+    echo "[*] Success."
 }
 
 main "$@"

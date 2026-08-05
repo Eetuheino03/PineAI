@@ -11,6 +11,7 @@ from . import __version__
 
 
 RESPONSES_URL = "https://api.openai.com/v1/responses"
+MAX_RESPONSE_BYTES = 1024 * 1024
 
 ASSURANCE_ANALYSIS_SCHEMA = {
     "type": "object",
@@ -120,6 +121,43 @@ def _safe_http_error(status: int) -> OpenAIClientError:
     )
 
 
+def _declared_response_size(response: Any) -> Optional[int]:
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    try:
+        value = headers.get("Content-Length")
+    except (AttributeError, TypeError):
+        return None
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _bounded_response_body(response: Any) -> bytes:
+    declared_size = _declared_response_size(response)
+    if declared_size is not None and declared_size > MAX_RESPONSE_BYTES:
+        raise OpenAIClientError(
+            "response_too_large",
+            "OpenAI response exceeded the safe size limit",
+        )
+    raw = response.read(MAX_RESPONSE_BYTES + 1)
+    if not isinstance(raw, bytes):
+        raise OpenAIClientError(
+            "invalid_response", "OpenAI returned an invalid response body"
+        )
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise OpenAIClientError(
+            "response_too_large",
+            "OpenAI response exceeded the safe size limit",
+        )
+    return raw
+
+
 def _extract_output(
     response_body: Dict[str, Any]
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -194,7 +232,7 @@ class OpenAIClient:
         for attempt in range(self.max_attempts):
             try:
                 with self.opener(api_request, timeout=self.timeout) as response:
-                    raw = response.read()
+                    raw = _bounded_response_body(response)
                 try:
                     decoded = json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, ValueError):

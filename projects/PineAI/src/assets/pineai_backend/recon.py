@@ -1,7 +1,10 @@
 """Validation and normalization for documented Hak5 Recon response shapes."""
 
 import json
+import os
 import re
+import stat
+import threading
 import unicodedata
 from typing import Any, Dict, List, Optional
 
@@ -10,12 +13,16 @@ MAX_INPUT_BYTES = 8 * 1024 * 1024
 MAX_ACCESS_POINTS = 1000
 MAX_CLIENTS = 10000
 MAX_TEXT_LENGTH = 128
+MAX_OUI_DATABASE_BYTES = 8 * 1024 * 1024
+MAX_OUI_ENTRIES = 100000
 MAC_PATTERN = re.compile(r"^[0-9A-F]{12}$")
 COLON_MAC_PATTERN = re.compile(r"^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$")
 HYPHEN_MAC_PATTERN = re.compile(r"^(?:[0-9A-F]{2}-){5}[0-9A-F]{2}$")
 MAC_IN_TEXT_PATTERN = re.compile(
     r"(?i)(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}"
 )
+_OUI_CACHE_LOCK = threading.Lock()
+_OUI_CACHE = None
 
 
 class ReconValidationError(ValueError):
@@ -94,18 +101,48 @@ def _find_client_list(
 def _load_oui_database(
     path: str = "/etc/pineapple/ouis",
 ) -> Dict[str, str]:
+    global _OUI_CACHE
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            raw = json.load(handle)
-    except (OSError, ValueError):
+        details = os.lstat(path)
+        if (
+            stat.S_ISLNK(details.st_mode)
+            or not stat.S_ISREG(details.st_mode)
+            or details.st_size > MAX_OUI_DATABASE_BYTES
+        ):
+            return {}
+        cache_key = (
+            os.path.abspath(path),
+            int(details.st_mtime_ns),
+            int(details.st_size),
+        )
+    except (AttributeError, OSError):
         return {}
-    if not isinstance(raw, dict):
-        return {}
-    return {
-        str(key).replace(":", "").replace("-", "").upper()[:6]:
-        _sanitize_text(value)
-        for key, value in raw.items()
-    }
+    with _OUI_CACHE_LOCK:
+        if _OUI_CACHE is not None and _OUI_CACHE[0] == cache_key:
+            return _OUI_CACHE[1]
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = None
+        try:
+            descriptor = os.open(path, flags)
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                descriptor = None
+                raw = json.load(handle)
+        except (OSError, ValueError):
+            return {}
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        if not isinstance(raw, dict) or len(raw) > MAX_OUI_ENTRIES:
+            return {}
+        normalized = {
+            str(key).replace(":", "").replace("-", "").upper()[:6]:
+            _sanitize_text(value)
+            for key, value in raw.items()
+        }
+        _OUI_CACHE = (cache_key, normalized)
+        return normalized
 
 
 def _vendor_for_mac(mac: str, oui_database: Dict[str, str]) -> str:
@@ -186,9 +223,9 @@ def validate_and_normalize_scan(
                 scan, ensure_ascii=False, separators=(",", ":")
             ).encode("utf-8")
         )
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError):
         raise ReconValidationError(
-            "scan must be JSON serializable: {0}".format(error)
+            "scan must be JSON serializable"
         )
     if encoded_size > MAX_INPUT_BYTES:
         raise ReconValidationError("scan exceeds the 8 MiB input limit")

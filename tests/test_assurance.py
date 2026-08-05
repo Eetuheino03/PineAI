@@ -258,6 +258,41 @@ class AssuranceTests(unittest.TestCase):
             snapshot["comparability_profile"]["effective_coverage"], ["2.4"]
         )
 
+    def test_scan_timestamps_are_strict_rfc3339_and_ordered(self):
+        metadata = dict(
+            self.metadata,
+            started_at="2026-07-27T14:00:00.123456789+02:00",
+            completed_at="2026-07-27T12:00:01.123456789Z",
+        )
+        snapshot = self.resolve(metadata=metadata)
+        self.assertEqual(
+            snapshot["observed_at"], metadata["completed_at"]
+        )
+
+        for field, value in (
+            ("date", "not-rfc3339"),
+            ("started_at", "2026-07-27 12:00:00Z"),
+            ("completed_at", "2026-02-30T12:00:00Z"),
+            ("completed_at", "2026-07-27T12:00:00+25:00"),
+        ):
+            with self.subTest(field=field, value=value):
+                invalid = dict(self.metadata)
+                invalid[field] = value
+                with self.assertRaises(BackendError) as raised:
+                    self.resolve(metadata=invalid)
+                self.assertEqual(
+                    raised.exception.code, "invalid_scan_metadata"
+                )
+
+        reversed_times = dict(
+            self.metadata,
+            started_at="2026-07-27T12:00:01Z",
+            completed_at="2026-07-27T12:00:00Z",
+        )
+        with self.assertRaises(BackendError) as raised:
+            self.resolve(metadata=reversed_times)
+        self.assertEqual(raised.exception.code, "invalid_scan_metadata")
+
     def test_undeclared_channels_forces_partially_comparable(self):
         baseline = self.resolve()
         no_channels_meta = {
@@ -416,6 +451,14 @@ class AssuranceTests(unittest.TestCase):
         self.assertNotIn("AA:BB:CC", serialized)
         self.assertNotIn("Example-Corp", serialized)
         self.assertNotIn("never send", serialized)
+        self.assertNotIn("measurement_profile_id", serialized)
+        self.assertNotIn("measurement_profile_digest", serialized)
+        self.assertNotIn('"coverage"', serialized)
+        self.assertNotIn('"scan_time"', serialized)
+        self.assertEqual(
+            hidden["comparison"]["comparability"]["status"],
+            diff["comparability"]["status"],
+        )
 
         shared = build_ai_payload(
             {"assessment_id": "assessment_test", "name": "Office", "location": ""},
@@ -447,6 +490,29 @@ class AssuranceTests(unittest.TestCase):
             False,
         )
         self.assertNotIn("Private-New-SSID", json.dumps(hidden_change))
+
+        generic_values = build_ai_payload(
+            {"assessment_id": "assessment_test"},
+            comparison,
+            [
+                {
+                    "finding_id": "finding_private_values",
+                    "rule_id": "new_access_point",
+                    "severity": "medium",
+                    "confidence": 0.9,
+                    "evidence_ids": [],
+                    "details": {
+                        "before": "PRIVATE-SSID-BEFORE",
+                        "after": "PRIVATE-SSID-AFTER",
+                    },
+                }
+            ],
+            "en",
+            False,
+        )
+        generic_serialized = json.dumps(generic_values)
+        self.assertNotIn("PRIVATE-SSID-BEFORE", generic_serialized)
+        self.assertNotIn("PRIVATE-SSID-AFTER", generic_serialized)
 
     def test_mac_like_local_assessment_text_is_not_in_cloud_payload(self):
         payload = build_ai_payload(

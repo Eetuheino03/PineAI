@@ -42,6 +42,7 @@ testem.log
 /typings
 /PineAI-*.tar.gz
 /PineAI-*.tar.gz.sha256
+/PineAI-*.cdx.json
 
 # Python
 __pycache__/

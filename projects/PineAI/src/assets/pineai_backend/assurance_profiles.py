@@ -798,10 +798,10 @@ def preview_inventory_csv(
                         "message": failure.safe_message,
                     }
                 )
-    except csv.Error as failure:
+    except csv.Error:
         raise BackendError(
             "invalid_inventory_csv",
-            "CSV could not be parsed: {0}".format(failure),
+            "CSV could not be parsed",
         )
     rows.sort(key=lambda item: item["bssid"])
     return {

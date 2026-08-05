@@ -1,10 +1,9 @@
 {
     "name": "PineAI",
-    "title": "PineAI",
-    "description": "Portable offline wireless change auditing with consensus baselines, inventory policy, evidence, and customer reports.",
-    "version": "0.6.3",
+    "title": "PineAssure",
+    "description": "Offline repeatable wireless assurance, drift evidence, and deterministic field-audit reporting.",
+    "version": "0.7.0",
     "author": "Eetuheino03",
     "firmware_required": "1.0.0",
     "devices": ["wifipineapplemk7"]
 }
-

@@ -1,9 +1,12 @@
+.gitattributes text eol=lf
 *.sh text eol=lf
 .github/workflows/*.yml text eol=lf
 *.py text eol=lf
 *.ts text eol=lf
 *.html text eol=lf
 *.scss text eol=lf
+*.css text eol=lf
 *.json text eol=lf
 *.md text eol=lf
+projects/PineAI/src/assets/README text eol=lf
 *.tar.gz binary

@@ -26,8 +26,6 @@ describe('WorkflowFacade', () => {
             revision: 2,
             name: 'Office preset',
             context: {
-                location_id: 'office',
-                measurement_point_id: 'desk',
                 declared_channels: [1, 6, 11]
             }
         };

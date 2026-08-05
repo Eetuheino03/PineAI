@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import threading
 import time
 import uuid
@@ -20,6 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .config import resolve_config_dir, write_private_file
 from .errors import BackendError
+from .storage_transaction import PrivateTransaction, recover_private_transactions
+from .timestamps import rfc3339_order_key, validate_rfc3339
 
 
 ASSESSMENT_SCHEMA_VERSION = "1.1"
@@ -37,6 +40,15 @@ FINDING_ID_PATTERN = re.compile(r"^finding_[0-9a-f]{12}$")
 ASSET_ID_PATTERN = re.compile(r"^ap_[0-9a-f]{12}$")
 NETWORK_ID_PATTERN = re.compile(r"^network_[0-9a-f]{12}$")
 EVIDENCE_ID_PATTERN = re.compile(r"^evidence_[0-9a-f]{12}$")
+EVENT_ID_PATTERN = re.compile(
+    r"^evt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+EVENT_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,99}$")
+STORED_TIMESTAMP_PATTERN = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:"
+    r"[0-9]{2}(?:\.[0-9]{1,6})?Z$"
+)
 
 ASSESSMENT_EDITABLE_FIELDS = {"name", "location", "notes"}
 ASSESSMENT_STATUSES = {"active", "archived"}
@@ -55,6 +67,7 @@ MAX_SNAPSHOTS = 100
 MAX_COMPARISONS = 100
 MAX_EVENTS = 5000
 MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
+MAX_CUSTOMER_LIST_BYTES = 4 * 1024 * 1024
 
 SNAPSHOT_FIELDS = {
     "schema_version",
@@ -104,6 +117,19 @@ SNAPSHOT_EVIDENCE_FIELDS = {
     "subject_id",
     "observed",
 }
+SINGLE_SCAN_BASELINE_FIELDS = {
+    "schema_version",
+    "assessment_id",
+    "baseline_version_id",
+    "version",
+    "label",
+    "created_at",
+    "snapshot_id",
+    "snapshot_digest",
+    "summary",
+    "scan_metadata",
+    "comparability_profile",
+}
 COMPARISON_FIELDS = {
     "schema_version",
     "baseline_snapshot_id",
@@ -113,6 +139,49 @@ COMPARISON_FIELDS = {
     "networks",
     "summary",
 }
+STORED_COMPARISON_FIELDS = {
+    "schema_version",
+    "comparison_id",
+    "assessment_id",
+    "baseline_version_id",
+    "created_at",
+    "baseline_snapshot_id",
+    "current_snapshot_id",
+    "current_snapshot_digest",
+    "comparability_status",
+    "observed_finding_ids",
+    "lifecycle",
+    "comparison",
+}
+CUSTOMER_STORED_COMPARISON_FIELDS = STORED_COMPARISON_FIELDS | {
+    "occurrence_set_id",
+    "occurrence_digest",
+    "pinned_versions",
+}
+COMPARISON_LIFECYCLE_FIELDS = {
+    "opened",
+    "reopened",
+    "updated",
+    "resolved",
+    "preserved_false_positive",
+    "mutated",
+}
+CUSTOMER_ANALYSIS_PIN_FIELDS = {
+    "baseline_version_id",
+    "baseline_digest",
+    "measurement_profile_id",
+    "measurement_profile_version_id",
+    "measurement_profile_digest",
+    "assurance_profile_version_id",
+    "assurance_profile_digest",
+}
+OCCURRENCE_SET_ID_PATTERN = re.compile(r"^occurrence_[0-9a-f]{16}$")
+MEASUREMENT_PROFILE_ID_PATTERN = re.compile(
+    r"^mprofile_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+MEASUREMENT_PROFILE_VERSION_ID_PATTERN = re.compile(r"^mprofile_r[0-9]{4}$")
+ASSURANCE_PROFILE_VERSION_ID_PATTERN = re.compile(r"^assurance_v[0-9]{4}$")
 FINDING_CORE_FIELDS = {
     "finding_id",
     "rule_id",
@@ -143,6 +212,19 @@ def _utc_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace(
         "+00:00", "Z"
     )
+
+
+def _stored_timestamp(value: Any, code: str = "storage_error"):
+    if not isinstance(value, str) or not STORED_TIMESTAMP_PATTERN.match(
+        value
+    ):
+        raise BackendError(code, "stored timestamp is invalid")
+    try:
+        return datetime.datetime.fromisoformat(
+            value[:-1] + "+00:00"
+        )
+    except ValueError as error:
+        raise BackendError(code, "stored timestamp is invalid") from error
 
 
 def _clean_text(
@@ -199,6 +281,16 @@ def _canonical_digest(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _snapshot_record_digest(value: Dict[str, Any]) -> str:
+    return _canonical_digest(
+        {
+            key: item
+            for key, item in value.items()
+            if key != "snapshot_record_digest"
+        }
+    )
+
+
 def _normalized_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", str(value).lower())
 
@@ -253,7 +345,10 @@ def _validate_assessment_fields(
 
 def _validate_snapshot(value: Any) -> Dict[str, Any]:
     snapshot = _json_clone(value, "invalid_snapshot", "snapshot")
-    if not isinstance(snapshot, dict) or set(snapshot) != SNAPSHOT_FIELDS:
+    if not isinstance(snapshot, dict) or set(snapshot) not in (
+        SNAPSHOT_FIELDS,
+        SNAPSHOT_FIELDS | {"snapshot_record_digest"},
+    ):
         raise BackendError(
             "invalid_snapshot", "snapshot fields do not match schema 1.0"
         )
@@ -270,12 +365,21 @@ def _validate_snapshot(value: Any) -> Dict[str, Any]:
         SNAPSHOT_DIGEST_PATTERN.match(snapshot["snapshot_digest"])
     ):
         raise BackendError("invalid_snapshot", "snapshot_digest is invalid")
-    if snapshot.get("observed_at") is not None and (
-        not isinstance(snapshot["observed_at"], str)
-        or not snapshot["observed_at"]
-        or len(snapshot["observed_at"]) > 64
+    record_digest = snapshot.get("snapshot_record_digest")
+    if record_digest is not None and (
+        not isinstance(record_digest, str)
+        or not SNAPSHOT_DIGEST_PATTERN.match(record_digest)
+        or record_digest != _snapshot_record_digest(snapshot)
     ):
-        raise BackendError("invalid_snapshot", "observed_at is invalid")
+        raise BackendError(
+            "invalid_snapshot", "snapshot_record_digest is invalid"
+        )
+    observed_at = validate_rfc3339(
+        snapshot.get("observed_at"),
+        "observed_at",
+        "invalid_snapshot",
+        nullable=True,
+    )
     for field in (
         "scan_metadata",
         "comparability_profile",
@@ -285,6 +389,35 @@ def _validate_snapshot(value: Any) -> Dict[str, Any]:
             raise BackendError(
                 "invalid_snapshot", "{0} must be an object".format(field)
             )
+    scan_metadata = snapshot["scan_metadata"]
+    scan_times = {
+        field: validate_rfc3339(
+            scan_metadata.get(field),
+            field,
+            "invalid_snapshot",
+            nullable=True,
+        )
+        for field in ("date", "started_at", "completed_at")
+    }
+    if (
+        scan_times["started_at"] is not None
+        and scan_times["completed_at"] is not None
+        and rfc3339_order_key(scan_times["started_at"])
+        > rfc3339_order_key(scan_times["completed_at"])
+    ):
+        raise BackendError(
+            "invalid_snapshot", "completed_at must not precede started_at"
+        )
+    expected_observed_at = (
+        scan_times["completed_at"]
+        or scan_times["date"]
+        or scan_times["started_at"]
+    )
+    if observed_at != expected_observed_at:
+        raise BackendError(
+            "invalid_snapshot",
+            "observed_at must match normalized scan metadata",
+        )
     access_points = snapshot.get("access_points")
     networks = snapshot.get("networks")
     evidence = snapshot.get("evidence")
@@ -408,6 +541,14 @@ def _validate_snapshot(value: Any) -> Dict[str, Any]:
     return snapshot
 
 
+def _bind_snapshot_record_digest(value: Any) -> Dict[str, Any]:
+    """Validate a snapshot and bind all new immutable writes to its contents."""
+    snapshot = _validate_snapshot(value)
+    if "snapshot_record_digest" not in snapshot:
+        snapshot["snapshot_record_digest"] = _snapshot_record_digest(snapshot)
+    return snapshot
+
+
 def _validate_comparison(value: Any) -> Dict[str, Any]:
     comparison = _json_clone(
         value, "invalid_comparison", "comparison"
@@ -455,6 +596,168 @@ def _validate_comparison(value: Any) -> Dict[str, Any]:
                 "{0} must be an object".format(field),
             )
     return comparison
+
+
+def _validate_stored_comparison_record(
+    value: Any,
+    assessment_id: str,
+    comparison_id: str,
+) -> Dict[str, Any]:
+    """Fail closed on immutable legacy and customer comparison records."""
+    try:
+        record = _json_clone(
+            value,
+            "storage_error",
+            "stored comparison",
+            MAX_DOCUMENT_BYTES,
+        )
+        if not isinstance(record, dict):
+            raise ValueError()
+        schema_version = record.get("schema_version")
+        expected_fields = (
+            CUSTOMER_STORED_COMPARISON_FIELDS
+            if schema_version == "1.2"
+            else STORED_COMPARISON_FIELDS
+        )
+        if (
+            schema_version not in SUPPORTED_SCHEMA_VERSIONS
+            or set(record) != expected_fields
+            or record.get("assessment_id") != assessment_id
+            or record.get("comparison_id") != comparison_id
+            or not BASELINE_VERSION_ID_PATTERN.match(
+                str(record.get("baseline_version_id", ""))
+            )
+            or not SNAPSHOT_ID_PATTERN.match(
+                str(record.get("baseline_snapshot_id", ""))
+            )
+            or not SNAPSHOT_ID_PATTERN.match(
+                str(record.get("current_snapshot_id", ""))
+            )
+            or not SNAPSHOT_DIGEST_PATTERN.match(
+                str(record.get("current_snapshot_digest", ""))
+            )
+            or record.get("comparability_status")
+            not in COMPARABILITY_STATUSES
+        ):
+            raise ValueError()
+        validate_rfc3339(
+            record.get("created_at"),
+            "created_at",
+            "storage_error",
+        )
+        finding_ids = record.get("observed_finding_ids")
+        if (
+            not isinstance(finding_ids, list)
+            or len(finding_ids) > MAX_FINDINGS
+            or finding_ids != sorted(set(finding_ids))
+            or any(
+                not isinstance(item, str)
+                or not FINDING_ID_PATTERN.match(item)
+                for item in finding_ids
+            )
+        ):
+            raise ValueError()
+        lifecycle = record.get("lifecycle")
+        if (
+            not isinstance(lifecycle, dict)
+            or set(lifecycle) != COMPARISON_LIFECYCLE_FIELDS
+            or not isinstance(lifecycle.get("mutated"), bool)
+            or lifecycle["mutated"]
+            != (record["comparability_status"] != "not_comparable")
+        ):
+            raise ValueError()
+        lifecycle_ids = set()
+        for field in COMPARISON_LIFECYCLE_FIELDS - {"mutated"}:
+            values = lifecycle.get(field)
+            if (
+                not isinstance(values, list)
+                or len(values) > MAX_FINDINGS
+                or len(values) != len(set(values))
+                or any(
+                    not isinstance(item, str)
+                    or not FINDING_ID_PATTERN.match(item)
+                    for item in values
+                )
+                or lifecycle_ids.intersection(values)
+            ):
+                raise ValueError()
+            lifecycle_ids.update(values)
+        expected_observed_ids = set(lifecycle["opened"])
+        expected_observed_ids.update(lifecycle["reopened"])
+        expected_observed_ids.update(lifecycle["updated"])
+        expected_observed_ids.update(lifecycle["preserved_false_positive"])
+        if expected_observed_ids != set(finding_ids):
+            raise ValueError()
+        nested = _validate_comparison(record.get("comparison"))
+        if (
+            nested["baseline_snapshot_id"]
+            != record["baseline_snapshot_id"]
+            or nested["current_snapshot_id"]
+            != record["current_snapshot_id"]
+            or nested["comparability"]["status"]
+            != record["comparability_status"]
+        ):
+            raise ValueError()
+        if schema_version == "1.2":
+            if (
+                not OCCURRENCE_SET_ID_PATTERN.match(
+                    str(record.get("occurrence_set_id", ""))
+                )
+                or not SNAPSHOT_DIGEST_PATTERN.match(
+                    str(record.get("occurrence_digest", ""))
+                )
+            ):
+                raise ValueError()
+            pins = record.get("pinned_versions")
+            if (
+                not isinstance(pins, dict)
+                or set(pins) != CUSTOMER_ANALYSIS_PIN_FIELDS
+                or pins.get("baseline_version_id")
+                != record["baseline_version_id"]
+                or not SNAPSHOT_DIGEST_PATTERN.match(
+                    str(pins.get("baseline_digest", ""))
+                )
+            ):
+                raise ValueError()
+            measurement_pin = (
+                pins.get("measurement_profile_id"),
+                pins.get("measurement_profile_version_id"),
+                pins.get("measurement_profile_digest"),
+            )
+            if any(item is not None for item in measurement_pin) and not (
+                isinstance(measurement_pin[0], str)
+                and MEASUREMENT_PROFILE_ID_PATTERN.match(measurement_pin[0])
+                and isinstance(measurement_pin[1], str)
+                and MEASUREMENT_PROFILE_VERSION_ID_PATTERN.match(
+                    measurement_pin[1]
+                )
+                and isinstance(measurement_pin[2], str)
+                and SNAPSHOT_DIGEST_PATTERN.match(measurement_pin[2])
+            ):
+                raise ValueError()
+            assurance_pin = (
+                pins.get("assurance_profile_version_id"),
+                pins.get("assurance_profile_digest"),
+            )
+            if any(item is not None for item in assurance_pin) and not (
+                isinstance(assurance_pin[0], str)
+                and ASSURANCE_PROFILE_VERSION_ID_PATTERN.match(
+                    assurance_pin[0]
+                )
+                and isinstance(assurance_pin[1], str)
+                and SNAPSHOT_DIGEST_PATTERN.match(assurance_pin[1])
+            ):
+                raise ValueError()
+        _ensure_no_raw_recon(record)
+        return record
+    except BackendError as error:
+        if error.code == "storage_error":
+            raise
+        raise BackendError(
+            "storage_error", "comparison is invalid"
+        ) from error
+    except (TypeError, ValueError):
+        raise BackendError("storage_error", "comparison is invalid")
 
 
 def _validate_finding_core(value: Any) -> Dict[str, Any]:
@@ -522,14 +825,21 @@ CACHE_MAX_ITEM_BYTES = 256 * 1024
 class AssessmentStore:
     """Store assessments, immutable baselines, comparisons, and findings."""
 
-    def __init__(self, config_dir: Optional[str] = None):
+    def __init__(
+        self,
+        config_dir: Optional[str] = None,
+        fault_injector=None,
+    ):
         self.directory = resolve_config_dir(config_dir) / "assessments"
+        self.fault_injector = fault_injector
         self._mtime_cache = collections.OrderedDict()
         self._mtime_cache_lock = threading.RLock()
         self._mtime_cache_total_bytes = 0
         self._mtime_cache_hits = 0
         self._mtime_cache_misses = 0
         self._mtime_cache_evictions = 0
+        self._assessment_lock_state = threading.local()
+        self._assessment_read_state = threading.local()
 
     def _invalidate_cache(self, path: Optional[Path] = None) -> None:
         with self._mtime_cache_lock:
@@ -549,7 +859,22 @@ class AssessmentStore:
                     self._mtime_cache_total_bytes = 0
 
     def _ensure_private_directory(self, path: Path) -> None:
-        path.mkdir(parents=True, exist_ok=True)
+        try:
+            details = path.lstat()
+        except FileNotFoundError:
+            path.mkdir(parents=True, exist_ok=False)
+            details = path.lstat()
+        except OSError as error:
+            raise BackendError(
+                "storage_error", "private storage directory is unavailable"
+            ) from error
+        if stat.S_ISLNK(details.st_mode) or not stat.S_ISDIR(
+            details.st_mode
+        ):
+            raise BackendError(
+                "storage_error",
+                "private storage directory must be a real directory",
+            )
         try:
             os.chmod(str(path), 0o700)
         except OSError:
@@ -586,54 +911,193 @@ class AssessmentStore:
         return base
 
     @contextmanager
-    def _lock(self, assessment_id: str):
-        self._ensure_assessment_directories(assessment_id)
-        _, _, _, _, lock_path = self._assessment_paths(assessment_id)
-        descriptor = None
-        deadline = time.monotonic() + 2.0
-        while descriptor is None:
-            try:
-                descriptor = os.open(
-                    str(lock_path),
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                    0o600,
-                )
-            except FileExistsError:
+    def _exclusive_file_lock(self, lock_path: Path):
+        self._ensure_private_directory(lock_path.parent)
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(str(lock_path), flags, 0o600)
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode) or lock_path.is_symlink():
+                raise OSError("lock path is not a regular file")
+            descriptor_chmod = getattr(os, "fchmod", None)
+            if descriptor_chmod is not None:
                 try:
-                    stale = time.time() - lock_path.stat().st_mtime > 30
+                    descriptor_chmod(descriptor, 0o600)
                 except OSError:
-                    stale = False
-                if stale:
-                    try:
-                        lock_path.unlink()
-                    except OSError:
-                        pass
-                    continue
+                    pass
+            else:
+                try:
+                    os.chmod(str(lock_path), 0o600)
+                except OSError:
+                    pass
+            if details.st_size == 0:
+                os.write(descriptor, b"\0")
+                os.fsync(descriptor)
+        except OSError as error:
+            if "descriptor" in locals():
+                os.close(descriptor)
+            raise BackendError(
+                "storage_busy", "assessment storage lock is unavailable"
+            ) from error
+
+        lock_backend = None
+        deadline = time.monotonic() + 2.0
+        while lock_backend is None:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                    lock_backend = ("msvcrt", msvcrt)
+                else:
+                    import fcntl
+
+                    fcntl.flock(
+                        descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB
+                    )
+                    lock_backend = ("fcntl", fcntl)
+            except (BlockingIOError, OSError):
                 if time.monotonic() >= deadline:
+                    os.close(descriptor)
                     raise BackendError(
                         "storage_busy", "assessment storage is busy"
                     )
                 time.sleep(0.05)
         try:
-            os.write(descriptor, str(os.getpid()).encode("ascii"))
-            os.close(descriptor)
-            descriptor = None
             yield
         finally:
-            if descriptor is not None:
-                os.close(descriptor)
             try:
-                lock_path.unlink()
-            except OSError:
-                pass
+                if lock_backend[0] == "msvcrt":
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    lock_backend[1].locking(
+                        descriptor, lock_backend[1].LK_UNLCK, 1
+                    )
+                else:
+                    lock_backend[1].flock(
+                        descriptor, lock_backend[1].LOCK_UN
+                    )
+            finally:
+                os.close(descriptor)
+
+    @contextmanager
+    def _lock(self, assessment_id: str):
+        held = getattr(self._assessment_lock_state, "held", {})
+        if held.get(assessment_id, 0):
+            held[assessment_id] += 1
+            self._assessment_lock_state.held = held
+            try:
+                yield
+            finally:
+                held[assessment_id] -= 1
+            return
+        self._ensure_assessment_directories(assessment_id)
+        base, _, _, _, lock_path = self._assessment_paths(assessment_id)
+        with self._exclusive_file_lock(lock_path):
+            held = dict(held)
+            held[assessment_id] = 1
+            self._assessment_lock_state.held = held
+            try:
+                recover_private_transactions(
+                    base, cleanup_unprepared=True
+                )
+                yield
+            finally:
+                held.pop(assessment_id, None)
+                self._assessment_lock_state.held = held
+
+    @contextmanager
+    def _read_session(self, assessment_id: str):
+        """Hold one consistent read lock and validate the event log once."""
+        sessions = getattr(self._assessment_read_state, "sessions", {})
+        if assessment_id in sessions:
+            yield
+            return
+        with self._lock(assessment_id):
+            events = self._read_events(assessment_id)
+            metadata = self._read_metadata(
+                assessment_id, validated_events=events
+            )
+            sessions = dict(sessions)
+            sessions[assessment_id] = {
+                "metadata": metadata,
+                "events": events,
+            }
+            self._assessment_read_state.sessions = sessions
+            try:
+                yield
+            finally:
+                sessions = dict(
+                    getattr(self._assessment_read_state, "sessions", {})
+                )
+                sessions.pop(assessment_id, None)
+                self._assessment_read_state.sessions = sessions
+
+    def _read_private_bytes(
+        self,
+        path: Path,
+        missing_code: str,
+        missing_message: str,
+        maximum_bytes: int = MAX_DOCUMENT_BYTES,
+    ):
+        try:
+            stat_before = path.lstat()
+            if (
+                stat.S_ISLNK(stat_before.st_mode)
+                or not stat.S_ISREG(stat_before.st_mode)
+                or stat_before.st_size > maximum_bytes
+            ):
+                raise OSError("stored path or size is invalid")
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(str(path), flags)
+            try:
+                opened = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(opened.st_mode)
+                    or opened.st_size != stat_before.st_size
+                    or getattr(opened, "st_ino", 0)
+                    != getattr(stat_before, "st_ino", 0)
+                ):
+                    raise OSError("stored data changed while opening")
+                chunks = []
+                remaining = opened.st_size
+                while remaining:
+                    chunk = os.read(
+                        descriptor, min(64 * 1024, remaining)
+                    )
+                    if not chunk:
+                        raise OSError("stored data was truncated")
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                if os.read(descriptor, 1):
+                    raise OSError("stored data exceeded its size")
+                return b"".join(chunks), opened
+            finally:
+                os.close(descriptor)
+        except FileNotFoundError:
+            raise BackendError(missing_code, missing_message)
+        except OSError as error:
+            raise BackendError(
+                "storage_error", "stored assessment data could not be read"
+            ) from error
 
     def _read_json(
-        self, path: Path, missing_code: str, missing_message: str
+        self,
+        path: Path,
+        missing_code: str,
+        missing_message: str,
+        invalid_code: Optional[str] = None,
     ) -> Any:
         try:
-            stat_before = path.stat()
+            payload, stat_before = self._read_private_bytes(
+                path, missing_code, missing_message
+            )
             cache_key = (
-                str(path.resolve()),
+                str(path.absolute()),
                 stat_before.st_mtime_ns,
                 stat_before.st_size,
                 getattr(stat_before, "st_ino", 0),
@@ -645,20 +1109,11 @@ class AssessmentStore:
                     return copy.deepcopy(self._mtime_cache[cache_key]["value"])
                 self._mtime_cache_misses += 1
 
-            content = path.read_text(encoding="utf-8")
-            stat_after = path.stat()
-            if (
-                stat_before.st_mtime_ns != stat_after.st_mtime_ns
-                or stat_before.st_size != stat_after.st_size
-                or getattr(stat_before, "st_ino", 0) != getattr(stat_after, "st_ino", 0)
-            ):
-                return json.loads(content)
-
-            value = json.loads(content)
-            item_bytes = stat_after.st_size
+            value = json.loads(payload.decode("utf-8"))
+            item_bytes = stat_before.st_size
             if item_bytes <= CACHE_MAX_ITEM_BYTES and item_bytes <= CACHE_MAX_SERIALIZED_BYTES:
                 with self._mtime_cache_lock:
-                    resolved_str = str(path.resolve())
+                    resolved_str = str(path.absolute())
                     old_keys = [k for k in self._mtime_cache if k[0] == resolved_str]
                     for k in old_keys:
                         old_entry = self._mtime_cache.pop(k, None)
@@ -680,11 +1135,12 @@ class AssessmentStore:
                         self._mtime_cache_evictions += 1
 
             return copy.deepcopy(value)
-        except FileNotFoundError:
-            raise BackendError(missing_code, missing_message)
-        except (OSError, ValueError):
+        except BackendError:
+            raise
+        except (UnicodeError, ValueError):
             raise BackendError(
-                "storage_error", "stored assessment data could not be read"
+                invalid_code or "storage_error",
+                "stored assessment data could not be read",
             )
 
     def _write_json(self, path: Path, value: Any) -> None:
@@ -693,6 +1149,109 @@ class AssessmentStore:
             value, ensure_ascii=False, indent=2, sort_keys=True
         ).encode("utf-8") + b"\n"
         write_private_file(path, payload)
+
+    def _transaction(
+        self, root: Path, json_documents: Dict[str, Any], bytes_documents=None
+    ):
+        transaction = PrivateTransaction(
+            root, getattr(self, "fault_injector", None)
+        )
+        for relative, value in sorted(json_documents.items()):
+            transaction.add_json(relative, value)
+        for relative, value in sorted((bytes_documents or {}).items()):
+            transaction.add_bytes(relative, value)
+        return transaction.commit()
+
+    def _staged_event(
+        self,
+        metadata: Dict[str, Any],
+        event_type: str,
+        data: Optional[Dict[str, Any]] = None,
+    ):
+        migration_from = metadata.pop(
+            "_pending_storage_schema_migration_from", None
+        )
+        event_specs = []
+        if migration_from is not None:
+            event_specs.append(
+                (
+                    "storage_schema_migrated",
+                    {
+                        "from_schema_version": migration_from,
+                        "to_schema_version": ASSESSMENT_SCHEMA_VERSION,
+                    },
+                )
+            )
+        event_specs.append((event_type, data))
+        if (
+            metadata["last_event_sequence"] + len(event_specs)
+            > MAX_EVENTS
+        ):
+            raise BackendError(
+                "event_limit", "assessment event limit was reached"
+            )
+        _, _, event_path, _, _ = self._assessment_paths(
+            metadata["assessment_id"]
+        )
+        persisted_events = self._read_events(metadata["assessment_id"])
+        persisted_sequence = (
+            persisted_events[-1]["sequence"] if persisted_events else 0
+        )
+        if persisted_sequence != metadata["last_event_sequence"]:
+            raise BackendError(
+                "storage_error",
+                "assessment event cursor is inconsistent",
+            )
+        if event_path.exists() or event_path.is_symlink():
+            previous, _ = self._read_private_bytes(
+                event_path,
+                "storage_error",
+                "assessment audit events are invalid",
+            )
+        else:
+            previous = b""
+        payload = bytearray(previous)
+        primary_event = None
+        for current_type, current_data in event_specs:
+            event = {
+                "sequence": metadata["last_event_sequence"] + 1,
+                "event_id": "evt_{0}".format(uuid.uuid4()),
+                "event_type": current_type,
+                "recorded_at": metadata["updated_at"],
+                "revision": metadata["revision"],
+            }
+            if current_data:
+                event["data"] = current_data
+            metadata["last_event_sequence"] = event["sequence"]
+            payload.extend(
+                json.dumps(
+                    event,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            payload.extend(b"\n")
+            primary_event = event
+        if len(payload) > MAX_DOCUMENT_BYTES:
+            raise BackendError(
+                "event_limit", "assessment event storage size limit was reached"
+            )
+        return primary_event, bytes(payload)
+
+    def _transaction_event(
+        self,
+        assessment_id: str,
+        metadata: Dict[str, Any],
+        event_type: str,
+        data: Optional[Dict[str, Any]],
+    ):
+        if metadata.get("assessment_id") != assessment_id:
+            raise BackendError(
+                "storage_error", "assessment event identity is inconsistent"
+            )
+        self._advance_revision(metadata)
+        return self._staged_event(metadata, event_type, data)
 
     def _append_event_file(self, path: Path, event: Dict[str, Any]) -> None:
         self._ensure_private_directory(path.parent)
@@ -707,11 +1266,28 @@ class AssessmentStore:
         ).encode("utf-8")
         descriptor = None
         try:
+            flags = (
+                os.O_CREAT
+                | os.O_APPEND
+                | os.O_WRONLY
+                | getattr(os, "O_BINARY", 0)
+            )
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
             descriptor = os.open(
                 str(path),
-                os.O_CREAT | os.O_APPEND | os.O_WRONLY,
+                flags,
                 0o600,
             )
+            details = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(details.st_mode)
+                or details.st_size + len(payload) > MAX_DOCUMENT_BYTES
+            ):
+                raise BackendError(
+                    "event_limit",
+                    "assessment event storage size limit was reached",
+                )
             with os.fdopen(descriptor, "ab") as handle:
                 descriptor = None
                 handle.write(payload)
@@ -721,11 +1297,26 @@ class AssessmentStore:
                 os.chmod(str(path), 0o600)
             except OSError:
                 pass
+        except BackendError:
+            raise
+        except OSError as error:
+            raise BackendError(
+                "storage_error", "assessment event could not be written"
+            ) from error
         finally:
             if descriptor is not None:
                 os.close(descriptor)
 
-    def _read_metadata(self, assessment_id: str) -> Dict[str, Any]:
+    def _read_metadata(
+        self,
+        assessment_id: str,
+        validated_events: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        session = getattr(
+            self._assessment_read_state, "sessions", {}
+        ).get(assessment_id)
+        if session is not None:
+            return session["metadata"]
         _, metadata_path, _, _, _ = self._assessment_paths(assessment_id)
         metadata = self._read_json(
             metadata_path,
@@ -739,6 +1330,13 @@ class AssessmentStore:
             not in SUPPORTED_ASSESSMENT_SCHEMA_VERSIONS
             or metadata.get("status") not in ASSESSMENT_STATUSES
             or not isinstance(metadata.get("revision"), int)
+            or isinstance(metadata.get("revision"), bool)
+            or metadata.get("revision", 0) < 1
+            or not isinstance(metadata.get("last_event_sequence"), int)
+            or isinstance(metadata.get("last_event_sequence"), bool)
+            or metadata.get("last_event_sequence", -1) < 0
+            or metadata.get("last_event_sequence", MAX_EVENTS + 1)
+            > MAX_EVENTS
         ):
             raise BackendError(
                 "storage_error", "assessment metadata is invalid"
@@ -747,6 +1345,37 @@ class AssessmentStore:
         # documents are never rewritten merely because they were read.
         metadata.setdefault("active_assurance_profile_version", None)
         metadata.setdefault("storage_writer_version", metadata["schema_version"])
+        created_time = _stored_timestamp(metadata.get("created_at"))
+        updated_time = _stored_timestamp(metadata.get("updated_at"))
+        if updated_time < created_time:
+            raise BackendError(
+                "storage_error",
+                "assessment timestamps are inconsistent",
+            )
+        events = (
+            validated_events
+            if validated_events is not None
+            else self._read_events(assessment_id)
+        )
+        if not events:
+            raise BackendError(
+                "storage_error", "assessment creation history is missing"
+            )
+        event_sequence = events[-1]["sequence"] if events else 0
+        if event_sequence != metadata["last_event_sequence"]:
+            raise BackendError(
+                "storage_error",
+                "assessment event cursor is inconsistent",
+            )
+        if events and (
+            events[-1]["revision"] != metadata["revision"]
+            or _stored_timestamp(events[-1]["recorded_at"])
+            > updated_time
+        ):
+            raise BackendError(
+                "storage_error",
+                "assessment event revision is inconsistent",
+            )
         return metadata
 
     def _write_metadata(self, metadata: Dict[str, Any]) -> None:
@@ -756,25 +1385,115 @@ class AssessmentStore:
         self._write_json(path, metadata)
 
     def _read_events(self, assessment_id: str) -> List[Dict[str, Any]]:
+        session = getattr(
+            self._assessment_read_state, "sessions", {}
+        ).get(assessment_id)
+        if session is not None:
+            return session["events"]
         _, _, path, _, _ = self._assessment_paths(assessment_id)
-        if not path.exists():
+        if not path.exists() and not path.is_symlink():
             return []
         events = []
         expected_sequence = 1
+        previous_revision = 0
+        previous_event_type = None
+        previous_recorded_at = None
+        event_ids = set()
         try:
-            with path.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    if not line.strip():
-                        continue
-                    event = json.loads(line)
-                    if (
-                        not isinstance(event, dict)
-                        or event.get("sequence") != expected_sequence
-                    ):
-                        raise ValueError()
-                    events.append(event)
-                    expected_sequence += 1
-        except (OSError, ValueError):
+            payload, _ = self._read_private_bytes(
+                path,
+                "storage_error",
+                "assessment audit events are invalid",
+            )
+            for line in payload.decode("utf-8").splitlines():
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                fields = set(event) if isinstance(event, dict) else set()
+                if (
+                    not isinstance(event, dict)
+                    or fields
+                    not in (
+                        {
+                            "sequence",
+                            "event_id",
+                            "event_type",
+                            "recorded_at",
+                            "revision",
+                        },
+                        {
+                            "sequence",
+                            "event_id",
+                            "event_type",
+                            "recorded_at",
+                            "revision",
+                            "data",
+                        },
+                    )
+                    or event.get("sequence") != expected_sequence
+                    or len(events) >= MAX_EVENTS
+                    or not isinstance(event.get("event_id"), str)
+                    or not EVENT_ID_PATTERN.match(event["event_id"])
+                    or event["event_id"] in event_ids
+                    or not isinstance(event.get("event_type"), str)
+                    or not EVENT_TYPE_PATTERN.match(event["event_type"])
+                    or not isinstance(event.get("revision"), int)
+                    or isinstance(event.get("revision"), bool)
+                    or event["revision"] < 1
+                    or (
+                        expected_sequence == 1
+                        and (
+                            event["revision"] != 1
+                            or event["event_type"]
+                            != "assessment_created"
+                        )
+                    )
+                    or (
+                        expected_sequence > 1
+                        and event["revision"]
+                        not in (
+                            previous_revision,
+                            previous_revision + 1,
+                        )
+                    )
+                    or (
+                        expected_sequence > 1
+                        and event["revision"] == previous_revision
+                        and (
+                            previous_event_type
+                            != "storage_schema_migrated"
+                            or event["event_type"]
+                            == "storage_schema_migrated"
+                        )
+                    )
+                    or (
+                        "data" in event
+                        and not isinstance(event.get("data"), dict)
+                    )
+                ):
+                    raise ValueError()
+                recorded_at = _stored_timestamp(event.get("recorded_at"))
+                if (
+                    previous_recorded_at is not None
+                    and recorded_at < previous_recorded_at
+                ):
+                    raise ValueError()
+                if "data" in event:
+                    try:
+                        _ensure_no_raw_recon(event["data"])
+                    except BackendError as error:
+                        raise ValueError() from error
+                events.append(event)
+                event_ids.add(event["event_id"])
+                previous_revision = event["revision"]
+                previous_event_type = event["event_type"]
+                previous_recorded_at = recorded_at
+                expected_sequence += 1
+            if previous_event_type == "storage_schema_migrated":
+                raise ValueError()
+        except BackendError:
+            raise
+        except (UnicodeError, ValueError):
             raise BackendError(
                 "storage_error", "assessment audit events are invalid"
             )
@@ -823,17 +1542,22 @@ class AssessmentStore:
             metadata["schema_version"] = ASSESSMENT_SCHEMA_VERSION
             metadata["storage_writer_version"] = ASSESSMENT_SCHEMA_VERSION
             metadata.setdefault("active_assurance_profile_version", None)
-            self._append_event(
-                metadata,
-                "storage_schema_migrated",
-                {
-                    "from_schema_version": previous,
-                    "to_schema_version": ASSESSMENT_SCHEMA_VERSION,
-                },
-            )
+            metadata[
+                "_pending_storage_schema_migration_from"
+            ] = previous
 
     def _advance_revision(self, metadata: Dict[str, Any]) -> str:
         now = _utc_now()
+        previous = metadata.get("updated_at")
+        if isinstance(previous, str):
+            try:
+                if _stored_timestamp(previous) > _stored_timestamp(now):
+                    now = previous
+            except BackendError:
+                raise BackendError(
+                    "storage_error",
+                    "assessment updated_at is invalid",
+                )
         metadata["revision"] += 1
         metadata["updated_at"] = now
         return now
@@ -855,6 +1579,83 @@ class AssessmentStore:
             raise BackendError("invalid_snapshot", "snapshot_id is invalid")
         base, _, _, _, _ = self._assessment_paths(assessment_id)
         return base / "snapshots" / "{0}.json".format(snapshot_id)
+
+    def _bounded_document_paths(
+        self,
+        directory: Path,
+        filename_pattern: re.Pattern,
+        maximum: int,
+        label: str,
+    ) -> List[Path]:
+        self._ensure_private_directory(directory)
+        results = []
+        try:
+            with os.scandir(str(directory)) as iterator:
+                for entry in iterator:
+                    if (
+                        not filename_pattern.match(entry.name)
+                        or not entry.is_file(follow_symlinks=False)
+                    ):
+                        raise BackendError(
+                            "storage_error",
+                            "{0} storage contains an invalid entry".format(
+                                label
+                            ),
+                        )
+                    results.append(Path(entry.path))
+                    if len(results) > maximum:
+                        raise BackendError(
+                            "storage_error",
+                            "{0} storage exceeds its safe limit".format(
+                                label
+                            ),
+                        )
+        except BackendError:
+            raise
+        except OSError as error:
+            raise BackendError(
+                "storage_error",
+                "{0} storage is unreadable".format(label),
+            ) from error
+        return sorted(results, key=lambda item: item.name)
+
+    def _preflight_aggregate_document_bytes(
+        self,
+        paths: List[Path],
+        maximum_bytes: int,
+        label: str,
+    ) -> int:
+        """Admit a bounded document set before opening any document body."""
+        total_bytes = 0
+        for path in paths:
+            try:
+                details = path.lstat()
+            except OSError as error:
+                raise BackendError(
+                    "storage_error",
+                    "{0} storage metadata is unavailable".format(label),
+                ) from error
+            if stat.S_ISLNK(details.st_mode) or not stat.S_ISREG(
+                details.st_mode
+            ):
+                raise BackendError(
+                    "storage_error",
+                    "{0} storage contains an invalid path".format(label),
+                )
+            if details.st_size < 2:
+                raise BackendError(
+                    "storage_error",
+                    "{0} storage contains an invalid document".format(label),
+                )
+            total_bytes += details.st_size
+            if total_bytes > maximum_bytes:
+                raise BackendError(
+                    "storage_limit_exceeded",
+                    "{0} listing exceeds the safe aggregate size limit".format(
+                        label
+                    ),
+                )
+        return total_bytes
 
     def _comparison_path(
         self, assessment_id: str, comparison_id: Any
@@ -882,6 +1683,64 @@ class AssessmentStore:
                 )
             return
         self._write_json(path, value)
+
+    def _immutable_preflight(
+        self, path: Path, value: Dict[str, Any], conflict_code: str
+    ) -> bool:
+        if not path.exists() and not path.is_symlink():
+            return True
+        if path.is_symlink() or not path.is_file():
+            raise BackendError(
+                conflict_code, "immutable document path is invalid"
+            )
+        existing = self._read_json(
+            path, conflict_code, "immutable document is missing"
+        )
+        if existing != value:
+            raise BackendError(
+                conflict_code,
+                "immutable document already exists with different content",
+            )
+        return False
+
+    def _snapshot_immutable_preflight(
+        self, path: Path, value: Dict[str, Any], conflict_code: str
+    ) -> bool:
+        """Admit a new bound snapshot or reuse an identical legacy snapshot."""
+        if not path.exists() and not path.is_symlink():
+            return True
+        if path.is_symlink() or not path.is_file():
+            raise BackendError(
+                conflict_code, "immutable snapshot path is invalid"
+            )
+        try:
+            existing = _validate_snapshot(
+                self._read_json(
+                    path, conflict_code, "immutable snapshot is missing"
+                )
+            )
+        except BackendError as error:
+            raise BackendError(
+                conflict_code, "immutable snapshot is invalid"
+            ) from error
+        if existing == value:
+            return False
+        if (
+            "snapshot_record_digest" not in existing
+            and value.get("snapshot_record_digest")
+            == _snapshot_record_digest(existing)
+            and {
+                key: item
+                for key, item in value.items()
+                if key != "snapshot_record_digest"
+            }
+            == existing
+        ):
+            return False
+        raise BackendError(
+            conflict_code,
+            "immutable snapshot already exists with different content",
+        )
 
     def _read_findings(self, assessment_id: str) -> List[Dict[str, Any]]:
         _, _, _, path, _ = self._assessment_paths(assessment_id)
@@ -935,23 +1794,28 @@ class AssessmentStore:
             "last_event_sequence": 0,
         }
         with self._lock(assessment_id):
-            _, metadata_path, _, findings_path, _ = self._assessment_paths(
+            base, metadata_path, event_path, findings_path, _ = self._assessment_paths(
                 assessment_id
             )
-            if metadata_path.exists():
+            if metadata_path.exists() or metadata_path.is_symlink():
                 raise BackendError(
                     "storage_error", "assessment already exists"
                 )
-            self._write_json(
-                findings_path,
-                {
-                    "schema_version": ASSESSMENT_SCHEMA_VERSION,
-                    "updated_at": now,
-                    "findings": [],
-                },
+            event, event_bytes = self._staged_event(
+                metadata, "assessment_created"
             )
-            event = self._append_event(metadata, "assessment_created")
-            self._write_metadata(metadata)
+            self._transaction(
+                base,
+                {
+                    metadata_path.name: metadata,
+                    findings_path.name: {
+                        "schema_version": ASSESSMENT_SCHEMA_VERSION,
+                        "updated_at": now,
+                        "findings": [],
+                    },
+                },
+                {event_path.name: event_bytes},
+            )
         result = dict(metadata)
         result["events"] = [event]
         return result
@@ -976,12 +1840,13 @@ class AssessmentStore:
             raise BackendError(
                 "invalid_request", "limit must be between 1 and 100"
             )
-        metadata = self._read_metadata(assessment_id)
-        selected = [
-            event
-            for event in self._read_events(assessment_id)
-            if event["sequence"] > after_sequence
-        ][:limit]
+        with self._lock(assessment_id):
+            metadata = self._read_metadata(assessment_id)
+            selected = [
+                event
+                for event in self._read_events(assessment_id)
+                if event["sequence"] > after_sequence
+            ][:limit]
         result = dict(metadata)
         result["events"] = selected
         result["events_has_more"] = bool(
@@ -999,11 +1864,36 @@ class AssessmentStore:
         if not self.directory.exists():
             return []
         results = []
-        for path in sorted(self.directory.glob("assessment_*")):
-            if not path.is_dir() or not ASSESSMENT_ID_PATTERN.match(path.name):
-                continue
+        paths = []
+        try:
+            with os.scandir(str(self.directory)) as iterator:
+                for entry in iterator:
+                    if entry.name == ".lock":
+                        continue
+                    if (
+                        not ASSESSMENT_ID_PATTERN.match(entry.name)
+                        or not entry.is_dir(follow_symlinks=False)
+                    ):
+                        raise BackendError(
+                            "storage_error",
+                            "assessment storage contains an invalid entry",
+                        )
+                    paths.append(Path(entry.path))
+                    if len(paths) > 1000:
+                        raise BackendError(
+                            "storage_error",
+                            "assessment storage exceeds its safe limit",
+                        )
+        except BackendError:
+            raise
+        except OSError as error:
+            raise BackendError(
+                "storage_error", "assessment storage is unreadable"
+            ) from error
+        for path in sorted(paths, key=lambda item: item.name):
             try:
-                metadata = self._read_metadata(path.name)
+                with self._lock(path.name):
+                    metadata = self._read_metadata(path.name)
             except BackendError as error:
                 if error.code == "assessment_not_found":
                     continue
@@ -1034,13 +1924,18 @@ class AssessmentStore:
                 )
             for field in changed_fields:
                 metadata[field] = validated[field]
-            self._advance_revision(metadata)
-            event = self._append_event(
+            event, event_bytes = self._transaction_event(
+                assessment_id,
                 metadata,
                 "assessment_updated",
                 {"changed_fields": sorted(changed_fields)},
             )
-            self._write_metadata(metadata)
+            base, _, _, _, _ = self._assessment_paths(assessment_id)
+            self._transaction(
+                base,
+                {"assessment.json": metadata},
+                {"events.jsonl": event_bytes},
+            )
         result = dict(metadata)
         result["events"] = [event]
         return result
@@ -1052,9 +1947,15 @@ class AssessmentStore:
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_revision)
             metadata["status"] = "archived"
-            self._advance_revision(metadata)
-            event = self._append_event(metadata, "assessment_archived")
-            self._write_metadata(metadata)
+            event, event_bytes = self._transaction_event(
+                assessment_id, metadata, "assessment_archived", None
+            )
+            base, _, _, _, _ = self._assessment_paths(assessment_id)
+            self._transaction(
+                base,
+                {"assessment.json": metadata},
+                {"events.jsonl": event_bytes},
+            )
         result = dict(metadata)
         result["events"] = [event]
         return result
@@ -1066,7 +1967,7 @@ class AssessmentStore:
         snapshot: Any,
         label: Any = "",
     ) -> Dict[str, Any]:
-        normalized_snapshot = _validate_snapshot(snapshot)
+        normalized_snapshot = _bind_snapshot_record_digest(snapshot)
         if (
             not isinstance(label, str)
             or len(label) > 128
@@ -1081,7 +1982,12 @@ class AssessmentStore:
             metadata = self._read_metadata(assessment_id)
             self._require_mutable(metadata, expected_revision)
             base, _, _, _, _ = self._assessment_paths(assessment_id)
-            baseline_paths = sorted((base / "baselines").glob("baseline_v*.json"))
+            baseline_paths = self._bounded_document_paths(
+                base / "baselines",
+                re.compile(r"^baseline_v[0-9]{4}\.json$"),
+                MAX_BASELINE_VERSIONS,
+                "baseline",
+            )
             if len(baseline_paths) >= MAX_BASELINE_VERSIONS:
                 raise BackendError(
                     "baseline_limit",
@@ -1093,35 +1999,31 @@ class AssessmentStore:
                     numbers.append(int(path.stem[-4:]))
             version_number = max(numbers or [0]) + 1
             baseline_version_id = "baseline_v{0:04d}".format(version_number)
-            now = self._advance_revision(metadata)
-            record = {
-                "schema_version": ASSESSMENT_SCHEMA_VERSION,
-                "assessment_id": assessment_id,
-                "baseline_version_id": baseline_version_id,
-                "version": version_number,
-                "label": normalized_label,
-                "created_at": now,
-                "snapshot_id": normalized_snapshot["snapshot_id"],
-                "snapshot_digest": normalized_snapshot["snapshot_digest"],
-                "summary": normalized_snapshot["summary"],
-                "scan_metadata": normalized_snapshot["scan_metadata"],
-                "comparability_profile": normalized_snapshot[
-                    "comparability_profile"
-                ],
-            }
-            self._write_immutable(
-                self._snapshot_path(
-                    assessment_id, normalized_snapshot["snapshot_id"]
-                ),
+            snapshot_path = self._snapshot_path(
+                assessment_id, normalized_snapshot["snapshot_id"]
+            )
+            snapshot_is_new = self._snapshot_immutable_preflight(
+                snapshot_path,
                 normalized_snapshot,
                 "snapshot_conflict",
             )
-            self._write_immutable(
-                self._baseline_path(assessment_id, baseline_version_id),
-                record,
-                "baseline_conflict",
+            if snapshot_is_new and len(
+                self._bounded_document_paths(
+                    base / "snapshots",
+                    re.compile(r"^snapshot_[0-9a-f]{16}\.json$"),
+                    MAX_SNAPSHOTS,
+                    "snapshot",
+                )
+            ) >= MAX_SNAPSHOTS:
+                raise BackendError(
+                    "snapshot_limit",
+                    "assessment snapshot limit was reached",
+                )
+            baseline_path = self._baseline_path(
+                assessment_id, baseline_version_id
             )
-            event = self._append_event(
+            event, event_bytes = self._transaction_event(
+                assessment_id,
                 metadata,
                 "baseline_version_created",
                 {
@@ -1132,7 +2034,39 @@ class AssessmentStore:
                     ],
                 },
             )
-            self._write_metadata(metadata)
+            record = {
+                "schema_version": ASSESSMENT_SCHEMA_VERSION,
+                "assessment_id": assessment_id,
+                "baseline_version_id": baseline_version_id,
+                "version": version_number,
+                "label": normalized_label,
+                "created_at": metadata["updated_at"],
+                "snapshot_id": normalized_snapshot["snapshot_id"],
+                "snapshot_digest": normalized_snapshot["snapshot_digest"],
+                "summary": normalized_snapshot["summary"],
+                "scan_metadata": normalized_snapshot["scan_metadata"],
+                "comparability_profile": normalized_snapshot[
+                    "comparability_profile"
+                ],
+            }
+            self._immutable_preflight(
+                baseline_path,
+                record,
+                "baseline_conflict",
+            )
+            documents = {
+                "assessment.json": metadata,
+                "baselines/{0}.json".format(baseline_version_id): record,
+            }
+            if snapshot_is_new:
+                documents[
+                    "snapshots/{0}.json".format(
+                        normalized_snapshot["snapshot_id"]
+                    )
+                ] = normalized_snapshot
+            self._transaction(
+                base, documents, {"events.jsonl": event_bytes}
+            )
         return {
             "assessment": metadata,
             "baseline_version": dict(
@@ -1153,46 +2087,77 @@ class AssessmentStore:
             "baseline_not_found",
             "baseline version was not found",
         )
+        version = int(baseline_version_id[-4:])
         if (
             not isinstance(record, dict)
+            or set(record) != SINGLE_SCAN_BASELINE_FIELDS
+            or record.get("schema_version")
+            not in SUPPORTED_ASSESSMENT_SCHEMA_VERSIONS
             or record.get("assessment_id") != assessment_id
             or record.get("baseline_version_id") != baseline_version_id
-            or not SNAPSHOT_ID_PATTERN.match(str(record.get("snapshot_id", "")))
+            or record.get("version") != version
+            or not isinstance(record.get("label"), str)
+            or len(record["label"]) > 128
+            or any(ord(character) < 32 for character in record["label"])
+            or not SNAPSHOT_ID_PATTERN.match(
+                str(record.get("snapshot_id", ""))
+            )
+            or not SNAPSHOT_DIGEST_PATTERN.match(
+                str(record.get("snapshot_digest", ""))
+            )
+            or not isinstance(record.get("summary"), dict)
+            or not isinstance(record.get("scan_metadata"), dict)
+            or not isinstance(record.get("comparability_profile"), dict)
         ):
             raise BackendError(
                 "storage_error", "baseline version is invalid"
             )
+        validate_rfc3339(
+            record.get("created_at"),
+            "created_at",
+            "storage_error",
+        )
+        _ensure_no_raw_recon(record)
         return record
 
     def list_baseline_versions(
         self, assessment_id: str
     ) -> List[Dict[str, Any]]:
-        metadata = self._read_metadata(assessment_id)
-        base, _, _, _, _ = self._assessment_paths(assessment_id)
-        results = []
-        for path in sorted((base / "baselines").glob("baseline_v*.json")):
-            if not BASELINE_VERSION_ID_PATTERN.match(path.stem):
-                continue
-            record = self._read_baseline_record(assessment_id, path.stem)
-            result = dict(record)
-            result["is_active"] = (
-                metadata["active_baseline_version"] == path.stem
-            )
-            results.append(result)
+        with self._lock(assessment_id):
+            metadata = self._read_metadata(assessment_id)
+            base, _, _, _, _ = self._assessment_paths(assessment_id)
+            results = []
+            for path in self._bounded_document_paths(
+                base / "baselines",
+                re.compile(r"^baseline_v[0-9]{4}\.json$"),
+                MAX_BASELINE_VERSIONS,
+                "baseline",
+            ):
+                record = self._read_baseline_record(
+                    assessment_id, path.stem
+                )
+                result = dict(record)
+                result["is_active"] = (
+                    metadata["active_baseline_version"] == path.stem
+                )
+                results.append(result)
         return sorted(results, key=lambda item: item["version"])
 
     def get_baseline_version(
         self, assessment_id: str, baseline_version_id: str
     ) -> Dict[str, Any]:
-        metadata = self._read_metadata(assessment_id)
-        record = self._read_baseline_record(
-            assessment_id, baseline_version_id
-        )
-        snapshot = self._read_json(
-            self._snapshot_path(assessment_id, record["snapshot_id"]),
-            "storage_error",
-            "baseline snapshot was not found",
-        )
+        with self._lock(assessment_id):
+            metadata = self._read_metadata(assessment_id)
+            record = self._read_baseline_record(
+                assessment_id, baseline_version_id
+            )
+            snapshot = self._read_json(
+                self._snapshot_path(
+                    assessment_id, record["snapshot_id"]
+                ),
+                "storage_error",
+                "baseline snapshot was not found",
+            )
         result = dict(record)
         result["is_active"] = (
             metadata["active_baseline_version"] == baseline_version_id
@@ -1218,8 +2183,8 @@ class AssessmentStore:
                 )
             previous = metadata["active_baseline_version"]
             metadata["active_baseline_version"] = baseline_version_id
-            self._advance_revision(metadata)
-            event = self._append_event(
+            event, event_bytes = self._transaction_event(
+                assessment_id,
                 metadata,
                 "baseline_version_activated",
                 {
@@ -1228,7 +2193,12 @@ class AssessmentStore:
                     "snapshot_id": record["snapshot_id"],
                 },
             )
-            self._write_metadata(metadata)
+            base, _, _, _, _ = self._assessment_paths(assessment_id)
+            self._transaction(
+                base,
+                {"assessment.json": metadata},
+                {"events.jsonl": event_bytes},
+            )
         return {
             "assessment": metadata,
             "baseline_version": dict(record, is_active=True),
@@ -1260,7 +2230,7 @@ class AssessmentStore:
     ) -> Dict[str, Any]:
         """Persist an analysis and apply deterministic finding lifecycle rules."""
         normalized_comparison = _validate_comparison(comparison)
-        normalized_snapshot = _validate_snapshot(current_snapshot)
+        normalized_snapshot = _bind_snapshot_record_digest(current_snapshot)
         if not isinstance(findings, list) or len(findings) > MAX_FINDINGS:
             raise BackendError(
                 "invalid_finding",
@@ -1359,9 +2329,14 @@ class AssessmentStore:
                     )
 
             base, _, _, _, _ = self._assessment_paths(assessment_id)
-            if len(list((base / "comparisons").glob("comparison_*.json"))) >= (
-                MAX_COMPARISONS
-            ):
+            if len(
+                self._bounded_document_paths(
+                    base / "comparisons",
+                    re.compile(r"^comparison_[0-9a-f]{16}\.json$"),
+                    MAX_COMPARISONS,
+                    "comparison",
+                )
+            ) >= MAX_COMPARISONS:
                 raise BackendError(
                     "comparison_limit",
                     "assessment comparison limit was reached",
@@ -1370,7 +2345,12 @@ class AssessmentStore:
                 assessment_id, normalized_snapshot["snapshot_id"]
             )
             if not snapshot_path.exists() and len(
-                list((base / "snapshots").glob("snapshot_*.json"))
+                self._bounded_document_paths(
+                    base / "snapshots",
+                    re.compile(r"^snapshot_[0-9a-f]{16}\.json$"),
+                    MAX_SNAPSHOTS,
+                    "snapshot",
+                )
             ) >= MAX_SNAPSHOTS:
                 raise BackendError(
                     "snapshot_limit",
@@ -1454,6 +2434,12 @@ class AssessmentStore:
                 for finding_id, existing in by_id.items():
                     if finding_id in observed_ids:
                         continue
+                    details = existing.get("details")
+                    if (
+                        isinstance(details, dict)
+                        and details.get("measurement_point_id") is not None
+                    ):
+                        continue
                     if status == "comparable":
                         existing["currently_observed"] = False
                         if existing["status"] in (
@@ -1470,7 +2456,7 @@ class AssessmentStore:
             else:
                 observed_ids = set()
 
-            self._write_immutable(
+            snapshot_is_new = self._snapshot_immutable_preflight(
                 snapshot_path,
                 normalized_snapshot,
                 "snapshot_conflict",
@@ -1495,15 +2481,11 @@ class AssessmentStore:
                 "lifecycle": lifecycle,
                 "comparison": normalized_comparison,
             }
-            self._write_immutable(
+            self._immutable_preflight(
                 comparison_path, record, "comparison_conflict"
             )
-            if lifecycle["mutated"]:
-                self._write_findings(
-                    assessment_id, stored_findings, now
-                )
-            self._advance_revision(metadata)
-            event = self._append_event(
+            event, event_bytes = self._transaction_event(
+                assessment_id,
                 metadata,
                 "analysis_persisted",
                 {
@@ -1523,7 +2505,25 @@ class AssessmentStore:
                     "lifecycle_mutated": lifecycle["mutated"],
                 },
             )
-            self._write_metadata(metadata)
+            documents = {
+                "assessment.json": metadata,
+                "comparisons/{0}.json".format(comparison_id): record,
+            }
+            if snapshot_is_new:
+                documents[
+                    "snapshots/{0}.json".format(
+                        normalized_snapshot["snapshot_id"]
+                    )
+                ] = normalized_snapshot
+            if lifecycle["mutated"]:
+                documents["findings.json"] = {
+                    "schema_version": ASSESSMENT_SCHEMA_VERSION,
+                    "updated_at": now,
+                    "findings": stored_findings,
+                }
+            self._transaction(
+                base, documents, {"events.jsonl": event_bytes}
+            )
 
         return {
             "assessment": metadata,
@@ -1536,49 +2536,131 @@ class AssessmentStore:
     def get_comparison(
         self, assessment_id: str, comparison_id: str
     ) -> Dict[str, Any]:
-        self._read_metadata(assessment_id)
+        with self._lock(assessment_id):
+            self._read_metadata(assessment_id)
+            record = self._read_comparison_record_unlocked(
+                assessment_id, comparison_id
+            )
+        return record
+
+    def _read_comparison_record_unlocked(
+        self,
+        assessment_id: str,
+        comparison_id: str,
+        validate_snapshot_reference: bool = True,
+        validate_linked_references: bool = True,
+    ) -> Dict[str, Any]:
         record = self._read_json(
             self._comparison_path(assessment_id, comparison_id),
             "comparison_not_found",
             "comparison was not found",
         )
-        if (
-            not isinstance(record, dict)
-            or record.get("assessment_id") != assessment_id
-            or record.get("comparison_id") != comparison_id
-        ):
-            raise BackendError("storage_error", "comparison is invalid")
+        record = _validate_stored_comparison_record(
+            record, assessment_id, comparison_id
+        )
+        if validate_snapshot_reference:
+            self._validate_comparison_snapshot_reference_unlocked(
+                assessment_id, record
+            )
+        if validate_linked_references:
+            self._validate_linked_comparison_references_unlocked(
+                assessment_id, record
+            )
         return record
+
+    def _validate_linked_comparison_references_unlocked(
+        self, assessment_id: str, record: Dict[str, Any]
+    ) -> None:
+        """Subclass hook for version-specific immutable reference checks."""
+        return None
+
+    def _validate_comparison_snapshot_reference_unlocked(
+        self,
+        assessment_id: str,
+        record: Dict[str, Any],
+        snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> None:
+        snapshot_id = record["current_snapshot_id"]
+        snapshot = snapshots.get(snapshot_id) if snapshots is not None else None
+        if snapshot is None:
+            stored = self._read_json(
+                self._snapshot_path(assessment_id, snapshot_id),
+                "storage_error",
+                "comparison snapshot was not found",
+            )
+            snapshot = _validate_snapshot(stored)
+            if snapshots is not None:
+                snapshots[snapshot_id] = snapshot
+        if (
+            snapshot.get("snapshot_id") != snapshot_id
+            or snapshot.get("snapshot_digest")
+            != record["current_snapshot_digest"]
+        ):
+            raise BackendError(
+                "storage_error", "comparison snapshot reference is invalid"
+            )
 
     def list_comparisons(
         self, assessment_id: str
     ) -> List[Dict[str, Any]]:
-        self._read_metadata(assessment_id)
-        base, _, _, _, _ = self._assessment_paths(assessment_id)
-        results = []
-        for path in sorted(
-            (base / "comparisons").glob("comparison_*.json")
-        ):
-            if not COMPARISON_ID_PATTERN.match(path.stem):
-                continue
-            record = self.get_comparison(assessment_id, path.stem)
-            summary = {
-                key: record[key]
-                for key in (
-                    "schema_version",
-                    "comparison_id",
-                    "assessment_id",
-                    "baseline_version_id",
-                    "created_at",
-                    "baseline_snapshot_id",
-                    "current_snapshot_id",
-                    "current_snapshot_digest",
-                    "comparability_status",
-                    "observed_finding_ids",
-                    "lifecycle",
+        with self._read_session(assessment_id), self._lock(assessment_id):
+            self._read_metadata(assessment_id)
+            base, _, _, _, _ = self._assessment_paths(assessment_id)
+            results = []
+            paths = self._bounded_document_paths(
+                base / "comparisons",
+                re.compile(r"^comparison_[0-9a-f]{16}\.json$"),
+                MAX_COMPARISONS,
+                "comparison",
+            )
+            comparison_bytes = self._preflight_aggregate_document_bytes(
+                paths, MAX_CUSTOMER_LIST_BYTES, "comparison"
+            )
+            records = []
+            for path in paths:
+                record = self._read_comparison_record_unlocked(
+                    assessment_id,
+                    path.stem,
+                    validate_snapshot_reference=False,
+                    validate_linked_references=False,
                 )
-            }
-            results.append(summary)
+                records.append(record)
+            snapshot_paths = sorted(
+                {
+                    self._snapshot_path(
+                        assessment_id, record["current_snapshot_id"]
+                    )
+                    for record in records
+                },
+                key=lambda item: item.name,
+            )
+            self._preflight_aggregate_document_bytes(
+                snapshot_paths,
+                MAX_CUSTOMER_LIST_BYTES - comparison_bytes,
+                "comparison snapshot",
+            )
+            snapshots = {}
+            for record in records:
+                self._validate_comparison_snapshot_reference_unlocked(
+                    assessment_id, record, snapshots
+                )
+                summary = {
+                    key: record[key]
+                    for key in (
+                        "schema_version",
+                        "comparison_id",
+                        "assessment_id",
+                        "baseline_version_id",
+                        "created_at",
+                        "baseline_snapshot_id",
+                        "current_snapshot_id",
+                        "current_snapshot_digest",
+                        "comparability_status",
+                        "observed_finding_ids",
+                        "lifecycle",
+                    )
+                }
+                results.append(summary)
         return sorted(
             results,
             key=lambda item: (item["created_at"], item["comparison_id"]),
@@ -1591,7 +2673,6 @@ class AssessmentStore:
         statuses: Optional[List[str]] = None,
         currently_observed: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
-        self._read_metadata(assessment_id)
         if statuses is not None:
             if not isinstance(statuses, list) or not statuses:
                 raise BackendError(
@@ -1607,7 +2688,9 @@ class AssessmentStore:
             raise BackendError(
                 "invalid_request", "currently_observed must be a boolean"
             )
-        findings = self._read_findings(assessment_id)
+        with self._lock(assessment_id):
+            self._read_metadata(assessment_id)
+            findings = self._read_findings(assessment_id)
         status_filter = set(statuses or FINDING_STATUSES)
         return [
             finding
@@ -1669,10 +2752,9 @@ class AssessmentStore:
                     "no_changes", "finding already has the requested status"
                 )
             previous = selected["status"]
-            now = self._advance_revision(metadata)
+            now = _utc_now()
             selected["status"] = status
             selected["status_updated_at"] = now
-            self._write_findings(assessment_id, findings, now)
             event_data = {
                 "finding_id": finding_id,
                 "previous_status": previous,
@@ -1680,12 +2762,29 @@ class AssessmentStore:
             }
             if normalized_note:
                 event_data["note"] = normalized_note
-            event = self._append_event(
+            event, event_bytes = self._transaction_event(
+                assessment_id,
                 metadata,
                 "finding_status_updated",
                 event_data,
             )
-            self._write_metadata(metadata)
+            selected["status_updated_at"] = metadata["updated_at"]
+            base, _, _, _, _ = self._assessment_paths(assessment_id)
+            self._transaction(
+                base,
+                {
+                    "assessment.json": metadata,
+                    "findings.json": {
+                        "schema_version": ASSESSMENT_SCHEMA_VERSION,
+                        "updated_at": metadata["updated_at"],
+                        "findings": sorted(
+                            findings,
+                            key=lambda item: item["finding_id"],
+                        ),
+                    },
+                },
+                {"events.jsonl": event_bytes},
+            )
         return {
             "assessment": metadata,
             "finding": selected,

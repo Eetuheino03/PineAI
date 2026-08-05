@@ -1,6 +1,6 @@
 import {Component} from '@angular/core';
 import {FormBuilder, FormGroup, Validators} from '@angular/forms';
-import {MeasurementContext, MeasurementProfile} from '../models';
+import {MeasurementProfile, MeasurementProfileContext} from '../models';
 import {PineAIService} from '../services/PineAI.service';
 
 @Component({
@@ -24,11 +24,6 @@ export class MeasurementProfilesComponent {
         this.form = formBuilder.group({
             name: ['', [Validators.required, Validators.maxLength(100)]],
             description: ['', Validators.maxLength(500)],
-            location_id: ['', [Validators.required, Validators.maxLength(100)]],
-            measurement_point_id: [
-                '',
-                [Validators.required, Validators.maxLength(100)]
-            ],
             scan_profile_id: [
                 '',
                 [Validators.required, Validators.maxLength(100)]
@@ -60,8 +55,6 @@ export class MeasurementProfilesComponent {
         this.form.reset({
             name: '',
             description: '',
-            location_id: '',
-            measurement_point_id: '',
             scan_profile_id: '',
             radio_profile_id: '',
             interface: '',
@@ -80,8 +73,6 @@ export class MeasurementProfilesComponent {
         this.form.setValue({
             name: profile.name || '',
             description: profile.description || '',
-            location_id: context.location_id || '',
-            measurement_point_id: context.measurement_point_id || '',
             scan_profile_id: context.scan_profile_id || '',
             radio_profile_id: context.radio_profile_id || '',
             interface: context.interface || '',
@@ -127,9 +118,7 @@ export class MeasurementProfilesComponent {
             }
             return;
         }
-        const context: MeasurementContext = {
-            location_id: value.location_id.trim(),
-            measurement_point_id: value.measurement_point_id.trim(),
+        const context: MeasurementProfileContext = {
             scan_profile_id: value.scan_profile_id.trim(),
             radio_profile_id: value.radio_profile_id.trim(),
             interface: value.interface.trim(),

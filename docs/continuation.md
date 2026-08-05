@@ -153,3 +153,277 @@ The verified `PineAI-0.6.3.tar.gz` artifact and its matching SHA-256 sidecar wil
 - **v0.7.0 Contract Branch**: `docs/repeatable-field-audits-contract-v0.7.0`
 - **Contracts Frozen**: API specification (`docs/repeatable-audits-api-v1.md`), JSON Schemas (`repeatable-audits-v1.schema.json`, `audit-run-report-v1.schema.json`), and schema test suites (`test_repeatable_audits_schema.py`, `test_audit_run_report_schema.py`).
 
+## PR #47 workstation audit checkpoint
+
+PR `#47` remains a draft on branch
+`feature/repeatable-field-audits-store-v0.7.0`. The audit corrected the
+internal persistence and recovery implementation without changing module
+version `0.6.3` or exposing the frozen v0.7 module actions.
+
+Correctness and security corrections include:
+
+- strict AuditRun manifest validation and read-only reconstruction;
+- closure reserve derived from the validated run map;
+- atomic AuditRun lifecycle mutations and native artifact persistence;
+- exact immutable CustomerAuditStore snapshot, comparison, occurrence, and
+  digest validation;
+- strict RFC 3339 timestamps and action-specific errors;
+- Windows-safe file descriptors and bounded retry of an atomic replacement
+  temporarily denied by a scanner or sync provider;
+- safe configuration, backup, CLI, and parser error messages;
+- a terminal-event byte reserve that covers the maximum accepted UTF-8
+  cancellation reason;
+- transient assessment lock files no longer binding an uninitialized identity;
+- canonical package staging that rejects output symlinks.
+- optional AI context for persisted comparisons is reconstructed from the
+  immutable occurrence set; the explicitly labelled legacy fallback cannot
+  select findings from another comparison.
+
+Committed-head workstation validation:
+
+- WSL Python 3.13: Ruff, compileall, and 218 Python tests passed;
+- Windows Python 3.8.20: Ruff, compileall, and 218 Python tests passed, with
+  13 intentional POSIX/socket-only skips;
+- Windows Node 16.20.2 / Angular 9: lint passed, 26 ChromeHeadless tests
+  passed, and the production build passed;
+- Angular coverage: statements 42.35%, branches 27.57%, functions 48.18%,
+  and lines 42.21%;
+- no Angular e2e target exists in `angular.json`, so an e2e run is not a
+  defined repository gate;
+- `git diff --check`, shell syntax, secret patterns, unsafe subprocess,
+  archive traversal, raw Recon, permissions, and package-path checks passed.
+
+The non-mutating dependency audit reports 177 findings in the full legacy
+Angular 9 development tree (12 low, 73 moderate, 74 high, and 18 critical).
+The production tree reports three high findings in direct Angular 9
+dependencies. npm only offers an incompatible major Angular upgrade, so no
+automatic dependency mutation was made in this PR.
+
+Workstation benchmark results are functional measurements, not product
+performance claims:
+
+- local adapter: 6,100 action calls completed without a failed sample;
+- three 100-iteration aggregate action-median measurements had 8.05% CV;
+- realistic store workload: 2,535.953 ms, 6.533 ms reopen, 38 files, and
+  217,008 persisted bytes;
+- frozen-limit workload: 44,880.169 ms, 363.087 ms reopen, and the exact
+  64 active / 90 total measurement-point / 128 AuditRun boundaries;
+- every result explicitly has `hardware_validated=false`,
+  `protocol_validated=false`, and `performance_thresholds_applied=false`.
+
+The canonical local package contains 24 runtime files and passed source,
+bundle, owner, mode, path, special-file, source-map, bytecode, secret, compile,
+and isolated-import checks. Its SHA-256 is
+`7050a647ec6593b1e9c20b51e0315fe3af078495b7db726569f762b20463d1c3`.
+
+No physical Mark VII, SSH, module socket, Recon radio, capture, or firmware
+test was performed in this audit. Hardware validation remains a separate,
+explicitly pending gate and is not required to complete the workstation-only
+PR correction cycle.
+
+## Proposed Component Architecture Checkpoint (v0.9.0 Companion)
+
+The optional single-container **PineAI / PineAssure Companion** architecture specification is documented in [docs/companion-architecture.md](companion-architecture.md). It defines direct Mark VII HTTPS bundle pushing via outbound-only ingress tunnels without public IP, router port forwarding, or stored root SSH credentials. The design remains proposed, non-authoritative toward Mark VII local engine, and does not claim physical hardware validation.
+
+## v0.7.0 updated product-direction checkpoint
+
+- Working branch: `feature/repeatable-field-audits-store-v0.7.0`.
+- Updated-direction reference commit: `4dc574c708956506c3324a8443c543aa9e580202`.
+- Display brand: PineAssure. Technical module, package, state-directory and CLI
+  compatibility identity: PineAI.
+- Release target: `v0.7.0-rc.1` with `hardware validation pending`; no stable
+  tag until the exact assets pass the physical Mark VII procedure.
+- Frozen limits: 16 active and 32 total MeasurementPoints, 16 assignments per
+  AuditRun, 32 AuditRuns per assessment, one `in_progress` run and one scan
+  operation at a time.
+- Public outer action schema remains `1.0`; split AuditRun manifest and
+  AuditRunMeasurement records use schema `1.1`.
+- MeasurementPoint is location-only. AuditRun creation atomically pins point,
+  MeasurementProfile, baseline and AssuranceProfile provenance.
+- The assigned baseline measurement context must identify the same physical
+  MeasurementPoint. Resolution always rebuilds current measurement context
+  from the immutable assignment instead of trusting the scan payload.
+- Resolved v1.1 measurements pin `snapshot_record_digest` over the complete
+  canonical normalized snapshot. Reopen, comparison, and report paths reject
+  later content changes with `pinned_reference_mismatch`.
+- New standalone baseline and analysis snapshots also carry
+  `snapshot_record_digest`. Older snapshots without it remain readable and
+  can be reused only when their canonical content is identical; they are
+  never rewritten in place and reports label them with
+  `legacy_snapshot_integrity_unbound`.
+- Root/SSH continuity backups include split AuditRun manifests and measurement
+  documents; backup verification and staging restore preserve them and apply
+  the same path/content contract as backup creation.
+- Saved-Recon `date`, `started_at`, and `completed_at` metadata is validated as
+  nullable strict RFC 3339 before an immutable snapshot is built;
+  `started_at <= completed_at` is enforced when both are present.
+- Split manifest and measurement timestamps are revalidated for monotonic
+  ordering on every reopen, and draft-run readiness rechecks every frozen
+  point, profile, baseline, and assurance pin against its immutable record.
+- Reports are available for terminal `completed` and `cancelled` runs and use
+  only `local_full` or `share_safe`.
+- Report privacy redacts structured SSID fields and SSID literals in defined
+  prose without mutating schema, ID, status, time, or digest values.
+- Optional provider responses are capped at 1 MiB; Customer Audit and AuditRun
+  reports reject over-budget aggregates before retaining the remaining
+  history or immutable artifacts.
+- Backup verification validates each tar header's path, type, mode, duplicate
+  identity, declared size, and cumulative payload before advancing through the
+  compressed member body.
+
+Documentation and release-tool work completed in the current worktree:
+
+- updated product direction, architecture, API, release notes and readiness
+  audit;
+- v1.1 request/response and canonical report schemas with replacement contract
+  tests;
+- UTF-8/LF, whitespace, JSON and relative-link validation in CI;
+- deterministic CycloneDX generation from the verified archive;
+- passive package, resource and transaction-recovery harnesses plus a physical
+  validation procedure;
+- conditional dependency-risk acceptance and product-direction assessment.
+
+Latest focused verification before the physical development-package pass:
+
+- 25 v0.7 contract/report schema tests pass on Windows;
+- 45 store/router strictness tests pass on Windows and 13 focused regression
+  tests pass in WSL;
+- documentation encoding, links, whitespace and JSON pass;
+- Ruff passes for the changed schema tests and release scripts;
+- the disposable transaction recovery prepare/verify round trip passes;
+- Mark VII shell wrappers pass `bash -n`;
+- no physical Mark VII validation had been performed at that checkpoint.
+
+Physical development-package checkpoint (2026-08-02):
+
+- a Mark VII running OpenWrt 21.02.1 and Python 3.9.7 exercised development
+  package SHA-256
+  `03771364154a29df3ba11422f6e35121f1ac081c51658bbb9a9f80914e871132`;
+- passive package smoke, 56-action import/health, storage integrity,
+  JSON/HTML report generation, backup/restore-staging, exact transaction
+  recovery, 100-iteration adapter workload, and the realistic store workload
+  passed in disposable `/tmp` state;
+- the staged frontend bundle was served byte-identically from port 1471, CLI
+  status/capabilities worked offline, and the original installed module was
+  restored with its backup checksums verified;
+- the package exposed a stripped-firmware incompatibility in the desktop-only
+  `statistics` dependency; it was replaced with a deterministic local median
+  implementation and an isolated package-import regression now blocks
+  `decimal`, `statistics`, and `sqlite3`;
+- malformed non-empty AuditRun manifest JSON now preserves the public
+  `invalid_audit_run` error code and has a regression test;
+- no production assessment data or radio functionality was used.
+
+This was a development worktree package, not the frozen green-CI artifact.
+The authenticated saved-Recon UI read, exact post-CI package retest, final
+staged installation, and final rollback therefore remain open release gates.
+
+Post-device workstation closure checkpoint (2026-08-02):
+
+- Windows CPython 3.8.20 and WSL each passed all 261 Python tests; Windows had
+  17 intentional platform skips and WSL had three;
+- Ruff, Windows and WSL compileall, documentation/JSON validation, shell
+  syntax, `git diff --check`, and the tracked secret scan passed;
+- Node 16.20.2 passed Angular lint, all 52 ChromeHeadless tests, coverage, and
+  the production build. Coverage was 50.60% statements, 36.53% branches,
+  58.68% functions, and 50.39% lines;
+- no Angular e2e target exists in `angular.json`; `ng e2e` therefore exits with
+  `No projects support the 'e2e' target` and is documented as an unavailable
+  repository gate rather than a passing test;
+- the non-mutating npm audit still reports 177 findings in the legacy full
+  development tree and three high findings in production dependencies. No
+  automatic or incompatible dependency update was made;
+- local-adapter workloads completed 20, three independent 100, and 1,000
+  iterations without a failed action. The three 100-iteration aggregate p50
+  observations ranged from 0.148 to 0.158 ms;
+- minimal, realistic, and frozen-limit store workloads passed. The realistic
+  run took 7,818.640 ms, reopened in 92.017 ms, reached 26.43 MiB peak RSS,
+  and wrote 268,291 logical bytes across 59 files. The frozen-limit run took
+  18,196.438 ms, reopened in 214.319 ms, reached 26.48 MiB peak RSS, and
+  exercised the 32-point and 32-run total limits;
+- the local WSL-built package contains 28 files and three directories with
+  1,568,799 payload bytes. Windows Python 3.8 and WSL independently verified
+  development SHA-256
+  `03771364154a29df3ba11422f6e35121f1ac081c51658bbb9a9f80914e871132`;
+- passive packaged-runtime smoke passed and the deterministic CycloneDX SBOM
+  contains 1,275 components with SHA-256
+  `2e4c71eeb334682813e8c19115f7715f71e66a71027be67ab88ea91dae1cb5d2`.
+
+Historical pre-RC frozen-CI hardware checkpoint:
+
+- logical commits were pushed through `e64cdf5`; PR and push Actions runs
+  `30749608964` and `30749606966` passed while PR #47 remained a draft;
+- the GitHub CLI-downloaded archive SHA-256 is
+  `02af848235cb25138e48d0d1eccaaeed5b148a5126bb3e9abced99ce15206c15`;
+- the exact archive passed cross-runtime verification and the Mark VII package,
+  recovery, storage/report/backup, 20/100 adapter, realistic store,
+  staged-install, offline-health, CLI, frontend-bundle, and rollback gates;
+- the final pre-install backup is
+  `/root/pineai-backups/20260802T133200Z-final-v070/` and still verifies;
+- the initial installed module unexpectedly disappeared after the earlier
+  development rollback despite a successful immediate HTTP check. It was
+  restored from the verified initial backup before the final sequence. The
+  final rollback passed, but the original disappearance has no confirmed root
+  cause;
+- the saved-Recon endpoint returns HTTP 401 without a Hak5 session. The
+  authenticated saved-scan read remains untested because no password or session
+  token was placed in a command or evidence file.
+
+This checkpoint is not release-candidate hardware validation. Its frontend UMD
+later proved to externalize `/rxjs` and `/@angular/cdk/scrolling`, which the
+Mark VII application did not expose as module dependencies. The served-byte
+check did not prove authenticated application initialization. Backend,
+storage, package, resource, recovery, and rollback observations remain useful
+history, but every exact `v0.7.0-rc.1` hardware gate is pending.
+
+## v0.7.0-rc.1 release-readiness checkpoint (2026-08-05)
+
+- Frontend compatibility source commit: `8985591`.
+- Windows restore-publication hardening commit: `b3bc144`.
+- The unused RxJS `BehaviorSubject/state$` path and `ScrollingModule` were
+  removed. Both CDK virtual-scroll lists now use height-bounded `div + *ngFor`
+  containers and retain their existing `trackBy` functions.
+- Package staging and archive verification reject root and subpath forms of
+  `rxjs` and `@angular/cdk/scrolling`, including whitespace and quote variants.
+- Clean WSL Node 16.20.2 lint and production build passed. The built UMD has no
+  occurrence of either forbidden dependency.
+- ChromeHeadlessCI passed 52 of 52 Angular tests. Coverage was 50.57%
+  statements, 36.53% branches, 58.68% functions, and 50.36% lines.
+- WSL and Windows Python 3.8.20 each passed all 290 Python tests with pinned
+  schema dependencies; Windows had 14 intentional POSIX/socket-only skips.
+  Ruff, compileall, docs/JSON validation, shell syntax, secret scan, and diff
+  checks passed.
+- The Windows matrix exposed a transient access-denied error while atomically
+  publishing a restore-staging directory. A bounded retry now preserves the
+  same atomic `os.replace` boundary. All 14 backup tests and both complete
+  matrices pass with the regression enabled.
+- The diagnostic pre-documentation WSL package passed the exact manifest,
+  isolated imports, archive safety, permissions, checksum, offline smoke, and
+  deterministic SBOM checks. It had 28 files, three directories, 1,568,875
+  payload bytes, and 1,275 SBOM components. It is not a release asset because
+  this documentation checkpoint changes the source commit.
+- Benchmark smoke passed with `hardware_validated=false`,
+  `protocol_validated=false`, and `performance_thresholds_applied=false`.
+- The full npm tree still reports 177 findings; the production view reports
+  three direct high Angular packages and 15 distinct advisories. Their
+  per-advisory RC disposition is in `docs/dependency-risk-acceptance.md`.
+- Angular e2e remains undefined in `angular.json`; it is unavailable, not
+  passed.
+- Replacing virtualization may render the backend maxima of 1,000 APs or 500
+  findings in a bounded container. Correctness is tested, but worst-case
+  frontend performance is a pending physical RC item.
+
+Next steps are to commit this documentation, rerun the full matrix at the exact
+new HEAD, push PR #47, require green push and PR CI, merge with a merge commit,
+require green `main` CI, tag `v0.7.0-rc.1`, require green tag CI, and compare
+the main and tag package/checksum/SBOM files byte-for-byte. Only tag-CI assets
+may be published. The GitHub PR and release bodies will record exact run IDs
+and hashes so source documentation does not create a self-referential artifact
+identity.
+
+The RC may be published only as a pre-release with `hardware validation
+pending`. Stable `v0.7.0` and Hak5 upstream submission wait for the exact
+published bytes to pass authenticated frontend, saved-scan, offline backend,
+report, recovery, resource, and rollback tests on Mark VII. If any code changes
+after RC publication, the next candidate is `v0.7.0-rc.2`; the RC.1 tag and
+assets are never replaced.
