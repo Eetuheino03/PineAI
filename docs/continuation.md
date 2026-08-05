@@ -349,7 +349,7 @@ Post-device workstation closure checkpoint (2026-08-02):
   contains 1,275 components with SHA-256
   `2e4c71eeb334682813e8c19115f7715f71e66a71027be67ab88ea91dae1cb5d2`.
 
-Frozen-CI hardware checkpoint:
+Historical pre-RC frozen-CI hardware checkpoint:
 
 - logical commits were pushed through `e64cdf5`; PR and push Actions runs
   `30749608964` and `30749606966` passed while PR #47 remained a draft;
@@ -369,8 +369,61 @@ Frozen-CI hardware checkpoint:
   authenticated saved-scan read remains untested because no password or session
   token was placed in a command or evidence file.
 
-Remaining closure work is to push this evidence-only documentation commit,
-confirm its CI-generated package is byte-identical to the already tested
-archive, update PR #47 with the safe summary, and resolve the authenticated
-saved-scan and unexplained module-disappearance gates before a final-review
-verdict can be upgraded.
+This checkpoint is not release-candidate hardware validation. Its frontend UMD
+later proved to externalize `/rxjs` and `/@angular/cdk/scrolling`, which the
+Mark VII application did not expose as module dependencies. The served-byte
+check did not prove authenticated application initialization. Backend,
+storage, package, resource, recovery, and rollback observations remain useful
+history, but every exact `v0.7.0-rc.1` hardware gate is pending.
+
+## v0.7.0-rc.1 release-readiness checkpoint (2026-08-05)
+
+- Frontend compatibility source commit: `8985591`.
+- Windows restore-publication hardening commit: `b3bc144`.
+- The unused RxJS `BehaviorSubject/state$` path and `ScrollingModule` were
+  removed. Both CDK virtual-scroll lists now use height-bounded `div + *ngFor`
+  containers and retain their existing `trackBy` functions.
+- Package staging and archive verification reject root and subpath forms of
+  `rxjs` and `@angular/cdk/scrolling`, including whitespace and quote variants.
+- Clean WSL Node 16.20.2 lint and production build passed. The built UMD has no
+  occurrence of either forbidden dependency.
+- ChromeHeadlessCI passed 52 of 52 Angular tests. Coverage was 50.57%
+  statements, 36.53% branches, 58.68% functions, and 50.36% lines.
+- WSL and Windows Python 3.8.20 each passed all 290 Python tests with pinned
+  schema dependencies; Windows had 14 intentional POSIX/socket-only skips.
+  Ruff, compileall, docs/JSON validation, shell syntax, secret scan, and diff
+  checks passed.
+- The Windows matrix exposed a transient access-denied error while atomically
+  publishing a restore-staging directory. A bounded retry now preserves the
+  same atomic `os.replace` boundary. All 14 backup tests and both complete
+  matrices pass with the regression enabled.
+- The diagnostic pre-documentation WSL package passed the exact manifest,
+  isolated imports, archive safety, permissions, checksum, offline smoke, and
+  deterministic SBOM checks. It had 28 files, three directories, 1,568,875
+  payload bytes, and 1,275 SBOM components. It is not a release asset because
+  this documentation checkpoint changes the source commit.
+- Benchmark smoke passed with `hardware_validated=false`,
+  `protocol_validated=false`, and `performance_thresholds_applied=false`.
+- The full npm tree still reports 177 findings; the production view reports
+  three direct high Angular packages and 15 distinct advisories. Their
+  per-advisory RC disposition is in `docs/dependency-risk-acceptance.md`.
+- Angular e2e remains undefined in `angular.json`; it is unavailable, not
+  passed.
+- Replacing virtualization may render the backend maxima of 1,000 APs or 500
+  findings in a bounded container. Correctness is tested, but worst-case
+  frontend performance is a pending physical RC item.
+
+Next steps are to commit this documentation, rerun the full matrix at the exact
+new HEAD, push PR #47, require green push and PR CI, merge with a merge commit,
+require green `main` CI, tag `v0.7.0-rc.1`, require green tag CI, and compare
+the main and tag package/checksum/SBOM files byte-for-byte. Only tag-CI assets
+may be published. The GitHub PR and release bodies will record exact run IDs
+and hashes so source documentation does not create a self-referential artifact
+identity.
+
+The RC may be published only as a pre-release with `hardware validation
+pending`. Stable `v0.7.0` and Hak5 upstream submission wait for the exact
+published bytes to pass authenticated frontend, saved-scan, offline backend,
+report, recovery, resource, and rollback tests on Mark VII. If any code changes
+after RC publication, the next candidate is `v0.7.0-rc.2`; the RC.1 tag and
+assets are never replaced.

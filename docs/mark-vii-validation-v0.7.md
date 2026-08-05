@@ -2,10 +2,12 @@
 
 ## Status and safety boundary
 
-This procedure is the release-candidate hardware gate. A development package
-was exercised on a physical Mark VII on 2026-08-02, but the exact artifact
-produced from the eventual green CI commit must repeat the procedure before the
-release is considered hardware-validated.
+This procedure is the release-candidate hardware gate. Packages preceding the
+frontend compatibility fix were exercised on a physical Mark VII on
+2026-08-02, but `v0.7.0-rc.1` contains a different UMD artifact. Every hardware
+gate for the published RC bytes is therefore pending and the complete
+procedure must be repeated before the release is considered
+hardware-validated.
 
 The procedure is passive with respect to Wi-Fi. It must not start or stop
 Recon, configure a radio, capture traffic, probe clients, deauthenticate,
@@ -52,7 +54,14 @@ worktree.
 The exact frozen CI package, authenticated saved-scan read, final staged
 installation, and final rollback remain release gates.
 
-## Frozen CI artifact evidence (2026-08-02)
+## Historical pre-RC CI artifact evidence (2026-08-02)
+
+The following record is retained for backend, storage, resource, recovery, and
+rollback history only. It does **not** validate `v0.7.0-rc.1`. The cited UMD
+still externalized `rxjs` and `@angular/cdk/scrolling`; an HTTP byte match did
+not establish successful initialization in the authenticated Hak5
+application. Commit `8985591` changes that bundle, so the old archive and its
+device results are superseded for the RC hardware gate.
 
 The PR head `e64cdf5039f3df1ae1b72e83a1fe00cd9550f408` passed both
 the pull-request run `30749608964` and push run `30749606966`. The package was
